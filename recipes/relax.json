@@ -1,0 +1,22 @@
+{
+  "id": "relax",
+  "version": "1.0.0",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {
+      "xc_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "potcar_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "u_policy": {"type": "string", "pattern": "^[A-Za-z0-9._-]*$"},
+      "resource_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
+    },
+    "required": ["xc_profile", "potcar_profile", "resource_profile"],
+    "additionalProperties": false
+  },
+  "stages": [
+    {"id": "validate-inputs", "type": "validate", "validator": "vasp.inputs.validate", "artifacts_in": ["POSCAR", "INCAR", "KPOINTS", "POTCAR.spec.json"], "artifacts_out": ["validation.json"]},
+    {"id": "relax", "type": "relax", "depends_on": ["validate-inputs"], "input_policy": {"profile": "relax", "u_policy_parameter": "u_policy"}, "artifacts_in": ["POSCAR", "INCAR", "KPOINTS", "POTCAR"], "artifacts_out": ["CONTCAR", "OUTCAR", "OSZICAR", "vasprun.xml"], "resource_profile": {"parameter": "resource_profile"}, "approval_gate": true, "recovery_policy": {"mode": "propose-only"}},
+    {"id": "static", "type": "static", "depends_on": ["relax"], "input_policy": {"structure_from": "relax/CONTCAR"}, "artifacts_in": ["CONTCAR"], "artifacts_out": ["CHGCAR", "OUTCAR", "OSZICAR", "vasprun.xml"], "resource_profile": {"parameter": "resource_profile"}, "recovery_policy": {"mode": "propose-only"}},
+    {"id": "parse", "type": "parse", "depends_on": ["static"], "parser": "vasp.results.parse", "artifacts_in": ["OUTCAR", "OSZICAR", "vasprun.xml"], "artifacts_out": ["results.json"]},
+    {"id": "report", "type": "report", "depends_on": ["parse"], "artifacts_in": ["results.json"], "artifacts_out": ["report.md"]}
+  ]
+}

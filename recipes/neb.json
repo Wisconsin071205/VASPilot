@@ -1,0 +1,24 @@
+{
+  "id": "neb",
+  "version": "1.0.0",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {
+      "images": {"type": "integer", "minimum": 1, "maximum": 32},
+      "spring": {"type": "number"},
+      "climbing_image": {"type": "boolean"},
+      "interpolation": {"type": "string", "enum": ["linear", "idpp"]},
+      "resource_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
+    },
+    "required": ["images", "spring", "climbing_image", "interpolation", "resource_profile"],
+    "additionalProperties": false
+  },
+  "stages": [
+    {"id": "validate-endpoints", "type": "validate", "validator": "neb.endpoints.validate", "artifacts_in": ["initial/POSCAR", "final/POSCAR"], "artifacts_out": ["endpoint-mapping.json"]},
+    {"id": "interpolate", "type": "structure", "depends_on": ["validate-endpoints"], "input_policy": {"method_parameter": "interpolation", "images_parameter": "images"}, "artifacts_in": ["initial/POSCAR", "final/POSCAR", "endpoint-mapping.json"], "artifacts_out": ["images.json", "00/POSCAR", "01/POSCAR"]},
+    {"id": "validate-images", "type": "validate", "depends_on": ["interpolate"], "validator": "neb.images.validate", "artifacts_in": ["images.json"], "artifacts_out": ["image-validation.json"]},
+    {"id": "neb-run", "type": "neb", "depends_on": ["validate-images"], "input_policy": {"spring_parameter": "spring", "climbing_parameter": "climbing_image"}, "artifacts_in": ["images.json"], "artifacts_out": ["neb.dat", "OUTCAR", "image-outputs.json"], "resource_profile": {"parameter": "resource_profile"}, "approval_gate": true, "recovery_policy": {"mode": "failed-images-new-attempt"}},
+    {"id": "parse", "type": "parse", "depends_on": ["neb-run"], "parser": "analysis.neb.parse", "artifacts_in": ["neb.dat", "image-outputs.json"], "artifacts_out": ["neb-results.json", "neb.png"]},
+    {"id": "report", "type": "report", "depends_on": ["parse"], "artifacts_in": ["neb-results.json"], "artifacts_out": ["report.md"]}
+  ]
+}

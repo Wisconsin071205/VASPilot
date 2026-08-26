@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/vaspilot/calculation-manifest-v2.schema.json",
+  "title": "VASPilot CalculationManifest v2",
+  "type": "object",
+  "required": [
+    "schema_version", "run_id", "workflow", "parameters", "structure",
+    "inputs", "software", "environment", "artifacts", "scheduler_state",
+    "scientific_state", "errors", "recovery", "approval"
+  ],
+  "properties": {
+    "schema_version": {"const": "2.0"},
+    "run_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"},
+    "parent_run": {"type": ["string", "null"]},
+    "workflow": {
+      "type": "object",
+      "required": ["id", "version", "stage", "attempt"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
+        "version": {"type": "string", "minLength": 1},
+        "stage": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+        "attempt": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "parameters": {"type": "object"},
+    "structure": {
+      "type": "object",
+      "required": ["source_file", "sha256"],
+      "properties": {
+        "source_file": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "formula": {"type": "string"},
+        "n_atoms": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "inputs": {
+      "type": "object",
+      "required": ["incar", "kpoints", "potcar"],
+      "properties": {
+        "incar": {"type": "object"},
+        "kpoints": {"type": "object"},
+        "potcar": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "software": {
+      "type": "object",
+      "required": ["python", "pymatgen", "vasp", "toolkit", "git"],
+      "properties": {
+        "python": {"type": "string"},
+        "pymatgen": {"type": "string"},
+        "vasp": {"type": "string"},
+        "toolkit": {"type": "string"},
+        "git": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["server", "scheduler", "queue", "resources", "job_id"],
+      "properties": {
+        "server": {"type": "string"},
+        "scheduler": {"type": "string", "enum": ["", "slurm", "pbs", "local"]},
+        "queue": {"type": "string"},
+        "resources": {"type": "object"},
+        "job_id": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "size", "sha256", "role", "dependencies"],
+        "properties": {
+          "path": {"type": "string", "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$"},
+          "size": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "role": {"type": "string", "minLength": 1},
+          "dependencies": {"type": "array", "items": {"type": "string", "pattern": "^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "scheduler_state": {
+      "type": "string",
+      "enum": ["unknown", "not_submitted", "queued", "running", "completed", "failed", "timeout", "cancelled"]
+    },
+    "scientific_state": {
+      "type": "string",
+      "enum": ["not_started", "partial", "converged", "not_converged", "invalid", "unknown"]
+    },
+    "errors": {"type": "array", "items": {"type": "object"}},
+    "recovery": {"type": "array", "items": {"type": "object"}},
+    "approval": {
+      "type": "object",
+      "required": ["approved", "approver", "summary", "plan_hash", "time"],
+      "properties": {
+        "approved": {"type": "boolean"},
+        "approver": {"type": "string"},
+        "summary": {"type": "string"},
+        "plan_hash": {"type": "string", "pattern": "^(?:|[0-9a-f]{64})$"},
+        "time": {"type": "string"}
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {"properties": {"approved": {"const": true}}},
+          "then": {
+            "properties": {
+              "approver": {"minLength": 1},
+              "plan_hash": {"pattern": "^[0-9a-f]{64}$"},
+              "time": {"type": "string", "format": "date-time"}
+            }
+          }
+        }
+      ]
+    },
+    "results_summary": {"type": "object"},
+    "modifications": {"type": "array"}
+  },
+  "additionalProperties": false
+}

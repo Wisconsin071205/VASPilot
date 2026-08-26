@@ -1,0 +1,677 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vasp-remote-agent.local/schemas/calculation-manifest.schema.json",
+  "title": "CalculationManifest",
+  "description": "一次 VASP 计算从准备到复核的完整可溯源记录。schema_version 必须与解析器版本同步递增；解析器升级后旧 manifest 通过 migration 说明解释。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "workflow",
+    "structure",
+    "inputs",
+    "environment",
+    "software",
+    "execution",
+    "results",
+    "modifications",
+    "review"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "本 manifest 的 schema 版本，如 1.0"
+    },
+    "manifest_id": {
+      "type": "string",
+      "description": "UUID，标识一次计算记录"
+    },
+    "parent_manifest_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "上游计算（如 relax 之于 static）的 manifest_id"
+    },
+    "workflow": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": [
+            "relax",
+            "static",
+            "band",
+            "dos",
+            "convergence-scan"
+          ],
+          "description": "工作流阶段名"
+        },
+        "version": {
+          "type": "string",
+          "description": "工作流定义版本，对应 spec/workflows.md"
+        },
+        "stage": {
+          "type": "string",
+          "description": "阶段标签，如 00_relax / 01_static"
+        },
+        "plan_sha256": {
+          "type": "string",
+          "description": "生成该计算的 plan.json 哈希，用于确定性校验"
+        }
+      }
+    },
+    "structure": {
+      "type": "object",
+      "required": [
+        "source_file",
+        "sha256",
+        "n_atoms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_file": {
+          "type": "string",
+          "description": "结构来源文件（POSCAR / CONTCAR / 显式路径）"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "formula": {
+          "type": "string",
+          "description": "化学成分式（pymatgen reduced formula，若可用）"
+        },
+        "species": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "counts": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "n_atoms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "lattice_abc": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "晶格常数 a,b,c（Å）"
+        },
+        "lattice_hash": {
+          "type": "string",
+          "description": "晶格矩阵的规范化哈希（排除 POSCAR 浮点格式差异）"
+        },
+        "magnetic": {
+          "type": "object",
+          "description": "磁性初始化（ISPIN/MAGMOM 摘要）",
+          "properties": {
+            "ispin": {
+              "type": "integer"
+            },
+            "magmom": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "required": [
+        "incar",
+        "kpoints",
+        "potcar"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "incar": {
+          "type": "object",
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "key_params": {
+              "type": "object",
+              "description": "非敏感参数白名单子集",
+              "properties": {
+                "encut": {
+                  "type": "number"
+                },
+                "ediff": {
+                  "type": "number"
+                },
+                "ediffg": {
+                  "type": "number"
+                },
+                "ibrion": {
+                  "type": "integer"
+                },
+                "isif": {
+                  "type": "integer"
+                },
+                "nsw": {
+                  "type": "integer"
+                },
+                "ismear": {
+                  "type": "integer"
+                },
+                "sigma": {
+                  "type": "number"
+                },
+                "ispin": {
+                  "type": "integer"
+                },
+                "nelm": {
+                  "type": "integer"
+                },
+                "algo": {
+                  "type": "string"
+                },
+                "prec": {
+                  "type": "string"
+                },
+                "lreal": {
+                  "type": "string"
+                },
+                "lcharg": {
+                  "type": "boolean"
+                },
+                "lwave": {
+                  "type": "boolean"
+                },
+                "ivdw": {
+                  "type": "string"
+                },
+                "gga": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "kpoints": {
+          "type": "object",
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "gamma",
+                "monkhorst-pack",
+                "line",
+                "kspacing",
+                "unknown"
+              ]
+            },
+            "grid": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "minItems": 3,
+              "maxItems": 3
+            },
+            "kspacing": {
+              "type": "number"
+            },
+            "line_path": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "能带高对称点路径（如 ['G','X','M','G']）"
+            },
+            "n_kpoints": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        "potcar": {
+          "type": "object",
+          "required": [
+            "sha256"
+          ],
+          "properties": {
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "整文件哈希；POTCAR 内容本身绝不进入 manifest"
+            },
+            "titles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "TITEL 行（非敏感）"
+            },
+            "xc": {
+              "type": "string",
+              "description": "交换关联泛函标签（如 PBE）"
+            },
+            "n_datasets": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        "vasp_version": {
+          "type": "string",
+          "description": "VASP 版本号（OUTCAR 头部）"
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "server"
+      ],
+      "properties": {
+        "server": {
+          "type": "string",
+          "description": "脱敏服务器标识（目录内名称，不含账号/主机）"
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "partition": {
+          "type": "string"
+        },
+        "n_nodes": {
+          "type": "integer"
+        },
+        "n_cores": {
+          "type": "integer"
+        },
+        "account": {
+          "type": "string",
+          "description": "脱敏记账账户"
+        },
+        "queue_events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "time",
+              "state"
+            ],
+            "properties": {
+              "time": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "software": {
+      "type": "object",
+      "required": [
+        "toolchain_version"
+      ],
+      "properties": {
+        "toolchain_version": {
+          "type": "string",
+          "description": "vasp-remote-agent 版本（VERSION 文件）"
+        },
+        "git_commit": {
+          "type": "string",
+          "description": "生成时的仓库提交哈希"
+        },
+        "vasp_parse_version": {
+          "type": "string"
+        },
+        "parser": {
+          "type": "string",
+          "enum": [
+            "pymatgen",
+            "py4vasp",
+            "regex-fallback"
+          ],
+          "description": "实际使用的解析器"
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "prepared",
+            "submitted",
+            "running",
+            "finished",
+            "timeout",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "finished_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "walltime_s": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "slurm_exit_code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "vasp_exit_status": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "OUTCAR 退出标志（正常/错误码）"
+        }
+      },
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "object",
+      "required": [
+        "scientific_status"
+      ],
+      "properties": {
+        "scientific_status": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "running",
+            "electronic_converged",
+            "ionic_converged",
+            "unconverged",
+            "failed",
+            "unverifiable"
+          ],
+          "description": "科学状态，与调度状态分离"
+        },
+        "energy": {
+          "type": "object",
+          "properties": {
+            "e0_ev": {
+              "type": "number"
+            },
+            "e0_ev_per_atom": {
+              "type": "number"
+            },
+            "fermi_ev": {
+              "type": "number"
+            },
+            "band_gap_ev": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "total_magnetization": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "electronic": {
+          "type": "object",
+          "properties": {
+            "converged": {
+              "type": "boolean"
+            },
+            "last_scf_steps": {
+              "type": "integer"
+            },
+            "reached_nelm": {
+              "type": "boolean"
+            },
+            "nelm": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        "ionic": {
+          "type": "object",
+          "properties": {
+            "converged": {
+              "type": "boolean"
+            },
+            "steps": {
+              "type": "integer"
+            },
+            "max_force_ev_a": {
+              "type": "number"
+            },
+            "criterion": {
+              "type": "string",
+              "description": "实际命中判据：EDIFFG / EDIFF / NSW 耗尽"
+            }
+          },
+          "additionalProperties": false
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "code",
+              "severity"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "zpotrf",
+                  "zbrent",
+                  "brmix",
+                  "edddav",
+                  "nelm",
+                  "walltime",
+                  "segfault",
+                  "pssyevx",
+                  "not_converged",
+                  "unknown"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "info",
+                  "warning",
+                  "error"
+                ]
+              },
+              "count": {
+                "type": "integer"
+              },
+              "evidence": {
+                "type": "string",
+                "description": "证据行摘要（脱敏）"
+              },
+              "custodian_handler": {
+                "type": "string",
+                "description": "custodian 对应处理器名（检测时填充）"
+              },
+              "suggested_action": {
+                "type": "string",
+                "description": "建议修改（只建议，不自动应用）"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "files": {
+          "type": "object",
+          "description": "结果文件哈希（只存哈希与大小，不存内容）",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "sha256": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "sha256"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "modifications": {
+      "type": "array",
+      "description": "全程修改审计（人工+审批后的自动修改）",
+      "items": {
+        "type": "object",
+        "required": [
+          "time",
+          "file",
+          "field",
+          "before",
+          "after",
+          "reason",
+          "author"
+        ],
+        "properties": {
+          "time": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string",
+            "description": "如 INCAR.ENCUT"
+          },
+          "before": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ]
+          },
+          "after": {
+            "type": [
+              "string",
+              "number",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string",
+            "enum": [
+              "human",
+              "tool-l1",
+              "tool-l2",
+              "tool-l3"
+            ],
+            "description": "human=人工；tool-l1=仅检测；tool-l2=补丁经审批；tool-l3=白名单自动"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "review": {
+      "type": "object",
+      "required": [
+        "reviewed"
+      ],
+      "properties": {
+        "reviewed": {
+          "type": "boolean"
+        },
+        "reviewer": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "脱敏审核人标识"
+        },
+        "conclusion": {
+          "type": "string",
+          "enum": [
+            "accepted",
+            "rejected",
+            "pending",
+            "needs_followup"
+          ]
+        },
+        "notes": {
+          "type": "string",
+          "description": "专家备注（脱敏）"
+        },
+        "reviewed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

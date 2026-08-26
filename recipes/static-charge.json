@@ -1,0 +1,22 @@
+{
+  "id": "static-charge",
+  "version": "1.0.0",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {
+      "potcar_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "kpoints_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "bader": {"type": "boolean"},
+      "resource_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
+    },
+    "required": ["potcar_profile", "kpoints_profile", "bader", "resource_profile"],
+    "additionalProperties": false
+  },
+  "stages": [
+    {"id": "validate-inputs", "type": "validate", "validator": "vasp.inputs.validate", "artifacts_in": ["POSCAR", "INCAR", "KPOINTS", "POTCAR.spec.json"], "artifacts_out": ["validation.json"]},
+    {"id": "scf", "type": "scf", "depends_on": ["validate-inputs"], "input_policy": {"profile": "static-charge", "write_aec": true}, "artifacts_out": ["CHGCAR", "AECCAR0", "AECCAR2", "OUTCAR", "vasprun.xml"], "resource_profile": {"parameter": "resource_profile"}, "approval_gate": true, "recovery_policy": {"mode": "propose-only"}},
+    {"id": "bader", "type": "bader", "depends_on": ["scf"], "input_policy": {"enabled_parameter": "bader"}, "artifacts_in": ["CHGCAR", "AECCAR0", "AECCAR2"], "artifacts_out": ["ACF.dat", "charges.json"], "validator": "analysis.bader.available"},
+    {"id": "parse", "type": "parse", "depends_on": ["scf", "bader"], "parser": "vasp.charge.parse", "artifacts_out": ["results.json"]},
+    {"id": "report", "type": "report", "depends_on": ["parse"], "artifacts_in": ["results.json"], "artifacts_out": ["report.md"]}
+  ]
+}

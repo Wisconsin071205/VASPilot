@@ -1,0 +1,22 @@
+{
+  "id": "dos",
+  "version": "1.0.0",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {
+      "scf_kpoints_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "dos_kpoints_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "smearing_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "resource_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
+    },
+    "required": ["scf_kpoints_profile", "dos_kpoints_profile", "smearing_profile", "resource_profile"],
+    "additionalProperties": false
+  },
+  "stages": [
+    {"id": "validate-inputs", "type": "validate", "validator": "vasp.inputs.validate", "artifacts_out": ["validation.json"]},
+    {"id": "scf", "type": "scf", "depends_on": ["validate-inputs"], "input_policy": {"kpoints_parameter": "scf_kpoints_profile"}, "artifacts_out": ["CHGCAR", "OUTCAR", "vasprun.xml"], "resource_profile": {"parameter": "resource_profile"}, "approval_gate": true, "recovery_policy": {"mode": "propose-only"}},
+    {"id": "dos", "type": "dos", "depends_on": ["scf"], "input_policy": {"charge_from": "scf/CHGCAR", "kpoints_parameter": "dos_kpoints_profile", "smearing_parameter": "smearing_profile"}, "artifacts_in": ["CHGCAR"], "artifacts_out": ["DOSCAR", "OUTCAR", "vasprun.xml"], "resource_profile": {"parameter": "resource_profile"}, "recovery_policy": {"mode": "propose-only"}},
+    {"id": "parse", "type": "parse", "depends_on": ["dos"], "parser": "analysis.dos.parse", "artifacts_in": ["DOSCAR", "OUTCAR"], "artifacts_out": ["dos.json"]},
+    {"id": "plot", "type": "report", "depends_on": ["parse"], "parser": "analysis.dos.plot", "artifacts_in": ["DOSCAR", "dos.json"], "artifacts_out": ["dos.png", "report.md"]}
+  ]
+}

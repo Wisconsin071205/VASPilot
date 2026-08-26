@@ -1,0 +1,24 @@
+{
+  "id": "convergence-scan",
+  "version": "1.0.0",
+  "parameters_schema": {
+    "type": "object",
+    "properties": {
+      "preset": {"type": "string", "enum": ["kpoints", "encut", "supercell", "vacuum", "lattice-scale", "ncore"]},
+      "values": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 64},
+      "metric": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+      "tolerance": {"type": "number", "minimum": 0},
+      "max_concurrency": {"type": "integer", "minimum": 1, "maximum": 128},
+      "resource_profile": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
+    },
+    "required": ["preset", "values", "metric", "tolerance", "max_concurrency", "resource_profile"],
+    "additionalProperties": false
+  },
+  "stages": [
+    {"id": "validate-base", "type": "validate", "validator": "vasp.inputs.validate", "artifacts_out": ["validation.json"]},
+    {"id": "build-matrix", "type": "scan", "depends_on": ["validate-base"], "input_policy": {"preset_parameter": "preset", "values_parameter": "values"}, "artifacts_out": ["scan-plan.json", "points.json"]},
+    {"id": "run-points", "type": "scan", "depends_on": ["build-matrix"], "input_policy": {"concurrency_parameter": "max_concurrency"}, "artifacts_in": ["scan-plan.json"], "artifacts_out": ["point-results.json"], "resource_profile": {"parameter": "resource_profile"}, "approval_gate": true, "recovery_policy": {"mode": "retry-failed-points"}},
+    {"id": "summarize", "type": "parse", "depends_on": ["run-points"], "parser": "analysis.scan.summarize", "input_policy": {"metric_parameter": "metric", "tolerance_parameter": "tolerance"}, "artifacts_in": ["point-results.json"], "artifacts_out": ["summary.json", "summary.csv", "convergence.png"]},
+    {"id": "report", "type": "report", "depends_on": ["summarize"], "artifacts_in": ["summary.json"], "artifacts_out": ["report.md"], "approval_gate": true}
+  ]
+}

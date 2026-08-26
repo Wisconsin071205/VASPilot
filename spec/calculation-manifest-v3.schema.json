@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vaspilot.local/spec/calculation-manifest-v3.schema.json",
+  "title": "VASPilot Calculation Manifest v3",
+  "type": "object",
+  "required": [
+    "schema_version", "run_id", "workflow", "parameters", "structure", "inputs",
+    "software", "environment", "artifacts", "scheduler_state", "scientific_state",
+    "errors", "recovery", "approval", "agents", "capability_invocations",
+    "data_sources", "transfers", "figures", "decisions"
+  ],
+  "properties": {
+    "schema_version": {"const": "3.0"},
+    "run_id": {"type": "string"},
+    "parent_run": {"type": ["string", "null"]},
+    "workflow": {"type": "object"},
+    "parameters": {"type": "object"},
+    "structure": {"type": "object"},
+    "inputs": {"type": "object"},
+    "software": {"type": "object"},
+    "environment": {"type": "object"},
+    "artifacts": {"type": "array", "items": {"type": "object"}},
+    "scheduler_state": {"type": "string"},
+    "scientific_state": {"type": "string"},
+    "errors": {"type": "array"},
+    "recovery": {"type": "array"},
+    "approval": {"type": "object"},
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["agent_id", "role", "model_backend", "task_id"],
+        "properties": {
+          "agent_id": {"type": "string"}, "role": {"type": "string"},
+          "model_backend": {"type": "string"}, "task_id": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "capability_invocations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["capability_id", "version", "implementation_sha256", "input_hash", "output_hash", "agent_id"],
+        "properties": {
+          "capability_id": {"type": "string"}, "version": {"type": "string"},
+          "implementation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "input_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "output_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "agent_id": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "data_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["provider", "database_id", "api_version", "retrieved_at", "license", "raw_sha256"],
+        "properties": {
+          "provider": {"type": "string"},
+          "database_id": {"type": "string"},
+          "api_version": {"type": "string"},
+          "retrieved_at": {"type": "string"},
+          "license": {"type": "string"},
+          "raw_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "transfers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["direction", "local_path", "remote_path", "sha256", "server"],
+        "properties": {
+          "direction": {"type": "string", "enum": ["upload", "download"]},
+          "local_path": {"type": "string"},
+          "remote_path": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "server": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "figures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["figure_id", "figure_type", "status", "capability_id",
+                     "capability_version", "implementation_sha256", "source_hashes",
+                     "preview_png", "figure_svg", "data_csv", "metadata_json"],
+        "properties": {
+          "figure_id": {"type": "string"},
+          "figure_type": {"type": "string"},
+          "status": {"type": "string"},
+          "capability_id": {"type": "string"},
+          "capability_version": {"type": "string"},
+          "implementation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "source_hashes": {"type": "object"},
+          "preview_png": {"type": ["string", "null"]},
+          "figure_svg": {"type": ["string", "null"]},
+          "data_csv": {"type": ["string", "null"]},
+          "metadata_json": {"type": ["string", "null"]},
+          "scene_json": {"type": ["string", "null"]},
+          "artifact_hashes": {
+            "type": "object",
+            "properties": {
+              "preview_png": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "figure_svg": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "data_csv": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+              "metadata_json": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["decision_hash", "location", "status", "reason",
+                     "capability_id", "capability_version",
+                     "implementation_sha256", "input_location", "agent_id",
+                     "estimated_peak_memory_mb", "estimated_disk_mb",
+                     "estimated_transfer_mb", "required_approvals",
+                     "server_profile_hash"],
+        "properties": {
+          "decision_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "location": {"type": "string", "enum": ["local", "remote"]},
+          "status": {"type": "string", "enum": ["local", "remote", "transfer_required", "approval_required", "blocked"]},
+          "reason": {"type": "string"},
+          "capability_id": {"type": "string"},
+          "capability_version": {"type": "string"},
+          "implementation_sha256": {"type": "string"},
+          "input_location": {"type": "string"},
+          "agent_id": {"type": "string"},
+          "estimated_peak_memory_mb": {"type": "integer", "minimum": 0},
+          "estimated_disk_mb": {"type": "integer", "minimum": 0},
+          "estimated_transfer_mb": {"type": "integer", "minimum": 0},
+          "required_approvals": {"type": "array", "items": {"type": "string"}},
+          "server_profile_hash": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": true
+}

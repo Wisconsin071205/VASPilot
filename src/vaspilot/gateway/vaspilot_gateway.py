@@ -1,0 +1,1318 @@
+#!/usr/bin/env python3
+"""VASPilot gateway — restricted operations broker deployed on the Vlab host.
+
+Invoked over SSH from the local CLI:
+
+    vaspilot-gateway <operation> [flags...]
+
+Every operation prints exactly one JSON document on stdout:
+
+    {"ok": true, ...}          success
+    {"ok": false, "error": {"code": "...", "message": "..."}}
+
+Design invariants:
+  - no operation accepts an arbitrary shell string from the caller; each maps
+    to a fixed command shape whose identifiers are regex-validated first
+  - every remote path stays inside the server's configured remote_root,
+    checked lexically AND via ``realpath`` (symlink escapes fail closed)
+  - removals go to a structured trash area; purge requires a double-match
+  - host-key changes never auto-heal: StrictHostKeyChecking stays strict
+  - secrets (passwords, TOTP) are only ever typed by the human in the
+    interactive ``connect`` terminal; this script never sees or stores them
+  - an append-only audit trail records every operation
+
+Standalone by design: Python 3 stdlib only, no package imports, so a single
+scp installs it on the gateway host.
+
+A test seam exists for offline integration tests: when VASPILOT_FAKE_HPC
+points to an executable helper, ``ssh`` calls are replaced by
+``<helper> <server> <shell-command>`` and its stdout is used as the remote
+reply. It is ignored in normal operation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+
+GATEWAY_VERSION = "1.0.0"
+PROTOCOL_VERSION = "1"
+
+HOME = Path.home()
+CONFIG_DIR = Path(os.environ.get("VASPILOT_GATEWAY_CONFIG", HOME / ".config/vaspilot"))
+CACHE_DIR = Path(os.environ.get("VASPILOT_GATEWAY_CACHE", HOME / ".cache/vaspilot"))
+CONFIG_FILE = CONFIG_DIR / "servers.json"
+AUDIT_FILE = CACHE_DIR / "gateway-audit.jsonl"
+TRASH_DIR_NAME = ".vaspilot-trash"
+
+SERVER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+TARGET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,253}$")
+SAFE_REMOTE_PATH = re.compile(r"^/[A-Za-z0-9._/+@=-]{1,259}$")
+SAFE_FILENAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+SAFE_JOB_SCRIPT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
+SAFE_JOB_ID = re.compile(r"^[0-9]{1,19}([.][A-Za-z0-9._-]{0,63})?$")
+SAFE_TRASH_ID = re.compile(r"^[0-9a-zA-Z_][0-9a-zA-Z_-]{0,39}$")
+SAFE_GLOB = re.compile(r"^[A-Za-z0-9*?][A-Za-z0-9*?._+-]{0,127}$")
+SAFE_PERSIST = re.compile(r"^(yes|no|[0-9]+[smhdw])$", re.IGNORECASE)
+STAGE_RE = re.compile(r"^/tmp/vaspilot-[0-9a-f]{8,32}$")
+SCHEDULERS = ("slurm", "pbs")
+TEXT_DENYLIST = {"POTCAR", "WAVECAR", "CHGCAR", "CHG", "LOCPOT", "PROCAR",
+                 "PARCHG", "AECCAR0", "AECCAR1", "AECCAR2", "ELFCAR"}
+MAX_READ_BYTES = 2 * 1024 * 1024
+
+CFG: dict = {}
+
+
+# ---------------------------------------------------------------- utilities
+def out(payload: dict) -> int:
+    """Emit one success document; ``fail()`` is the only failure path."""
+    payload.setdefault("ok", True)
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    sys.stdout.flush()
+    return 0
+
+
+def fail(code: str, message: str) -> int:
+    return out({"ok": False, "error": {"code": code,
+                                       "message": message[:500]}})
+
+
+def audit(operation: str, outcome: str, detail: str = "", server: str = "") -> None:
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "operation": operation[:64],
+            "outcome": outcome[:32],
+            "server": server[:32],
+            "detail": detail[:300],
+        }
+        with open(AUDIT_FILE, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    except OSError:
+        pass  # auditing must never break an operation
+
+
+# ------------------------------------------------------------------ catalog
+def validate_server(name: str, entry: dict) -> None:
+    if not SERVER_NAME_RE.fullmatch(name or ""):
+        raise ValueError(f"server name {name!r} is invalid")
+    if not TARGET_RE.fullmatch(entry.get("target", "")):
+        raise ValueError(f"server target {entry.get('target')!r} must be user@host")
+    port = entry.get("port", 22)
+    if not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError("server port must be 1..65535")
+    root = entry.get("remote_root", "") or ""
+    if root and not SAFE_REMOTE_PATH.fullmatch(root):
+        raise ValueError(f"server remote_root {root!r} is invalid")
+    if root and (".." in root.split("/") or any(p == "." for p in root.split("/"))):
+        raise ValueError("server remote_root must not traverse")
+    persist = entry.get("persist", "") or "8h"
+    if not SAFE_PERSIST.fullmatch(str(persist)):
+        raise ValueError("persist must be yes/no or like 8h, 30m, 1d")
+    scheduler = entry.get("scheduler", "auto")
+    if scheduler not in ("auto",) + SCHEDULERS:
+        raise ValueError("scheduler must be auto, slurm or pbs")
+
+
+def load_config() -> dict:
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        data = {"servers": {}, "default_server": ""}
+    except (OSError, ValueError):
+        raise ValueError("gateway catalog is unreadable; refusing to continue")
+    if not isinstance(data, dict) or not isinstance(data.get("servers", {}), dict):
+        raise ValueError("gateway catalog is malformed")
+    for name, entry in data.get("servers", {}).items():
+        validate_server(name, entry)
+    return data
+
+
+def save_config(config: dict) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".servers-", dir=str(CONFIG_DIR))
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CONFIG_FILE)
+
+
+CFG = load_config()
+
+
+def resolve_server(name: str | None) -> tuple:
+    chosen = name or CFG.get("default_server", "")
+    entry = CFG.get("servers", {}).get(chosen)
+    if entry is None:
+        raise ValueError(f"unknown server: {chosen}")
+    return chosen, entry
+
+
+def socket_path(name: str) -> Path:
+    return CACHE_DIR / f"ctl-{name}.sock"
+
+
+# ---------------------------------------------------------------- transport
+def _remote_runner(server: str, target: str, command: str, sock: Path) -> subprocess.CompletedProcess:
+    fake = os.environ.get("VASPILOT_FAKE_HPC", "")
+    if fake:
+        proc = subprocess.run([sys.executable, fake, server, command],
+                              capture_output=True, text=True, timeout=180)
+        return subprocess.CompletedProcess(command, proc.returncode, proc.stdout, proc.stderr)
+    import subprocess as _sp
+    return _sp.run(
+        ["ssh", "-p", str(CFG["servers"][server]["port"]),
+         "-o", "BatchMode=yes",
+         "-o", "StrictHostKeyChecking=yes",
+         "-o", "UpdateHostKeys=no",
+         "-o", f"ControlPath={sock}",
+         target, command],
+        stdin=subprocess.DEVNULL, text=True, capture_output=True,
+        timeout=180)
+
+
+def connected(name: str, timeout: int = 4) -> bool:
+    sock = socket_path(name)
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        # offline test seam: the marker file stands in for the ControlMaster
+        return sock.exists() and sock.read_text(encoding="utf-8").strip() == "up"
+    if not sock.exists():
+        return False
+    entry = CFG["servers"][name]
+    try:
+        result = subprocess.run(
+            ["ssh", "-p", str(entry["port"]), "-o", "BatchMode=yes",
+             "-o", f"ControlPath={sock}", "-O", "check", entry["target"]],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=timeout)
+        return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def require_connection(name: str) -> None:
+    if not connected(name):
+        raise GatewayError("disconnected",
+                           f"{name} has no reusable SSH session; run "
+                           f"'vaspilot server connect {name}' in a terminal")
+
+
+class GatewayError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def remote(name: str, command: str) -> str:
+    """Run one shell command on the HPC server over the mux; return stdout."""
+    require_connection(name)
+    entry = CFG["servers"][name]
+    result = _remote_runner(name, entry["target"], command, socket_path(name))
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        if "Host key verification failed" in stderr:
+            raise GatewayError("host_key_failed",
+                               "host key verification failed on the HPC server; "
+                               "refusing to continue (never auto-accept)")
+        raise GatewayError("remote_command_failed",
+                           f"remote command failed (rc={result.returncode}): "
+                           f"{stderr[:300]}")
+    return result.stdout or ""
+
+
+# -------------------------------------------------------------- path rules
+def effective_root(name: str, entry: dict) -> PurePosixPath:
+    root = entry.get("remote_root") or ""
+    if root:
+        return PurePosixPath(root)
+    # fall back to the login home, probed over the live connection and cached
+    cache = CACHE_DIR / f"home-{name}"
+    if cache.is_file():
+        home = cache.read_text(encoding="utf-8").strip()
+        if home.startswith("/"):
+            return PurePosixPath(home)
+    home = remote(name, "echo $HOME").strip()
+    if not home.startswith("/"):
+        raise GatewayError("root_unknown",
+                           f"cannot determine the home directory of {name}")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache.write_text(home + "\n", encoding="utf-8")
+    return PurePosixPath(home)
+
+
+def validated_remote_path(raw: str, entry: dict, name: str) -> str:
+    if not isinstance(raw, str) or not SAFE_REMOTE_PATH.fullmatch(raw or ""):
+        raise ValueError("remote path contains unsupported characters")
+    path = PurePosixPath(raw)
+    if ".." in path.parts or "." in path.parts:
+        raise ValueError("remote path cannot contain traversal segments")
+    root = effective_root(name, entry)
+    if path != root and root not in path.parents:
+        raise ValueError(f"remote path must remain under {root}")
+    return str(path)
+
+
+def require_resolved_within_root(name: str, path: str, entry: dict) -> str:
+    """Reject symlink escapes: resolve with realpath before acting."""
+    root = str(effective_root(name, entry))
+    command = (f"realpath -m -- {shlex.quote(path)} && "
+               f"realpath -m -- {shlex.quote(root)}")
+    lines = [line.strip() for line in remote(name, command).splitlines()
+             if line.strip()]
+    if len(lines) != 2:
+        raise GatewayError("resolve_failed", "could not resolve the remote path")
+    resolved, resolved_root = lines
+    rp, rr = PurePosixPath(resolved), PurePosixPath(resolved_root)
+    if rp != rr and rr not in rp.parents:
+        raise ValueError(f"remote path resolves outside {rr}")
+    return resolved
+
+
+def require_not_root(name: str, path: str, entry: dict) -> None:
+    if PurePosixPath(path) == effective_root(name, entry):
+        raise ValueError("refusing to operate on the server root itself")
+
+
+def validated_stage_path(raw: str) -> str:
+    """Validate the raw POSIX stage path (no Path() conversion: on Windows
+    that would rewrite /tmp/... into backslash form and break the check)."""
+    if not isinstance(raw, str) or not STAGE_RE.fullmatch(raw):
+        raise ValueError("staging path must be /tmp/vaspilot-<hex> created by the CLI")
+    return raw
+
+
+def q(value: str) -> str:
+    return shlex.quote(str(value))
+
+
+# ---------------------------------------------------------------- scheduler
+def scheduler_for(name: str, entry: dict) -> str:
+    pinned = entry.get("scheduler", "auto")
+    if pinned in SCHEDULERS:
+        return pinned
+    cache = CACHE_DIR / f"sched-{name}"
+    if cache.is_file():
+        cached = cache.read_text(encoding="utf-8").strip()
+        if cached in SCHEDULERS:
+            return cached
+    detected = remote(
+        name,
+        "if command -v qsub >/dev/null 2>&1; then echo pbs; "
+        "elif command -v sbatch >/dev/null 2>&1; then echo slurm; "
+        "else echo unknown; fi").strip()
+    if detected not in SCHEDULERS:
+        raise GatewayError("scheduler_unknown",
+                           f"cannot detect the scheduler on {name}")
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache.write_text(detected + "\n", encoding="utf-8")
+    return detected
+
+
+def normalize_state(raw: str) -> str:
+    code = (raw or "").strip().upper()
+    for failed in ("FAILED", "TIMEOUT", "CANCELLED", "NODE_FAIL",
+                   "OUT_OF_MEMORY", "PREEMPTED", "BOOT_FAIL"):
+        if code.startswith(failed[:4]):
+            return failed
+    if code.startswith("R"):
+        return "RUNNING"
+    if code.startswith("PD") or code.startswith("P") or code == "Q":
+        return "PENDING"
+    if code.startswith("C") or code.startswith("F"):
+        return "COMPLETED"
+    return code or "UNKNOWN"
+
+
+# ------------------------------------------------------------- vasp parsing
+def _incar_values(text: str) -> dict:
+    values = {}
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if "=" in line:
+            key, value = line.split("=", 1)
+            key, value = key.strip().upper(), value.strip()
+            if key and value:
+                values[key] = value
+    return values
+
+
+def _int_value(values: dict, key: str, default: int) -> int:
+    try:
+        return int(float(values.get(key, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def vasp_progress_payload(dir_text_files: dict) -> dict:
+    """Scientific progress from bounded OSZICAR/OUTCAR/INCAR text.
+
+    Deliberately independent from scheduler state: the caller merges the two.
+    """
+    oszicar = dir_text_files.get("OSZICAR", "")
+    outcar = dir_text_files.get("OUTCAR", "")
+    incar_text = dir_text_files.get("INCAR", "")
+    values = _incar_values(incar_text)
+    nelm = _int_value(values, "NELM", 60)
+    nsw = _int_value(values, "NSW", 0)
+
+    ionic, last_energy, last_e0, electronic_rows, nelm_hit = [], None, None, 0, False
+    for raw_line in oszicar.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if "E0=" in line or "F=" in line or "TOTEN" in line:
+            step_m = re.match(r"^(\d+)", line)
+            e0_m = re.search(r"E0=\s*([-+0-9.eEdD]+)", line)
+            f_m = re.search(r"F=\s*([-+0-9.eEdD]+)", line)
+            step = int(step_m.group(1)) if step_m else len(ionic) + 1
+            if 0 < nelm <= electronic_rows:
+                nelm_hit = True
+            ionic.append({"step": step,
+                          "e0": float(e0_m.group(1)) if e0_m else None,
+                          "f": float(f_m.group(1)) if f_m else None,
+                          "eddd_steps": electronic_rows})
+            last_e0 = float(e0_m.group(1)) if e0_m else last_e0
+            last_energy = float(f_m.group(1)) if f_m else last_energy
+            electronic_rows = 0
+        elif re.match(r"^\s*\d+\s+[-+0-9.eEdD]", line):
+            electronic_rows += 1
+
+    lower = outcar.lower()
+    ionic_converged = "reached required accuracy" in lower
+    signatures = []
+    for pattern, code in (
+            ("zbrent: fatal", "zbrent_fatal"),
+            ("very bad news", "very_bad_news"),
+            ("sub-space-matrix is not hermitian", "subspace_not_hermitian"),
+            ("brmix: very serious problems", "brmix_serious"),
+            ("p4_error", "mpi_abort"),
+            ("the electronic self-consistency was not achieved",
+             "electronic_selfconsistency_failed")):
+        if pattern in lower:
+            signatures.append(code)
+    electronic_ok = not nelm_hit and "electronic_selfconsistency_failed" not in signatures
+    ionic_ok = (len(ionic) >= 1 and electronic_ok) if nsw == 0 else ionic_converged
+
+    return {
+        "ionic_steps": len(ionic),
+        "last_e0_ev": last_e0,
+        "last_energy_ev": last_energy,
+        "electronic_reached_nelm": nelm_hit,
+        "ionic_converged": ionic_ok,
+        "electronic_converged": electronic_ok,
+        "scientific_converged": bool(ionic_ok and electronic_ok and not signatures),
+        "error_signatures": signatures,
+        "nelm": nelm,
+        "nsw": nsw,
+    }
+
+
+def read_remote_bounded(name: str, path: str, max_bytes: int) -> str:
+    """Read at most ``max_bytes`` of a remote text file (tail-biased)."""
+    command = (
+        f"size=$(wc -c < {q(path)} 2>/dev/null || echo 0); "
+        f"if [ \"$size\" -gt {int(max_bytes)} ]; then "
+        f"tail -c {int(max_bytes)} -- {q(path)}; else cat -- {q(path)} 2>/dev/null; fi")
+    return remote(name, command)
+
+
+# ----------------------------------------------------------- fs operations
+def op_pwd(args) -> int:
+    name, entry = resolve_server(args.server)
+    out({"server": name, "root": str(effective_root(name, entry)),
+         "pwd": remote(name, "pwd").strip()})
+    audit("pwd", "ok", server=name)
+    return 0
+
+
+def op_list(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path or str(effective_root(name, entry)),
+                                 entry, name)
+    require_resolved_within_root(name, path, entry)
+    listing = remote(
+        name,
+        f"if [ -d {q(path)} ]; then find {q(path)} -maxdepth 1 -mindepth 1 "
+        f"-printf '%y|%f|%s|%TY-%Tm-%TdT%TH:%TM:%TS\\n' | sort; "
+        f"else echo NOTDIR; fi")
+    entries = []
+    if listing.strip() == "NOTDIR":
+        return fail("not_a_directory", f"{path} is not a directory")
+    for line in listing.splitlines():
+        parts = line.split("|", 3)
+        if len(parts) != 4:
+            continue
+        kind, fname, size, mtime = parts
+        if fname in (".", ".."):
+            continue
+        entries.append({"name": fname, "type": {"d": "dir", "f": "file",
+                                                "l": "symlink"}.get(kind, kind),
+                        "size": int(size) if size.isdigit() else 0,
+                        "mtime": mtime.strip()})
+    out({"path": path, "entries": entries})
+    audit("list", "ok", path, name)
+    return 0
+
+
+def op_read(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    require_resolved_within_root(name, path, entry)
+    if PurePosixPath(path).name.upper() in TEXT_DENYLIST:
+        return fail("denied_file",
+                    f"{PurePosixPath(path).name} may not be read as text")
+    content = read_remote_bounded(name, path, MAX_READ_BYTES)
+    out({"path": path, "size": len(content.encode('utf-8', 'replace')),
+         "content": content})
+    audit("read", "ok", path, name)
+    return 0
+
+
+def op_tail(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    require_resolved_within_root(name, path, entry)
+    lines = max(1, min(int(args.lines), 2000))
+    content = remote(name, f"tail -n {lines} -- {q(path)}")
+    out({"path": path, "lines": lines, "content": content})
+    audit("tail", "ok", f"{path} n={lines}", name)
+    return 0
+
+
+def op_find(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    require_resolved_within_root(name, path, entry)
+    if not SAFE_GLOB.fullmatch(args.pattern or "*"):
+        return fail("invalid_pattern", "find pattern is invalid")
+    depth = max(1, min(int(args.max_depth), 8))
+    limit = max(1, min(int(args.limit), 2000))
+    listing = remote(
+        name,
+        f"find {q(path)} -maxdepth {depth} -name {q(args.pattern or '*')} -type f "
+        f"-printf '%p|%s\\n' 2>/dev/null | head -n {limit}")
+    files = []
+    for line in listing.splitlines():
+        p, _, size = line.rpartition("|")
+        if p:
+            files.append({"path": p, "size": int(size) if size.isdigit() else 0})
+    out({"root": path, "pattern": args.pattern or "*", "files": files,
+         "truncated": len(files) >= limit})
+    audit("find", "ok", f"{path} {args.pattern}", name)
+    return 0
+
+
+def op_stat(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    require_resolved_within_root(name, path, entry)
+    raw = remote(name, f"stat -c '%F|%s|%Y|%y' -- {q(path)} 2>/dev/null || echo MISSING")
+    if raw.strip() == "MISSING":
+        return fail("not_found", f"{path} does not exist")
+    kind, size, mtime, mtime_iso = [p.strip() for p in raw.split("|", 3)]
+    out({"path": path, "kind": kind, "size": int(size) if size.isdigit() else 0,
+         "mtime_epoch": int(mtime) if mtime.isdigit() else 0,
+         "mtime": mtime_iso})
+    audit("stat", "ok", path, name)
+    return 0
+
+
+def op_du(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    require_resolved_within_root(name, path, entry)
+    raw = remote(name, f"du -sb -- {q(path)} 2>/dev/null || du -sk -- {q(path)}")
+    parts = raw.split()
+    if not parts or not parts[0].isdigit():
+        return fail("du_failed", f"du returned nothing for {path}")
+    size = int(parts[0])
+    human = remote(name, f"du -sh -- {q(path)} 2>/dev/null").strip() or raw.strip()
+    out({"path": path, "bytes": size, "size_human": human})
+    audit("du", "ok", path, name)
+    return 0
+
+
+def op_mkdir(args) -> int:
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    resolved = require_resolved_within_root(name, path, entry)
+    remote(name, f"mkdir -p -- {q(resolved)}")
+    out({"path": resolved, "created": True})
+    audit("mkdir", "ok", resolved, name)
+    return 0
+
+
+def op_copy(args) -> int:
+    name, entry = resolve_server(args.server)
+    src = validated_remote_path(args.path, entry, name)
+    dst = validated_remote_path(args.destination, entry, name)
+    require_resolved_within_root(name, src, entry)
+    dst_r = require_resolved_within_root(name, dst, entry)
+    remote(name, f"cp -a -- {q(src)} {q(dst_r)}")
+    out({"copied": src, "to": dst_r})
+    audit("copy", "ok", f"{src} -> {dst_r}", name)
+    return 0
+
+
+def op_move(args) -> int:
+    name, entry = resolve_server(args.server)
+    src = validated_remote_path(args.path, entry, name)
+    dst = validated_remote_path(args.destination, entry, name)
+    require_resolved_within_root(name, src, entry)
+    dst_r = require_resolved_within_root(name, dst, entry)
+    remote(name, f"mv -- {q(src)} {q(dst_r)}")
+    out({"moved": src, "to": dst_r})
+    audit("move", "ok", f"{src} -> {dst_r}", name)
+    return 0
+
+
+# -------------------------------------------------------------------- trash
+def trash_root(name: str, entry: dict) -> str:
+    return str(effective_root(name, entry) / TRASH_DIR_NAME)
+
+
+def op_remove(args) -> int:
+    """Quarantine a remote path under the server root (never destroys)."""
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    resolved = require_resolved_within_root(name, path, entry)
+    require_not_root(name, resolved, entry)
+    if PurePosixPath(resolved).as_posix().startswith(trash_root(name, entry)):
+        return fail("already_trashed",
+                    "path is already inside the trash area")
+    trash_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + \
+        hashlib.sha256(os.urandom(8)).hexdigest()[:8]
+    root = trash_root(name, entry)
+    entry_dir = f"{root}/{trash_id}"
+    meta = {
+        "trash_id": trash_id,
+        "state": "active",
+        "original_path": resolved,
+        "trashed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "server": name,
+        "approval_ref": (args.approval_ref or "")[:120],
+    }
+    payload = f"{entry_dir}/payload"
+    remote(
+        name,
+        f"mkdir -p -- {q(entry_dir)} && "
+        f"mv -- {q(resolved)} {q(payload)} && "
+        f"printf '%s' {q(json.dumps(meta, ensure_ascii=False))} > {q(entry_dir + '/metadata.json')}")
+    out({"trash_id": trash_id, "moved": resolved, "trash_path": payload})
+    audit("remove", "ok", f"{resolved} -> {trash_id}", name)
+    return 0
+
+
+def op_trash_list(args) -> int:
+    name, entry = resolve_server(args.server)
+    root = trash_root(name, entry)
+    raw = remote(
+        name,
+        f"if [ -d {q(root)} ]; then "
+        f"for m in {q(root)}/*/metadata.json; do [ -f \"$m\" ] && cat -- \"$m\" && echo; done; "
+        f"else true; fi")
+    items = []
+    decoder = json.JSONDecoder()
+    for chunk in raw.split("\n"):
+        chunk = chunk.strip()
+        if not chunk.startswith("{"):
+            continue
+        try:
+            value, _ = decoder.raw_decode(chunk)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("trash_id"):
+            items.append(value)
+    out({"trash": items})
+    audit("trash-list", "ok", f"{len(items)} entries", name)
+    return 0
+
+
+def op_restore(args) -> int:
+    name, entry = resolve_server(args.server)
+    if not SAFE_TRASH_ID.fullmatch(args.trash_id or ""):
+        return fail("invalid_trash_id", "trash id is invalid")
+    root = trash_root(name, entry)
+    meta_path = f"{root}/{args.trash_id}/metadata.json"
+    raw = remote(name, f"cat -- {q(meta_path)} 2>/dev/null || echo MISSING")
+    if raw.strip() == "MISSING":
+        return fail("not_found", f"trash entry {args.trash_id} does not exist")
+    try:
+        meta = json.loads(raw.strip().splitlines()[0])
+    except (ValueError, IndexError):
+        return fail("corrupt_metadata", "trash metadata is unreadable")
+    if meta.get("state") == "restored":
+        return fail("already_restored",
+                    f"trash entry {args.trash_id} was already restored")
+    original = str(meta.get("original_path", ""))
+    try:
+        validated = validated_remote_path(original, entry, name)
+    except ValueError as exc:
+        return fail("invalid_original", f"original path is now invalid: {exc}")
+    payload = f"{root}/{args.trash_id}/payload"
+    reply = remote(
+        name,
+        f"if [ -e {q(validated)} ]; then echo EXISTS; "
+        f"elif [ -e {q(payload)} ]; then "
+        f"mv -- {q(payload)} {q(validated)} && "
+        f"printf '%s' {q(json.dumps({'state': 'restored', 'restored_to': validated}, ensure_ascii=False))} "
+        f"> {q(meta_path)} && echo RESTORED; else echo MISSING_PAYLOAD; fi").strip()
+    if "EXISTS" in reply:
+        return fail("target_exists",
+                    f"refusing to restore onto existing path {validated}")
+    if "MISSING_PAYLOAD" in reply:
+        return fail("payload_missing",
+                    f"trash entry {args.trash_id} has no payload to restore")
+    if "RESTORED" not in reply:
+        return fail("restore_failed", "restore command did not complete")
+    out({"restored": validated, "trash_id": args.trash_id})
+    audit("restore", "ok", f"{args.trash_id} -> {validated}", name)
+    return 0
+
+
+def op_purge(args) -> int:
+    """Irreversibly destroy one trash entry. Requires a double-matched id."""
+    name, entry = resolve_server(args.server)
+    if not SAFE_TRASH_ID.fullmatch(args.trash_id or ""):
+        return fail("invalid_trash_id", "trash id is invalid")
+    if args.confirm_trash_id != args.trash_id:
+        return fail("confirm_mismatch",
+                    "purge requires -ConfirmTrashId exactly matching -TrashId")
+    root = trash_root(name, entry)
+    target = f"{root}/{args.trash_id}"
+    exists = remote(name, f"test -d {q(target)} && echo YES || echo NO").strip()
+    if exists != "YES":
+        return fail("not_found", f"trash entry {args.trash_id} does not exist")
+    remote(name, f"rm -rf -- {q(target)}")
+    out({"purged": args.trash_id})
+    audit("purge", "ok", args.trash_id, name)
+    return 0
+
+
+# --------------------------------------------------------------------- jobs
+def op_jobs(args) -> int:
+    name, entry = resolve_server(args.server)
+    scheduler = scheduler_for(name, entry)
+    if scheduler == "pbs":
+        command = 'qstat -u "$(id -un)"'
+    else:
+        command = ('squeue -u "$(id -un)" -h -o '
+                   '"%i|%T|%M|%L|%P|%j|%N"')
+    raw = remote(name, command)
+    jobs = []
+    for line in raw.splitlines():
+        fields = [f.strip() for f in line.split("|")]
+        if len(fields) >= 2 and fields[0][:1].isdigit():
+            jobs.append({"job_id": fields[0].split(".")[0],
+                         "state": normalize_state(fields[1]),
+                         "elapsed": fields[2] if len(fields) > 2 else "",
+                         "limit": fields[3] if len(fields) > 3 else "",
+                         "partition": fields[4] if len(fields) > 4 else "",
+                         "name": fields[5] if len(fields) > 5 else "",
+                         "nodes": fields[6] if len(fields) > 6 else ""})
+    out({"scheduler": scheduler, "jobs": jobs})
+    audit("jobs", "ok", f"{len(jobs)} jobs", name)
+    return 0
+
+
+def op_recent(args) -> int:
+    name, entry = resolve_server(args.server)
+    scheduler = scheduler_for(name, entry)
+    if scheduler == "pbs":
+        raw = remote(name, 'qstat -x -u "$(id -un)" 2>/dev/null || qstat -u "$(id -un)"')
+        jobs = []
+        for line in raw.splitlines():
+            head = line.split()
+            if len(head) >= 5 and head[0][:1].isdigit() and "." in head[0]:
+                jobs.append({"job_id": head[0].split(".")[0],
+                             "state": normalize_state(head[3])})
+    else:
+        raw = remote(
+            name,
+            'sacct -u "$(id -un)" --starttime today -X -P '
+            '-o JobID,JobName%24,Partition,State,Elapsed,ExitCode')
+        jobs = []
+        for line in raw.splitlines():
+            fields = [f.strip() for f in line.split("|")]
+            if len(fields) >= 4 and fields[0][:1].isdigit():
+                jobs.append({"job_id": fields[0].split(".")[0],
+                             "name": fields[1], "partition": fields[2],
+                             "state": normalize_state(fields[3]),
+                             "elapsed": fields[4] if len(fields) > 4 else "",
+                             "exit_code": fields[5] if len(fields) > 5 else ""})
+    out({"scheduler": scheduler, "jobs": jobs})
+    audit("recent", "ok", f"{len(jobs)} jobs", name)
+    return 0
+
+
+def op_submit(args) -> int:
+    name, entry = resolve_server(args.server)
+    directory = validated_remote_path(args.directory, entry, name)
+    resolved = require_resolved_within_root(name, directory, entry)
+    if not SAFE_JOB_SCRIPT.fullmatch(args.script or "") or args.script in (".", ".."):
+        return fail("invalid_script", "job script must be a simple filename")
+    scheduler = scheduler_for(name, entry)
+    if scheduler == "pbs":
+        command = f"cd -- {q(resolved)} && qsub -- {q(args.script)}"
+    else:
+        command = f"cd -- {q(resolved)} && sbatch --parsable -- {q(args.script)}"
+    raw = remote(name, command).strip()
+    match = re.search(r"(\d{1,19})", raw)
+    if not match:
+        return fail("submit_no_job_id", f"scheduler produced no job id: {raw[:200]}")
+    out({"job_id": match.group(1), "scheduler": scheduler, "directory": resolved,
+         "script": args.script, "raw": raw[:200],
+         "approval_ref": (args.approval_ref or "")[:120]})
+    audit("submit", "ok", f"{resolved}/{args.script} job={match.group(1)}", name)
+    return 0
+
+
+def op_cancel(args) -> int:
+    name, entry = resolve_server(args.server)
+    if not SAFE_JOB_ID.fullmatch(args.job_id or ""):
+        return fail("invalid_job_id", "job id is invalid")
+    if args.confirm_job_id != args.job_id:
+        return fail("confirm_mismatch",
+                    "cancel requires a confirmation job id that exactly matches")
+    scheduler = scheduler_for(name, entry)
+    if scheduler == "pbs":
+        remote(name, f"qdel -- {q(args.job_id)}")
+    else:
+        remote(name, f"scancel -- {q(args.job_id)}")
+    out({"cancelled": args.job_id, "scheduler": scheduler})
+    audit("cancel", "ok", args.job_id, name)
+    return 0
+
+
+def op_job_state(args) -> int:
+    """Normalized lifecycle state for one job (scheduler view ONLY)."""
+    name, entry = resolve_server(args.server)
+    if not SAFE_JOB_ID.fullmatch(args.job_id or ""):
+        return fail("invalid_job_id", "job id is invalid")
+    scheduler = scheduler_for(name, entry)
+    if scheduler == "slurm":
+        raw = remote(
+            name,
+            f"out=$(squeue -h -j {q(args.job_id)} -o '%i|%T' 2>/dev/null); "
+            f"if [ -n \"$out\" ]; then echo \"$out\"; "
+            f"else sacct -j {q(args.job_id)} -n -X -o JobID%40,State 2>/dev/null; fi")
+        state = "UNKNOWN"
+        for line in raw.splitlines():
+            fields = [f.strip() for f in line.split("|")]
+            if len(fields) >= 2 and fields[0].split(".")[0] == args.job_id.split(".")[0]:
+                state = normalize_state(fields[1])
+                break
+    else:
+        raw = remote(
+            name,
+            f"out=$(qstat -f {q(args.job_id)} 2>/dev/null | grep -i 'job_state' "
+            f"| head -n 1); "
+            f"if [ -n \"$out\" ]; then echo \"$out\"; "
+            f"else qstat -x -f {q(args.job_id)} 2>/dev/null | grep -i 'job_state' "
+            f"| head -n 1; fi")
+        match = re.search(r"job_state\s*[:=]\s*(\w+)", raw, re.IGNORECASE)
+        state = normalize_state(match.group(1)) if match else "COMPLETED"
+    out({"job_id": args.job_id, "scheduler": scheduler, "state": state})
+    audit("job-state", "ok", f"{args.job_id}={state}", name)
+    return 0
+
+
+# --------------------------------------------------------------------- vasp
+def op_vasp_validate(args) -> int:
+    name, entry = resolve_server(args.server)
+    directory = validated_remote_path(args.directory, entry, name)
+    resolved = require_resolved_within_root(name, directory, entry)
+    listing = remote(
+        name,
+        f"for f in INCAR KPOINTS POSCAR POTCAR; do "
+        f"if [ -f {q(resolved)}/$f ]; then printf '%s ' $f; fi; done; echo")
+    present = set(listing.split())
+    errors = []
+    for required in ("INCAR", "KPOINTS", "POSCAR"):
+        if required not in present:
+            errors.append(f"missing required input {required}")
+    incar = read_remote_bounded(name, f"{resolved}/INCAR", 65536) \
+        if "INCAR" in present else ""
+    if "INCAR" in present and not incar.strip():
+        errors.append("INCAR is empty")
+    out({"directory": resolved, "present": sorted(present), "errors": errors,
+         "warnings": [], "incar": _incar_values(incar) if incar else {}})
+    audit("vasp-validate", "ok" if not errors else "failed", resolved, name)
+    return 0
+
+
+def op_vasp_progress(args) -> int:
+    name, entry = resolve_server(args.server)
+    directory = validated_remote_path(args.directory, entry, name)
+    resolved = require_resolved_within_root(name, directory, entry)
+    texts = {}
+    listing = remote(
+        name,
+        f"for f in INCAR OSZICAR OUTCAR CONTCAR DOSCAR EIGENVAL vasprun.xml; do "
+        f"if [ -f {q(resolved)}/$f ]; then printf '%s ' $f; fi; done; echo")
+    present = set(listing.split())
+    if "INCAR" in present:
+        texts["INCAR"] = read_remote_bounded(name, f"{resolved}/INCAR", 65536)
+    if "OSZICAR" in present:
+        texts["OSZICAR"] = read_remote_bounded(name, f"{resolved}/OSZICAR", 262144)
+    if "OUTCAR" in present:
+        texts["OUTCAR"] = read_remote_bounded(name, f"{resolved}/OUTCAR", 262144)
+    progress = vasp_progress_payload(texts)
+    progress["directory"] = resolved
+    progress["files_present"] = sorted(present)
+    out(progress)
+    audit("vasp-progress", "ok", resolved, name)
+    return 0
+
+
+# --------------------------------------------------------------- diagnostic
+DIAGNOSTICS = {
+    "hostname": "hostname -f 2>/dev/null || hostname",
+    "system": "echo cores=$(nproc); grep MemTotal /proc/meminfo 2>/dev/null | head -n 1; "
+              "df -h --output=source,size,avail,pct,target . 2>/dev/null | tail -n +1; uname -srmo",
+    "python": "python3 -V 2>&1; command -v python3",
+    "disk": "df -h . 2>/dev/null | tail -n +1",
+    "quota": "quota -s 2>/dev/null || echo 'quota: unavailable'",
+    "partitions": "sinfo -h -o '%P %a %l %D %t %N' 2>/dev/null || "
+                  "qstat -Q 2>/dev/null || echo 'partitions: unavailable'",
+    "queues": "sinfo -h -o '%P %a %l %D %t %N' 2>/dev/null || "
+              "qstat -Q 2>/dev/null || echo 'queues: unavailable'",
+    "modules": "module avail 2>&1 | head -n 40 || echo 'modules: unavailable'",
+    "scheduler": "if command -v sbatch >/dev/null 2>&1; then "
+                 "echo slurm; sbatch --version 2>/dev/null | head -n 1; "
+                 "elif command -v qsub >/dev/null 2>&1; then echo pbs; "
+                 "qsub --version 2>/dev/null | head -n 1; else echo unknown; fi",
+}
+
+
+def op_diagnostic(args) -> int:
+    name, entry = resolve_server(args.server)
+    if args.diagnostic not in DIAGNOSTICS:
+        return fail("invalid_diagnostic",
+                    "diagnostic must be one of " + ", ".join(sorted(DIAGNOSTICS)))
+    output = remote(name, DIAGNOSTICS[args.diagnostic])
+    out({"server": name, "diagnostic": args.diagnostic,
+         "output": output[:20000]})
+    audit("diagnostic", "ok", args.diagnostic, name)
+    return 0
+
+
+# ------------------------------------------------------------- data motion
+def op_upload(args) -> int:
+    """Move a staged /tmp file into place after SHA-256 verification."""
+    name, entry = resolve_server(args.server)
+    stage = validated_stage_path(args.stage)
+    target = validated_remote_path(args.path, entry, name)
+    resolved = require_resolved_within_root(name, target, entry)
+    expected = (args.sha256 or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected):
+        return fail("invalid_sha256", "upload requires the local SHA-256")
+    actual = remote(
+        name,
+        f"sha256=$(sha256sum -- {q(str(stage))} 2>/dev/null | cut -d' ' -f1); "
+        f"echo \"$sha256\"").strip()
+    if actual != expected:
+        try:
+            remote(name, f"rm -f -- {q(str(stage))}")
+        except GatewayError:
+            pass
+        return fail("sha_mismatch",
+                    f"staged file hash {actual[:12]}… != expected {expected[:12]}…")
+    existing = remote(
+        name,
+        f"if [ -e {q(resolved)} ]; then sha256sum -- {q(resolved)} "
+        f"2>/dev/null | cut -d' ' -f1; fi").strip()
+    if existing == expected:
+        remote(name, f"rm -f -- {q(str(stage))}")
+        out({"path": resolved, "sha256": expected, "status": "identical"})
+        return 0
+    if existing:
+        return fail("target_exists",
+                    f"{resolved} already exists with different content; "
+                    f"remove it to the trash first")
+    parent = str(PurePosixPath(resolved).parent)
+    remote(name, f"mkdir -p -- {q(parent)} && cp -- {q(str(stage))} {q(resolved)} "
+                 f"&& rm -f -- {q(str(stage))}")
+    out({"path": resolved, "sha256": expected, "status": "uploaded"})
+    audit("upload", "ok", f"{resolved} sha={expected[:12]}", name)
+    return 0
+
+
+def op_download(args) -> int:
+    """Copy a remote file to a /tmp stage and report its SHA-256."""
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    resolved = require_resolved_within_root(name, path, entry)
+    stage = validated_stage_path(args.stage)
+    exists = remote(name, f"test -f {q(resolved)} && echo YES || echo NO").strip()
+    if exists != "YES":
+        return fail("not_found", f"{resolved} is not a regular file")
+    remote(name, f"cp -- {q(resolved)} {q(str(stage))}")
+    sha = remote(name, f"sha256sum -- {q(str(stage))} | cut -d' ' -f1").strip()
+    size = remote(name, f"stat -c %s -- {q(str(stage))}").strip()
+    out({"path": resolved, "sha256": sha,
+         "size": int(size) if size.isdigit() else 0})
+    audit("download", "ok", f"{resolved} sha={sha[:12]}", name)
+    return 0
+
+
+def op_transfer(args) -> int:
+    """Server-to-server copy through the gateway host (bounded)."""
+    from_name, from_entry = resolve_server(args.from_server)
+    to_name, to_entry = resolve_server(args.to_server)
+    src = validated_remote_path(args.from_path, from_entry, from_name)
+    dst = validated_remote_path(args.to_path, to_entry, to_name)
+    src_r = require_resolved_within_root(from_name, src, from_entry)
+    dst_r = require_resolved_within_root(to_name, dst, to_entry)
+    size_raw = remote(from_name, f"du -sb -- {q(src_r)} | cut -f1").strip()
+    size = int(size_raw) if size_raw.isdigit() else 0
+    if size > 8 * 1024 * 1024 * 1024:
+        return fail("too_large", "transfer is capped at 8 GiB")
+    remote(to_name, f"mkdir -p -- {q(str(PurePosixPath(dst_r).parent))}")
+    # tar stream from source to destination over the two mux sessions
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        # test seam: perform as two bounded copies via a gateway-local temp file
+        handle = tempfile.NamedTemporaryFile(delete=False, prefix="vaspilot-xfer-")
+        stage = handle.name
+        handle.write(remote(from_name, f"cat -- {q(src_r)}").encode("utf-8", "replace"))
+        handle.close()
+        remote(to_name, f"cp -- {q(stage)} {q(dst_r)} && rm -f -- {q(stage)}")
+        os.unlink(stage)
+    else:
+        pull = subprocess.Popen(
+            ["ssh", "-p", str(from_entry["port"]), "-o", "BatchMode=yes",
+             "-o", f"ControlPath={socket_path(from_name)}", from_entry["target"],
+             f"tar -C {q(str(PurePosixPath(src_r).parent))} -cf - -- {q(PurePosixPath(src_r).name)}"],
+            stdout=subprocess.PIPE)
+        push = subprocess.Popen(
+            ["ssh", "-p", str(to_entry["port"]), "-o", "BatchMode=yes",
+             "-o", f"ControlPath={socket_path(to_name)}", to_entry["target"],
+             f"tar -C {q(str(PurePosixPath(dst_r).parent))} -xf -"],
+            stdin=pull.stdout)
+        pull.stdout.close()
+        rc = push.wait()
+        pull.wait()
+        if rc != 0:
+            return fail("transfer_failed", "tar stream transfer failed")
+    out({"from": src_r, "to": dst_r, "size": size})
+    audit("transfer", "ok", f"{src_r} -> {dst_r}", f"{from_name}->{to_name}")
+    return 0
+
+
+# ------------------------------------------------------------ server catalog
+def op_servers(args) -> int:
+    servers = []
+    for name, entry in sorted(CFG.get("servers", {}).items()):
+        servers.append({
+            "name": name,
+            "target": entry.get("target", ""),
+            "port": entry.get("port", 22),
+            "remote_root": entry.get("remote_root", ""),
+            "persist": entry.get("persist", ""),
+            "scheduler": entry.get("scheduler", "auto"),
+            "connected": connected(name),
+        })
+    out({"servers": servers, "default": CFG.get("default_server", ""),
+         "gateway_version": GATEWAY_VERSION, "protocol": PROTOCOL_VERSION})
+    return 0
+
+
+def op_server_add(args) -> int:
+    if not SERVER_NAME_RE.fullmatch(args.name or ""):
+        return fail("invalid_name", "server name is invalid")
+    entry = {
+        "target": args.target or "",
+        "port": int(args.port or 22),
+        "remote_root": args.root or "",
+        "persist": args.persist or "8h",
+        "scheduler": args.scheduler or "auto",
+    }
+    try:
+        validate_server(args.name, entry)
+    except ValueError as exc:
+        return fail("invalid_server", str(exc))
+    servers = dict(CFG.get("servers", {}))
+    servers[args.name] = entry
+    CFG["servers"] = servers
+    if not CFG.get("default_server"):
+        CFG["default_server"] = args.name
+    save_config(CFG)
+    audit("server-add", "ok", args.name)
+    out({"added": args.name, "entry": entry})
+    return 0
+
+
+def op_server_remove(args) -> int:
+    if not SERVER_NAME_RE.fullmatch(args.name or ""):
+        return fail("invalid_name", "server name is invalid")
+    servers = dict(CFG.get("servers", {}))
+    if args.name not in servers:
+        return fail("not_found", f"server {args.name} is not registered")
+    del servers[args.name]
+    CFG["servers"] = servers
+    if CFG.get("default_server") == args.name:
+        CFG["default_server"] = next(iter(sorted(servers)), "")
+    save_config(CFG)
+    audit("server-remove", "ok", args.name)
+    out({"removed": args.name})
+    return 0
+
+
+def op_server_set_default(args) -> int:
+    if args.name not in CFG.get("servers", {}):
+        return fail("not_found", f"server {args.name} is not registered")
+    CFG["default_server"] = args.name
+    save_config(CFG)
+    out({"default": args.name})
+    return 0
+
+
+def op_server_edit(args) -> int:
+    servers = dict(CFG.get("servers", {}))
+    if args.name not in servers:
+        return fail("not_found", f"server {args.name} is not registered")
+    entry = dict(servers[args.name])
+    changed = False
+    if args.target:
+        entry["target"] = args.target
+        changed = True
+    if args.port:
+        entry["port"] = int(args.port)
+        changed = True
+    if args.root is not None and args.root != "":
+        entry["remote_root"] = args.root
+        changed = True
+    if args.persist:
+        entry["persist"] = args.persist
+        changed = True
+    if args.scheduler:
+        entry["scheduler"] = args.scheduler
+        changed = True
+    if not changed:
+        return fail("no_changes", "server-edit needs at least one field")
+    try:
+        validate_server(args.name, entry)
+    except ValueError as exc:
+        return fail("invalid_server", str(exc))
+    servers[args.name] = entry
+    CFG["servers"] = servers
+    save_config(CFG)
+    audit("server-edit", "ok", args.name)
+    out({"edited": args.name, "entry": entry})
+    return 0
+
+
+# ------------------------------------------------------------- session ops
+def op_status(args) -> int:
+    name, entry = resolve_server(args.server)
+    out({"server": name, "connected": connected(name),
+         "socket": str(socket_path(name))})
+    return 0
+
+
+def op_connect(args) -> int:
+    """Establish the ControlMaster session (interactive: password + TOTP)."""
+    name, entry = resolve_server(args.server)
+    if connected(name):
+        out({"server": name, "connected": True, "already": True})
+        return 0
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    sock = socket_path(name)
+    if sock.exists():
+        sock.unlink()
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        sock.write_text("up\n", encoding="utf-8")
+        audit("connect", "ok", server=name)
+        out({"server": name, "connected": True})
+        return 0
+    command = [
+        "ssh", "-M", "-S", str(sock),
+        "-o", "ControlMaster=yes",
+        "-o", f"ControlPersist={entry.get('persist') or '8h'}",
+        "-o", "StrictHostKeyChecking=ask",
+        "-o", "UpdateHostKeys=no",
+        "-o", "NumberOfPasswordPrompts=3",
+        "-p", str(entry.get("port", 22)), "-fN", entry["target"],
+    ]
+    result = subprocess.run(command)
+    ok_now = result.returncode == 0 and connected(name)
+    audit("connect", "ok" if ok_now else "failed", server=name)
+    if not ok_now:
+        return fail("connect_failed",
+                    f"could not establish the multiplexed session for {name}")
+    out({"server": name, "connected": True})
+    return 0
+
+
+def op_disconnect(args) -> int:
+    name, entry = resolve_server(args.server)
+    if not connected(name):
+        out({"server": name, "connected": False, "already": True})
+        return 0
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        socket_path(name).unlink(missing_ok=True)
+        out({"server": name, "connected": False})
+        audit("disconnect", "ok", server=name)
+        return 0
+    result = subprocess.run(
+        ["ssh", "-p", str(entry["port"]), "-o", "BatchMode=yes",
+         "-o", f"ControlPath={socket_path(name)}", "-O", "exit", entry["target"]],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    out({"server": name, "connected": connected(name)})
+    audit("disconnect", "ok" if result.returncode == 0 else "failed", server=name)
+    return 0
+
+
+def op_whoami(args) -> int:
+    name, entry = resolve_server(args.server)
+    raw = remote(name, 'echo "$(id -un)@$(hostname -s):$(pwd)"').strip()
+    out({"server": name, "identity": raw, "root": str(effective_root(name, entry))})
+    return 0
+
+
+def op_version(args) -> int:
+    out({"gateway_version": GATEWAY_VERSION, "protocol": PROTOCOL_VERSION,
+         "python": sys.version.split()[0]})
+    return 0
+
+
+# -------------------------------------------------------------------- main
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="vaspilot-gateway")
+    sub = parser.add_subparsers(dest="operation", required=True)
+
+    def add(name, func, *, server=True):
+        child = sub.add_parser(name)
+        if server:
+            child.add_argument("--server")
+        child.set_defaults(func=func)
+        return child
+
+    add("version", op_version, server=False)
+    add("servers", op_servers, server=False)
+
+    p = add("server-add", op_server_add, server=False)
+    p.add_argument("name")
+    p.add_argument("--target", required=True)
+    p.add_argument("--port", type=int, default=22)
+    p.add_argument("--root", default="")
+    p.add_argument("--persist", default="8h")
+    p.add_argument("--scheduler", default="auto", choices=["auto", "slurm", "pbs"])
+
+    p = add("server-remove", op_server_remove, server=False)
+    p.add_argument("name")
+    p = add("server-set-default", op_server_set_default, server=False)
+    p.add_argument("name")
+    p = add("server-edit", op_server_edit, server=False)
+    p.add_argument("name")
+    p.add_argument("--target")
+    p.add_argument("--port", type=int)
+    p.add_argument("--root")
+    p.add_argument("--persist")
+    p.add_argument("--scheduler", choices=["auto", "slurm", "pbs"])
+
+    add("status", op_status)
+    add("connect", op_connect)
+    add("disconnect", op_disconnect)
+    add("whoami", op_whoami)
+
+    p = add("pwd", op_pwd)
+    p = add("list", op_list)
+    p.add_argument("path", nargs="?")
+    p = add("read", op_read)
+    p.add_argument("path")
+    p = add("tail", op_tail)
+    p.add_argument("path")
+    p.add_argument("--lines", type=int, default=80)
+    p = add("find", op_find)
+    p.add_argument("path")
+    p.add_argument("--pattern", default="*")
+    p.add_argument("--max-depth", type=int, default=2)
+    p.add_argument("--limit", type=int, default=200)
+    p = add("stat", op_stat)
+    p.add_argument("path")
+    p = add("du", op_du)
+    p.add_argument("path")
+    p = add("mkdir", op_mkdir)
+    p.add_argument("path")
+    p = add("copy", op_copy)
+    p.add_argument("path")
+    p.add_argument("--destination", required=True)
+    p = add("move", op_move)
+    p.add_argument("path")
+    p.add_argument("--destination", required=True)
+    p = add("remove", op_remove)
+    p.add_argument("path")
+    p.add_argument("--approval-ref", dest="approval_ref", default="")
+    p = add("trash-list", op_trash_list)
+    p = add("restore", op_restore)
+    p.add_argument("trash_id")
+    p = add("purge", op_purge)
+    p.add_argument("trash_id")
+    p.add_argument("--confirm-trash-id", dest="confirm_trash_id", required=True)
+
+    p = add("jobs", op_jobs)
+    p = add("recent", op_recent)
+    p = add("submit", op_submit)
+    p.add_argument("directory")
+    p.add_argument("script")
+    p.add_argument("--approval-ref", dest="approval_ref", default="")
+    p = add("cancel", op_cancel)
+    p.add_argument("job_id")
+    p.add_argument("--confirm-job-id", dest="confirm_job_id", required=True)
+    p = add("job-state", op_job_state)
+    p.add_argument("job_id")
+
+    p = add("vasp-validate", op_vasp_validate)
+    p.add_argument("directory")
+    p = add("vasp-progress", op_vasp_progress)
+    p.add_argument("directory")
+
+    p = add("diagnostic", op_diagnostic)
+    p.add_argument("diagnostic", choices=sorted(DIAGNOSTICS))
+
+    p = add("upload", op_upload)
+    p.add_argument("stage")
+    p.add_argument("path")
+    p.add_argument("sha256")
+    p = add("download", op_download)
+    p.add_argument("path")
+    p.add_argument("stage")
+    p = add("transfer", op_transfer)
+    p.add_argument("--from-server", dest="from_server", required=True)
+    p.add_argument("--from-path", dest="from_path", required=True)
+    p.add_argument("--to-server", dest="to_server", required=True)
+    p.add_argument("--to-path", dest="to_path", required=True)
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    try:
+        return args.func(args)
+    except GatewayError as exc:
+        return fail(exc.code, exc.message)
+    except ValueError as exc:
+        return fail("invalid_argument", str(exc))
+    except subprocess.TimeoutExpired:
+        return fail("timeout", "the remote operation timed out")
+    except FileNotFoundError as exc:
+        return fail("ssh_missing", f"ssh is unavailable: {exc}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

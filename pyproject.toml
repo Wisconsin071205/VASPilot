@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vaspilot"
+version = "1.0.0"
+description = "CLI-first, multi-model VASP/HPC agent with restricted, auditable remote operations"
+requires-python = ">=3.11"
+license = { text = "Proprietary (research prototype)" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+vaspilot = "vaspilot.cli.main:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"vaspilot.gateway" = ["codex_bridge.mjs"]
+
+[tool.pytest.ini_options]
+# Tests must exercise this checkout even when another VASPilot install exists.
+pythonpath = ["src"]
+testpaths = ["tests"]
