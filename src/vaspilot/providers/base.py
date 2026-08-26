@@ -16,6 +16,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from ..core.config import ProviderEntry
 from ..core.errors import ProviderError
@@ -80,6 +81,29 @@ def resolve_api_key(entry: ProviderEntry) -> str:
     if value and value.strip():
         return value.strip()
     return ""
+
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+def require_api_key_if_remote(entry: ProviderEntry) -> str:
+    """Fail fast with an actionable message instead of a remote 401.
+
+    Cloud endpoints must have their key present under ``api_key_env``;
+    localhost servers (Ollama, LM Studio) are exempt.
+    """
+    api_key = resolve_api_key(entry)
+    if api_key:
+        return api_key
+    host = urlparse(entry.base_url or "").hostname or ""
+    if entry.base_url and (host in LOCAL_HOSTS or host.endswith(".local")):
+        return ""
+    var = entry.api_key_env or "(no api_key_env configured)"
+    raise ProviderError(
+        f"provider {entry.id!r} needs its API key in environment variable "
+        f"{var!r}, which is currently NOT SET. Set it (e.g. "
+        f"scripts\\set-provider-key.ps1 {var}) and restart 'vaspilot ui'; "
+        "keys are never stored on disk by VASPilot.")
 
 
 def parse_tool_arguments(raw: Any) -> dict[str, Any]:

@@ -14,7 +14,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from ..core.errors import ProviderError
-from .base import BaseProvider, CapabilityProbe, ProviderReply, ToolCall, parse_tool_arguments
+from .base import (BaseProvider, CapabilityProbe, ProviderReply, ToolCall,
+                   parse_tool_arguments, require_api_key_if_remote)
 
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
@@ -29,6 +30,9 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         base = (entry.base_url or "").rstrip("/")
         if not base.startswith(("http://", "https://")):
             raise ProviderError("provider base_url must be HTTP(S)")
+        # cloud endpoints fail fast (clear message) when the key env var is
+        # missing; localhost servers are exempt from auth entirely
+        self.api_key = require_api_key_if_remote(entry)
         self.url = base if base.endswith("/chat/completions") \
             else base + "/chat/completions"
         # never route provider traffic through a system proxy silently

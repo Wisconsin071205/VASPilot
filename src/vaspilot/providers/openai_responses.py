@@ -18,7 +18,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 
 from ..core.errors import ProviderError
-from .base import BaseProvider, CapabilityProbe, ProviderReply, ToolCall, parse_tool_arguments
+from .base import (BaseProvider, CapabilityProbe, ProviderReply, ToolCall,
+                   parse_tool_arguments, require_api_key_if_remote)
 
 
 class OpenAIResponsesProvider(BaseProvider):
@@ -29,6 +30,7 @@ class OpenAIResponsesProvider(BaseProvider):
         base = (entry.base_url or "").rstrip("/")
         if not base.startswith(("http://", "https://")):
             raise ProviderError("provider base_url must be HTTP(S)")
+        self.api_key = require_api_key_if_remote(entry)
         self.url = base if base.endswith("/responses") else base + "/responses"
         self.opener = build_opener(ProxyHandler({}))
 

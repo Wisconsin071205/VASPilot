@@ -385,3 +385,31 @@ class TestCodexBridge:
         # node exists on this machine, so the bridge replies; without any
         # backend it degrades — either way the protocol must hold
         assert report.detail
+
+
+def _remote_entry_no_key():
+    return ProviderEntry(id="nk", name="NoKey",
+                         protocol="openai-chat-compatible",
+                         base_url="https://api.example.com/v1",
+                         model="m", api_key_env="VASPILOT_DEFINITELY_UNSET_XYZ")
+
+
+class TestAuthFailFast:
+    def test_remote_without_key_raises_clear_error(self, monkeypatch):
+        monkeypatch.delenv("VASPILOT_DEFINITELY_UNSET_XYZ", raising=False)
+        with pytest.raises(ProviderError, match="VASPILOT_DEFINITELY_UNSET_XYZ"):
+            build_provider(_remote_entry_no_key())
+
+    def test_remote_with_key_constructs(self, monkeypatch):
+        monkeypatch.setenv("VASPILOT_DEFINITELY_UNSET_XYZ", "k")
+        provider = build_provider(_remote_entry_no_key())
+        assert provider.api_key == "k"
+
+    def test_local_backend_exempt_from_key(self, monkeypatch):
+        monkeypatch.delenv("VASPILOT_DEFINITELY_UNSET_XYZ", raising=False)
+        entry = ProviderEntry(id="local", name="L",
+                              protocol="openai-chat-compatible",
+                              base_url="http://127.0.0.1:11434/v1",
+                              model="llama", api_key_env="")
+        provider = build_provider(entry)
+        assert provider.api_key == ""
