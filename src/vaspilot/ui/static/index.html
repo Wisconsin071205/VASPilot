@@ -117,6 +117,25 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 .step-row{display:flex;gap:8px;font-size:12px;padding:3px 0}
 .step-row .ic{width:16px;flex-shrink:0;text-align:center}
 .empty{color:var(--fg2);font-size:13px;padding:20px;text-align:center}
+
+/* ---------- settings (配置) ---------- */
+#v-cfg{display:none}
+#v-cfg.on{display:flex;gap:18px;overflow:hidden;padding:0}
+#cfgnav{width:170px;border-right:1px solid var(--line);padding:14px 8px;background:var(--bg2);flex-shrink:0}
+.cfgitem{padding:9px 12px;border-radius:7px;font-size:15px;cursor:pointer;margin-bottom:4px}
+.cfgitem:hover{background:var(--bg3)}
+.cfgitem.on{outline:2px solid var(--acc);background:var(--bg3)}
+#cfgbody{flex:1;overflow-y:auto;padding:16px 22px;min-width:0}
+.cfghan .desc{color:var(--fg2);font-size:13px;margin:-6px 0 14px;max-width:640px}
+.pcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:12px}
+.pcard .pc-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.pcard .pc-h b{font-size:15px}
+.pcard .tag{background:#12351f;color:var(--ok);border-radius:10px;padding:1px 9px;font-size:11px;font-family:var(--mono)}
+.pcard .x{margin-left:auto;background:none;border:none;color:var(--fg2);cursor:pointer;font-size:16px}
+.pcard .x:hover{color:var(--err)}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.pgrid label{display:block;font-size:11px;color:var(--fg2);margin-bottom:3px}
+.pgrid input,.pgrid select{width:100%}
 </style>
 </head>
 <body>
@@ -140,6 +159,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
     <div class="tab" data-v="files">文件</div>
     <div class="tab" data-v="jobs">作业</div>
     <div class="tab" data-v="flow">工作流</div>
+    <div class="tab" data-v="cfg">⚙ 配置</div>
   </nav>
 
   <!-- ============ 对话 ============ -->
@@ -263,6 +283,74 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
       <div id="runstate"></div>
     </div>
   </section>
+
+  <!-- ============ 配置 ============ -->
+  <section class="view" id="v-cfg">
+    <aside id="cfgnav">
+      <div class="cfgitem on" data-c="providers">模型服务</div>
+      <div class="cfgitem" data-c="conn">连接设置</div>
+      <div class="cfgitem" data-c="about">关于</div>
+    </aside>
+    <div id="cfgbody">
+
+      <!-- ---- 模型服务 ---- -->
+      <div class="cfghan" id="c-providers">
+        <h2>模型服务</h2>
+        <p class="desc">每个服务商有自己的 API 地址（可含端口）和密钥。密钥以
+          Windows 凭据加密保存在本机（不明文落盘），保存后即可直接对话；切换模型用左侧下拉框。</p>
+        <div id="provcards"></div>
+        <div class="row" style="margin-top:14px">
+          <button class="btn ghost" onclick="addProviderCard()">+ 添加服务商</button>
+          <button class="btn" onclick="saveProviders()">保存设置</button>
+          <button class="btn ghost" onclick="setDefaultsFromCards()">恢复默认服务</button>
+        </div>
+      </div>
+
+      <!-- ---- 连接设置 ---- -->
+      <div class="cfghan" id="c-conn" style="display:none">
+        <h2>连接设置</h2>
+        <div class="card"><div class="row">
+          <div style="flex:1;min-width:260px">
+            <b>Vlab PEM 私钥路径</b>
+            <div style="font-size:12px;color:var(--fg2)">SSH 连接 Vlab 计算集群（vlab.ustc.edu.cn）用</div>
+          </div>
+          <input id="cfgidentity" style="flex:1.4;min-width:300px;font-family:var(--mono)">
+        </div>
+        <div class="row" style="margin-top:10px">
+          <div class="fg"><label>主机</label><input id="cfghost" style="width:200px"></div>
+          <div class="fg"><label>用户</label><input id="cfguser" style="width:120px"></div>
+          <div class="fg"><label>端口</label><input id="cfgport" type="number" style="width:90px"></div>
+          <div id="identbadge" style="margin-left:auto"></div>
+        </div>
+        <div class="row" style="margin-top:10px"><button class="btn" onclick="saveConn()">保存连接设置</button></div>
+        </div>
+        <div class="card"><div class="row">
+          <div style="flex:1">
+            <b>远端服务器</b>
+            <div style="font-size:12px;color:var(--fg2)">在左侧「服务器」面板添加与连接；密码与六位验证码只在连接时于独立 SSH 窗口输入，凭据不会保存在任何地方。</div>
+          </div>
+        </div></div>
+      </div>
+
+      <!-- ---- 关于 ---- -->
+      <div class="cfghan" id="c-about" style="display:none">
+        <h2>关于 VASPilot</h2>
+        <div class="card">
+          <div class="row" style="gap:20px;margin-bottom:10px">
+            <span class="logo"></span><b>VASPilot <span class="mono" id="aboutver"></span></b>
+          </div>
+          <table><tbody>
+            <tr><th>安全边界</th><td>无任意 shell · 命名工具注册表 · 远端路径受服务器根限制</td></tr>
+            <tr><th>调度器状态 ≠ 科学收敛</th><td>两者的判定与展示始终分离</td></tr>
+            <tr><th>密钥存储</th><td>Windows 凭据加密（DPAPI）或环境变量，绝不明文落盘</td></tr>
+            <tr><th>审计日志</th><td class="mono">~/.vaspilot/audit/（追加式、自动脱敏）</td></tr>
+            <tr><th>命令行</th><td class="mono">vaspilot --help</td></tr>
+          </tbody></table>
+        </div>
+      </div>
+
+    </div>
+  </section>
 </main>
 
 <div id="toasts"></div>
@@ -298,6 +386,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t.dataset.v));
   if (t.dataset.v === "overview") loadSnapshot();
+  if (t.dataset.v === "cfg") loadSettings();
 });
 document.getElementById("ver").textContent = "v" + (location.search.includes("debug") ? "?" : "");
 document.getElementById("chatinput").addEventListener("keydown", e => {
@@ -638,8 +727,155 @@ function addMsg(role, text) {
   return div;
 }
 
+/* ===================== 配置 ===================== */
+let CFG = {providers: [], vlab: {}};
+document.querySelectorAll(".cfgitem").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".cfgitem").forEach(x => x.classList.toggle("on", x === t));
+  for (const id of ["providers", "conn", "about"])
+    document.getElementById("c-" + id).style.display =
+      t.dataset.c === id ? "" : "none";
+});
+async function loadSettings() {
+  const r = await api("settings");
+  if (!r.ok) return;
+  CFG = r;
+  document.getElementById("aboutver").textContent = "v" + STATE.version;
+  renderProviderCards();
+  // connection tab
+  const v = r.vlab || {};
+  document.getElementById("cfgidentity").value = v.identity_file || "";
+  document.getElementById("cfghost").value = v.host || "";
+  document.getElementById("cfguser").value = v.user || "";
+  document.getElementById("cfgport").value = v.port || 22;
+  document.getElementById("identbadge").innerHTML =
+    v.identity_file_exists ? badge("密钥文件存在", "ok")
+                           : badge("密钥文件缺失", "err");
+}
+function renderProviderCards() {
+  const box = document.getElementById("provcards");
+  box.innerHTML = "";
+  for (const p of CFG.providers) box.appendChild(providerCard(p));
+}
+function providerCard(p = null, isNew = false) {
+  const card = document.createElement("div");
+  card.className = "pcard";
+  if (isNew) p = {id: "", name: "", protocol: "openai-chat-compatible",
+                  base_url: "", model: "", api_key_env: "",
+                  key_saved: false, is_default: false};
+  card.dataset.id = p.id;
+  const keyPh = p.key_saved
+    ? "已保存（Windows 凭据加密），留空则保持不变"
+    : "尚未保存——输入后将随「保存设置」加密保存";
+  card.innerHTML = `
+    <div class="pc-h"><b>${esc(p.name || "新服务商")}</b>
+      ${p.model ? `<span class="tag">${esc(p.model)}</span>` : ""}
+      ${p.is_default ? `<span class="badge b-info">默认</span>` : ""}
+      ${p.key_saved ? `<span class="badge b-ok">🔑 已保存</span>` : `<span class="badge b-warn">未设密钥</span>`}
+      <button class="x" title="删除该服务商">×</button></div>
+    <div class="pgrid">
+      <div><label>显示名</label><input class="f-name" value="${esc(p.name)}"></div>
+      <div><label>模型名</label><input class="f-model" value="${esc(p.model)}"></div>
+      <div><label>接口类型</label><select class="f-protocol">
+        ${["openai-chat-compatible|Chat Completions (DeepSeek/GLM/Ollama)",
+           "openai-responses|Responses API (OpenAI)",
+           "codex-sdk|Codex (本地 CLI 桥)"].map(o => {
+          const [v, t] = o.split("|");
+          return `<option value="${v}" ${p.protocol === v ? "selected" : ""}>${t}</option>`;
+        }).join("")}</select></div>
+      <div><label>API 地址（可含端口）</label><input class="f-url" value="${esc(p.base_url)}" placeholder="https://…"></div>
+      <div><label>API Key（${p.key_saved ? "留空保持不变" : "将加密保存"}）</label>
+        <input class="f-key" type="password" placeholder="${keyPh}" autocomplete="off"></div>
+      <div><label>环境变量备用名（可选）</label><input class="f-env" value="${esc(p.api_key_env)}" placeholder="如 MY_API_KEY"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn ghost pc-probe">检测</button>
+      <button class="btn ghost pc-default" ${p.is_default ? "disabled" : ""}>设为默认</button>
+      <span class="pc-note" style="font-size:11px;color:var(--fg2)"></span>
+    </div>`;
+  card.querySelector(".x").onclick = async () => {
+    if (!confirm(`删除服务商「${p.name || "未命名"}」？`)) return;
+    if (!p.id) { card.remove(); return; }
+    const r = await api("provider.delete", {id: p.id});
+    if (r.ok) { toast("已删除：" + p.name, "ok"); await refreshServers(); await loadSettings(); }
+  };
+  card.querySelector(".pc-probe").onclick = async e => {
+    if (!p.id) { toast("请先保存设置后再检测", "err"); return; }
+    e.target.disabled = true;
+    const r = await api("provider.probe", {id: p.id});
+    e.target.disabled = false;
+    if (r.ok) {
+      note(card, `可达 ${r.reachable} · 流式 ${r.streaming} · 工具 ${r.tool_calling} · 结构化 JSON ${r.structured_json}`,
+           r.mode === "full" ? "ok" : "warn");
+      await refreshServers();
+    }
+  };
+  card.querySelector(".pc-default").onclick = async () => {
+    if (!p.id) return;
+    // default is decided at save time via make_default; mark locally
+    card.dataset.makeDefault = "1";
+    note(card, "点击「保存设置」后生效为默认", "");
+  };
+  return card;
+}
+const note = (card, text, cls) => {
+  const el = card.querySelector(".pc-note");
+  el.textContent = text;
+  el.style.color = cls === "ok" ? "var(--ok)" : cls === "warn" ? "var(--warn)" : "var(--fg2)";
+};
+function addProviderCard() {
+  document.getElementById("provcards").appendChild(providerCard(null, true));
+  const cards = document.querySelectorAll("#provcards .pcard");
+  cards[cards.length - 1].scrollIntoView({behavior: "smooth"});
+}
+async function saveProviders() {
+  const ids = new Set();
+  let madeDefault = "";
+  for (const card of document.querySelectorAll("#provcards .pcard")) {
+    const body = {
+      id: card.dataset.id,
+      name: card.querySelector(".f-name").value.trim(),
+      protocol: card.querySelector(".f-protocol").value,
+      base_url: card.querySelector(".f-url").value.trim(),
+      model: card.querySelector(".f-model").value.trim(),
+      api_key_env: card.querySelector(".f-env").value.trim(),
+      api_key: card.querySelector(".f-key").value,
+      make_default: card.dataset.makeDefault === "1",
+    };
+    if (!body.name && !body.base_url && !body.model) continue; // 空白卡片跳过
+    if ((body.protocol !== "codex-sdk") && !body.base_url) {
+      toast(`「${body.name || "新服务商"}」缺少 API 地址`, "err"); return;
+    }
+    if (!body.model) { toast(`「${body.name || "新服务商"}」缺少模型名`, "err"); return; }
+    const r = await api("provider.save", body);
+    if (!r.ok) return;
+    if (body.id && ids.has(body.id)) { toast("服务商 ID 重复，已跳过", "err"); break; }
+    ids.add(r.saved);
+    if (r.default) madeDefault = r.saved;
+    note(card, r.auth_ready ? "已保存 ✓ 密钥就绪" : "已保存 ✓ 但密钥未配置——对话前请在 API Key 栏填入并重新保存",
+         r.auth_ready ? "ok" : "warn");
+    card.dataset.id = r.saved;
+    card.querySelector(".f-key").value = "";
+  }
+  toast(madeDefault ? `已保存；默认服务：${madeDefault}` : "设置已保存", "ok");
+  await Promise.all([refreshServers(), loadSettings()]);
+}
+function setDefaultsFromCards() {
+  fetch("/api/settings", {headers: {"X-Vaspilot-Token": TOKEN}})
+    .then(r => r.json())
+    .then(() => location.reload());
+}
+async function saveConn() {
+  const r = await api("vlab.save", {
+    identity_file: document.getElementById("cfgidentity").value.trim(),
+    host: document.getElementById("cfghost").value.trim(),
+    user: document.getElementById("cfguser").value.trim(),
+    port: parseInt(document.getElementById("cfgport").value || "22"),
+  });
+  if (r.ok) { toast("连接设置已保存", "ok"); await loadSettings(); }
+}
+
 /* ===================== 启动 ===================== */
-refreshServers().then(loadSnapshot);
+refreshServers().then(loadSnapshot).then(loadSettings);
 </script>
 </body>
 </html>

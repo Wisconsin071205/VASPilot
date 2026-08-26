@@ -16,17 +16,18 @@ PROTOCOL_CLASSES = {
 }
 
 
-def build_provider(entry: ProviderEntry) -> BaseProvider:
+def build_provider(entry: ProviderEntry, config: Config | None = None
+                   ) -> BaseProvider:
     cls = PROTOCOL_CLASSES.get(entry.protocol)
     if cls is None:
         raise ConfigError(f"unknown provider protocol {entry.protocol!r}")
-    return cls(entry)
+    return cls(entry, config=config)
 
 
 def provider_by_id(config: Config, pid: str) -> tuple[ProviderEntry, BaseProvider]:
     for entry in config.load_providers():
         if entry.id == pid:
-            return entry, build_provider(entry)
+            return entry, build_provider(entry, config=config)
     raise ConfigError(f"provider {pid!r} is not registered; "
                       "run 'vaspilot agent provider list'")
 

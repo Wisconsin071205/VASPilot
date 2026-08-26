@@ -25,12 +25,11 @@ from .base import (BaseProvider, CapabilityProbe, ProviderReply, ToolCall,
 class OpenAIResponsesProvider(BaseProvider):
     protocol = "openai-responses"
 
-    def __init__(self, entry) -> None:
-        super().__init__(entry)
+    def __init__(self, entry, config=None) -> None:
+        super().__init__(entry, config=config)
         base = (entry.base_url or "").rstrip("/")
         if not base.startswith(("http://", "https://")):
             raise ProviderError("provider base_url must be HTTP(S)")
-        self.api_key = require_api_key_if_remote(entry)
         self.url = base if base.endswith("/responses") else base + "/responses"
         self.opener = build_opener(ProxyHandler({}))
 

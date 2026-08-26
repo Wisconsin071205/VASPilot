@@ -313,3 +313,79 @@ class TestChatStream:
 
 
 import urllib.error  # noqa: E402  (used in exceptions above)
+
+
+class TestSettingsApi:
+    """The 配置 page: providers CRUD + DPAPI key vault + vlab settings."""
+
+    def test_save_provider_with_key_roundtrip(self, ui, monkeypatch):
+        monkeypatch.delenv("VASPILOT_API_KEY_WEB_X", raising=False)
+        payload = {"id": "web1", "name": "Web GLM",
+                   "protocol": "openai-chat-compatible",
+                   "base_url": "https://api.example.com/v1",
+                   "model": "glm-web", "api_key_env": "",
+                   "api_key": "sk-secret-123"}
+        saved = call(ui, "provider.save", payload)
+        assert saved["ok"] is True
+        assert saved["key_saved"] is True
+        assert saved["auth_ready"] is True
+
+        # the plaintext never lands on disk or in any API response
+        raw = (ui["app"].config.settings_path).read_text(encoding="utf-8")
+        assert "sk-secret-123" not in raw
+        blob = json.dumps(saved) + json.dumps(
+            call(ui, "settings"))
+        assert "sk-secret-123" not in blob
+
+        # a FRESH resolution (no env var) finds the key via the vault —
+        # this is the exact path chat/probe uses
+        from vaspilot.providers import provider_by_id
+        entry, provider = provider_by_id(ui["app"].config, "web1")
+        assert provider.api_key == "sk-secret-123"
+
+        # second save WITHOUT key keeps the vault entry
+        updated = call(ui, "provider.save", {**payload, "api_key": "",
+                                             "model": "glm-web-2"})
+        assert updated["key_saved"] is True
+        _, provider2 = provider_by_id(ui["app"].config, "web1")
+        assert provider2.api_key == "sk-secret-123"
+        _, provider2 = provider_by_id(ui["app"].config, "web1")  # fresh again
+        assert provider2.entry.model == "glm-web-2"
+
+    def test_save_reports_missing_auth_but_still_saves(self, ui, monkeypatch):
+        monkeypatch.delenv("VASPILOT_UNSET_REMOTE_Y", raising=False)
+        saved = call(ui, "provider.save", {
+            "id": "noserver", "name": "NoKey Cloud",
+            "protocol": "openai-chat-compatible",
+            "base_url": "https://cloud.example.com/v1",
+            "model": "m", "api_key": ""})
+        assert saved["ok"] is True
+        assert saved["auth_ready"] is False
+        # chat would fail with the actionable message, not 401
+        from vaspilot.providers import provider_by_id
+        from vaspilot.core.errors import ProviderError
+        with pytest.raises(ProviderError, match="noserver"):
+            provider_by_id(ui["app"].config, "noserver")
+
+    def test_provider_delete(self, ui):
+        call(ui, "provider.save", {
+            "id": "tmp", "name": "T", "protocol": "openai-chat-compatible",
+            "base_url": "https://x.example.com/v1", "model": "m",
+            "api_key": "sk-tmp"})
+        deleted = call(ui, "provider.delete", {"id": "tmp"})
+        assert deleted["ok"]
+        ids = [p.id for p in ui["app"].config.load_providers()]
+        assert "tmp" not in ids
+        assert not ui["app"].config.provider_key_saved("tmp")
+
+    def test_vlab_save_updates_identity(self, ui, tmp_path):
+        pem = tmp_path / "new.pem"
+        pem.write_text("PEM\n", encoding="utf-8")
+        result = call(ui, "vlab.save", {
+            "identity_file": str(pem), "host": "", "user": "", "port": None})
+        assert result["ok"] and result["saved"]["identity_file"] == str(pem)
+        settings = call(ui, "settings")
+        assert settings["vlab"]["identity_file_exists"] is True
+
+
+import pytest as _pytest  # noqa: E402,F401  (pytest.raises used above)

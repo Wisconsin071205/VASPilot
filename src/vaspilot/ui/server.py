@@ -239,6 +239,32 @@ class UiHandler(BaseHTTPRequestHandler):
                 cache[provider.entry.id] = report.to_dict()
                 app.config.update_settings(provider_probes=cache)
                 self._send_json(report.to_dict())
+            elif action == "settings":
+                self._send_json(self._settings_payload())
+            elif action == "provider.save":
+                self._save_provider(body)
+            elif action == "provider.delete":
+                pid = str(body.get("id") or "")
+                app.config.remove_provider(pid)
+                app.config.remove_provider_key(pid)
+                cached = app.config.load_settings().get("provider_probes") or {}
+                if pid in cached:
+                    del cached[pid]
+                    app.config.update_settings(provider_probes=cached)
+                if app.config.default_provider() == pid:
+                    providers = app.config.load_providers()
+                    nxt = providers[0].id if providers else ""
+                    if nxt:
+                        app.config.set_default_provider(nxt)
+                    else:
+                        app.config.update_settings(default_provider="")
+                self._send_json({"deleted": pid})
+            elif action == "vlab.save":
+                saved = app.config.set_vlab(
+                    identity_file=str(body.get("identity_file") or "").strip(),
+                    host=str(body.get("host") or "").strip() or None,
+                    user=str(body.get("user") or "").strip() or None)
+                self._send_json({"saved": {k: v for k, v in saved.items()}})
             else:
                 self._send_json({"ok": False, "error": {
                     "code": "unknown_action", "message": action}}, status=404)
@@ -263,10 +289,79 @@ class UiHandler(BaseHTTPRequestHandler):
             providers.append({**p.to_dict(),
                               "is_default": p.id == app.config.default_provider(),
                               "mode": (probe or {}).get("mode"),
-                              "probed_at": (probe or {}).get("checked_at")})
+                              "probed_at": (probe or {}).get("checked_at"),
+                              "key_saved": app.config.provider_key_saved(p.id)})
         return {"ok": True, "version": __version__, "servers": servers,
                 "providers": providers,
                 "default_provider": app.config.default_provider()}
+
+    def _settings_payload(self) -> dict:
+        """Full settings view for the console's 配置 page. Never includes key
+        material — only whether a DPAPI-protected key exists."""
+        app = self.state.app
+        providers = []
+        for p in app.config.load_providers():
+            providers.append({**p.to_dict(),
+                              "is_default": p.id == app.config.default_provider(),
+                              "key_saved": app.config.provider_key_saved(p.id)})
+        vlab = app.config.vlab
+        identity_ok = False
+        if vlab["identity_file"]:
+            try:
+                from pathlib import Path
+                identity_ok = Path(vlab["identity_file"]).expanduser().is_file()
+            except OSError:
+                identity_ok = False
+        return {"ok": True,
+                "providers": providers,
+                "default_provider": app.config.default_provider(),
+                "vlab": {**vlab, "identity_file_exists": identity_ok}}
+
+    def _save_provider(self, body: dict) -> None:
+        from ..core.config import ProviderEntry
+        from ..core.errors import ValidationError
+        from ..providers import build_provider
+
+        app = self.state.app
+        pid = str(body.get("id") or "").strip()
+        name = str(body.get("name") or "").strip() or pid
+        protocol = str(body.get("protocol") or "").strip()
+        base_url = str(body.get("base_url") or "").strip()
+        model = str(body.get("model") or "").strip()
+        api_key_env = str(body.get("api_key_env") or "").strip()
+        api_key = str(body.get("api_key") or "")  # optional; empty keeps vault
+        make_default = bool(body.get("make_default"))
+
+        existing_ids = [p.id for p in app.config.load_providers()]
+        if not pid:
+            # auto id for new cards
+            import re as _re
+            base = _re.sub(r"[^A-Za-z0-9._-]", "-", name or "provider").strip("-")
+            pid = (base[:40] or "provider") + "-" + secrets.token_hex(3)
+        is_new = pid not in existing_ids
+        if is_new and not base_url and protocol != "codex-sdk":
+            raise ValidationError("new HTTP provider needs an API base URL")
+
+        app.config.add_provider(ProviderEntry(
+            id=pid, name=name[:40], protocol=protocol,
+            base_url=base_url, model=model[:64], api_key_env=api_key_env))
+        if api_key.strip():
+            app.config.set_provider_key(pid, api_key)
+        if make_default or not app.config.default_provider():
+            app.config.set_default_provider(pid)
+        # sanity-check through the same resolution path the agent uses; a
+        # missing key must NOT block saving the card — it only flips a flag
+        auth_ready = True
+        try:
+            from ..providers import build_provider as _build
+            entry = next(p for p in app.config.load_providers() if p.id == pid)
+            _build(entry, app.config)
+        except Exception:
+            auth_ready = False
+        self._send_json({"saved": pid,
+                         "default": app.config.default_provider() == pid,
+                         "key_saved": app.config.provider_key_saved(pid),
+                         "auth_ready": auth_ready})
 
     # ----------------------------------------------------- background runs
     def _start_run(self, plan_id: str, approval_ref: str,

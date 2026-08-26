@@ -305,6 +305,51 @@ class Config:
             settings.pop("default_provider", None)
             self.save_settings(settings)
 
+    # -- provider key vault (DPAPI ciphertext, never plaintext) ----------------
+    def set_provider_key(self, pid: str, plaintext: str) -> None:
+        """Encrypt with Windows DPAPI (CurrentUser) and store base64."""
+        from . import secretbox
+        if not plaintext or not plaintext.strip():
+            raise ValidationError("provider key must be non-empty")
+        if not PROVIDER_ID_RE.fullmatch(pid):
+            raise ValidationError(f"provider id {pid!r} is invalid")
+        blob = secretbox.protect_b64(plaintext.strip())
+        settings = self.load_settings()
+        stored = settings.get("provider_keys")
+        if not isinstance(stored, dict):
+            stored = {}
+        stored[pid] = blob
+        settings["provider_keys"] = stored
+        self.save_settings(settings)
+
+    def get_provider_key(self, pid: str) -> str:
+        """Decrypt the stored key; "" when absent/unreadable. The value is
+        meant for one outgoing Authorization header only — callers must not
+        log or persist it."""
+        from . import secretbox
+        stored = self.load_settings().get("provider_keys")
+        if not isinstance(stored, dict):
+            return ""
+        blob = stored.get(pid)
+        if not isinstance(blob, str) or not blob:
+            return ""
+        try:
+            return secretbox.unprotect_b64(blob)
+        except (OSError, ValueError):
+            return ""
+
+    def remove_provider_key(self, pid: str) -> None:
+        settings = self.load_settings()
+        stored = settings.get("provider_keys")
+        if isinstance(stored, dict) and pid in stored:
+            del stored[pid]
+            settings["provider_keys"] = stored
+            self.save_settings(settings)
+
+    def provider_key_saved(self, pid: str) -> bool:
+        stored = self.load_settings().get("provider_keys")
+        return bool(isinstance(stored, dict) and stored.get(pid))
+
     # -- approval signing key --------------------------------------------------
     def approval_signing_key(self) -> bytes:
         """Load (or first-create) the per-install approval HMAC key."""

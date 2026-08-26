@@ -89,8 +89,8 @@ LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 def require_api_key_if_remote(entry: ProviderEntry) -> str:
     """Fail fast with an actionable message instead of a remote 401.
 
-    Cloud endpoints must have their key present under ``api_key_env``;
-    localhost servers (Ollama, LM Studio) are exempt.
+    Cloud endpoints must carry a key (env var or the DPAPI vault); localhost
+    servers (Ollama, LM Studio) and the codex-sdk bridge are exempt.
     """
     api_key = resolve_api_key(entry)
     if api_key:
@@ -99,11 +99,12 @@ def require_api_key_if_remote(entry: ProviderEntry) -> str:
     if entry.base_url and (host in LOCAL_HOSTS or host.endswith(".local")):
         return ""
     var = entry.api_key_env or "(no api_key_env configured)"
+    hint = (f"paste the key once in the web console '配置 → 模型服务', or set "
+            f"environment variable {var!r}")
     raise ProviderError(
-        f"provider {entry.id!r} needs its API key in environment variable "
-        f"{var!r}, which is currently NOT SET. Set it (e.g. "
-        f"scripts\\set-provider-key.ps1 {var}) and restart 'vaspilot ui'; "
-        "keys are never stored on disk by VASPilot.")
+        f"provider {entry.id!r} has no API key configured: {hint}. "
+        "Keys are encrypted with Windows DPAPI or read from env vars — "
+        "never stored in plaintext.")
 
 
 def parse_tool_arguments(raw: Any) -> dict[str, Any]:
@@ -128,9 +129,17 @@ class BaseProvider:
 
     protocol = ""
 
-    def __init__(self, entry: ProviderEntry) -> None:
+    def __init__(self, entry: ProviderEntry, config=None) -> None:
         self.entry = entry
+        # key precedence: environment variable > DPAPI vault (web console)
         self.api_key = resolve_api_key(entry)
+        if not self.api_key and config is not None:
+            try:
+                self.api_key = config.get_provider_key(entry.id)
+            except Exception:  # vault problems must not break construction
+                self.api_key = ""
+        if not self.api_key and entry.protocol != "codex-sdk":
+            require_api_key_if_remote(entry)
 
     # -- subclass API ---------------------------------------------------------
     def probe(self) -> CapabilityProbe:  # pragma: no cover - abstract

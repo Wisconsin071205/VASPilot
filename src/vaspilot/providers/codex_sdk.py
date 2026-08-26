@@ -59,8 +59,8 @@ def _extract_json_object(text: str) -> dict | None:
 class CodexSdkProvider(BaseProvider):
     protocol = "codex-sdk"
 
-    def __init__(self, entry) -> None:
-        super().__init__(entry)
+    def __init__(self, entry, config=None) -> None:
+        super().__init__(entry, config=config)
         self.node_binary = os.environ.get("VASPILOT_NODE", "node")
         override = os.environ.get("VASPILOT_CODEX_BRIDGE_FAKE", "").strip()
         self.bridge = Path(override) if override else BRIDGE_PATH

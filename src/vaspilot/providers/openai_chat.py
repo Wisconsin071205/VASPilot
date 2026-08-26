@@ -25,14 +25,15 @@ class OpenAIChatCompatibleProvider(BaseProvider):
 
     protocol = "openai-chat-compatible"
 
-    def __init__(self, entry) -> None:
-        super().__init__(entry)
+    def __init__(self, entry, config=None) -> None:
+        super().__init__(entry, config=config)
         base = (entry.base_url or "").rstrip("/")
         if not base.startswith(("http://", "https://")):
             raise ProviderError("provider base_url must be HTTP(S)")
-        # cloud endpoints fail fast (clear message) when the key env var is
-        # missing; localhost servers are exempt from auth entirely
-        self.api_key = require_api_key_if_remote(entry)
+        self.url = base if base.endswith("/chat/completions") \
+            else base + "/chat/completions"
+        # never route provider traffic through a system proxy silently
+        self.opener = build_opener(ProxyHandler({}))
         self.url = base if base.endswith("/chat/completions") \
             else base + "/chat/completions"
         # never route provider traffic through a system proxy silently
