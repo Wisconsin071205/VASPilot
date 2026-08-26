@@ -110,11 +110,56 @@ class TestTokenGuard:
             urllib.request.urlopen(f"{ui['base']}/t/wrong", timeout=10)
         assert exc.value.code == 403
 
+    def test_expired_token_shows_friendly_page(self, ui):
+        """The old plain-text 'session expired' is now a helpful page."""
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(f"{ui['base']}/t/old-token", timeout=10)
+        body = exc.value.read().decode("utf-8")
+        assert exc.value.code == 403
+        assert "会话已过期" in body and "vaspilot ui" in body
+
+    def test_landing_page_without_token(self, ui):
+        with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
+            body = response.read().decode("utf-8")
+        assert "VASPilot" in body and "vaspilot ui" in body
+
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
         assert "VASPilot" in html and "chatinput" in html
+
+
+class TestPortFallback:
+    def test_busy_port_falls_forward(self, ui, monkeypatch):
+        """When the requested port refuses to bind, the next port is used.
+
+        Windows SO_REUSEADDR would let a second bind succeed silently, so
+        the failure is injected at the constructor instead.
+        """
+        from vaspilot.ui import server as ui_server
+        base_port = int(ui["base"].rsplit(":", 1)[1])
+        real_server = ui_server.ThreadingHTTPServer
+
+        class FlakyServer:
+            def __init__(self, addr, handler):
+                if addr[1] == base_port:
+                    raise OSError(10013, "injected bind refusal")
+                self._real = real_server(addr, handler)
+                self.server_address = self._real.server_address
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+        monkeypatch.setattr(ui_server, "ThreadingHTTPServer", FlakyServer)
+        httpd, url = ui_server.serve(ui["app"], host="127.0.0.1",
+                                     port=base_port, open_browser=False,
+                                     run_forever=False)
+        try:
+            used = int(url.rsplit(":", 1)[1].split("/")[0])
+            assert used == base_port + 1
+        finally:
+            httpd.server_close()
 
 
 class TestViews:
