@@ -145,21 +145,52 @@ class SshTransport:
         return document
 
     # -- interactive terminal ----------------------------------------------------
-    def open_connect_terminal(self, server: str) -> dict:
-        """Open a *visible* terminal for interactive login (never headless).
+    def open_connect_terminal(self, *, server: str, target: str,
+                              port: int = 22, persist: str = "8h") -> dict:
+        """Open a *visible* terminal that lands IMMEDIATELY on the target
+        server's password prompt (e.g. ``jlyang@…'s password:``).
 
-        Passwords and TOTP are typed by the human in this window only.
+        Fast path: instead of hopping through the gateway script (outer ssh
+        → python startup → its own ssh), run ONE outer shell that checks the
+        mux socket and either reports already-connected or spawns the
+        ControlMaster right away. The human types password/TOTP only here;
+        the master session is identical to what every gateway operation
+        reuses afterwards (same socket path ~/.cache/vaspilot/ctl-<srv>.sock).
 
         Windows note: spawn ``cmd /k ssh …`` directly with
-        CREATE_NEW_CONSOLE — do NOT go through ``start``, which would treat
-        the joined command line as one file name ("Windows cannot find
-        'ssh -q …'"). /k keeps the window open so the connect result (job
-        prompts, OTP retry, success line) stays readable.
+        CREATE_NEW_CONSOLE — never via ``start``, which would treat the
+        joined command line as one file name. /k keeps the window open so
+        the OTP prompt/retry/result stays readable.
         """
+        import re as _re
+
         valid_server_name(server)
-        inner = f"{self.gateway_path} connect --server {server}"
-        ssh_args = self._base(batch=False, tty=True) + [inner]
-        cmd = ["cmd", "/k"] + ssh_args
+        if not _re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,253}",
+                target or ""):
+            raise ValidationError("target must be user@host")
+        if not _re.fullmatch(r"(?i)(yes|no|[0-9]+[smhdw])", persist or "8h"):
+            raise ValidationError("persist must be yes/no or like 8h, 30m")
+        port = int(port)
+
+        sock = f"$HOME/.cache/vaspilot/ctl-{server}.sock"
+        remote = (
+            f'mkdir -p "$HOME/.cache/vaspilot"; '
+            f'if [ -S "{sock}" ] && ssh -o BatchMode=yes '
+            f'-o "ControlPath={sock}" -O check "{target}" >/dev/null 2>&1; then '
+            f'echo "{server}: session alive (nothing to do)"; '
+            f"else rm -f \"{sock}\"; "
+            f'exec ssh -M -S "{sock}" -o ControlMaster=yes '
+            f'-o "ControlPersist={persist}" '
+            f"-o StrictHostKeyChecking=ask -o UpdateHostKeys=no "
+            f"-o NumberOfPasswordPrompts=3 -p {port} -fN \"{target}\"; fi"
+        )
+        outer = ["ssh", "-tt", "-p", str(self.port)]
+        if self.identity_file:
+            outer += ["-i", self.identity_file]
+        outer += ["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
+                  f"{self.user}@{self.host}", remote]
+        cmd = ["cmd", "/k"] + outer
         creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         try:
             subprocess.Popen(cmd, creationflags=creationflags)

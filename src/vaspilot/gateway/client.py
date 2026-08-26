@@ -166,11 +166,21 @@ class GatewayClient:
         return result
 
     def open_login_terminal(self, server: str | None = None) -> dict:
+        """Open the fast-path login terminal for one server.
+
+        The server's target/port/persist come from the local mirror so the
+        spawned shell lands on the password prompt with zero gateway hops.
+        """
         name = self._require(server)
-        result = self.transport.open_connect_terminal(name)
+        entry = self.server_entry(name)
+        result = self.transport.open_connect_terminal(
+            server=name, target=entry.target, port=entry.port,
+            persist=entry.persist or "8h")
         if self.audit:
             self.audit.record("server.login_terminal", outcome="ok", server=name)
-        return result
+        return {"opened": True, "server": name,
+                "note": ("enter that server's password and TOTP in the new "
+                         "terminal window; existing sessions report alive")}
 
     def disconnect(self, server: str | None = None) -> dict:
         name = self._require(server)

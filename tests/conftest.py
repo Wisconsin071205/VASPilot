@@ -87,7 +87,10 @@ class FakeTransport:
         self.state.connected[server] = True
         return {"connected": True, "server": server}
 
-    def open_connect_terminal(self, server):
+    def open_connect_terminal(self, *, server, target, port=22, persist="8h"):
+        self.state.connected[server] = True
+        self.state.servers.setdefault(server, {"target": target, "port": port,
+                                               "root": "", "scheduler": "auto"})
         return {"opened": True, "server": server}
 
     # -- helpers ---------------------------------------------------------------

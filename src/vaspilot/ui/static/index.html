@@ -72,6 +72,21 @@ td.wrap{white-space:normal}
 .fg label{font-size:11px;color:var(--fg2)}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-family:var(--mono);font-size:12px}
 #toasts{position:fixed;right:18px;bottom:18px;z-index:99;display:flex;flex-direction:column;gap:8px}
+
+/* ---------- server add/edit modal ---------- */
+#modalback{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:none;
+  align-items:center;justify-content:center}
+#modalback.on{display:flex}
+.modal{width:min(560px,92vw);background:var(--bg2);border:1px solid var(--line);
+  border-radius:12px;padding:22px 26px;max-height:88vh;overflow-y:auto}
+.modal h2{font-size:18px;margin-bottom:14px}
+.modal label{display:block;font-size:12px;color:var(--fg2);margin:10px 0 4px}
+.modal input,.modal select{width:100%}
+.modal .mrow{display:flex;gap:14px}.modal .mrow>div{flex:1}
+.modal .note{font-size:12px;color:var(--warn);border-left:3px solid var(--line);
+  padding-left:10px;margin-top:14px}
+.modal .mbtns{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+.srv button.mini{padding:1px 6px;font-size:11px;margin-left:4px}
 .toast{background:var(--bg3);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:10px 14px;max-width:420px;font-size:13px;animation:in .2s}
 .toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
@@ -142,7 +157,11 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 
 <aside id="side">
   <div id="brand"><h1><span class="logo"></span>VASPilot <span class="v" id="ver"></span></h1></div>
-  <div class="side-h">服务器 <button onclick="refreshServers()">刷新</button></div>
+  <div class="side-h">服务器
+    <span>
+      <button title="添加服务器" onclick="openServerModal(null)">＋</button>
+      <button onclick="refreshServers()">刷新</button>
+    </span></div>
   <div id="servers"><div class="empty">加载中…</div></div>
   <div id="prov">
     <div class="side-h" style="padding:0 0 4px">模型服务</div>
@@ -353,6 +372,31 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
   </section>
 </main>
 
+<div id="modalback" onclick="if(event.target===this)this.classList.remove('on')">
+  <div class="modal">
+    <h2 id="mtitle">添加服务器</h2>
+    <label>服务器名称</label><input id="mname" placeholder="如 cl9 / minus">
+    <label>目标地址（用户名@主机）</label><input id="mtarget" placeholder="jlyang@114.214.203.217">
+    <div class="mrow">
+      <div><label>SSH 端口</label><input id="mport" type="number" value="22"></div>
+      <div><label>连接保持时长</label><input id="mpersist" value="8h" placeholder="8h / 30m / 1d"></div>
+    </div>
+    <label>任务调度器</label>
+    <select id="msched">
+      <option value="auto">自动探测</option>
+      <option value="slurm">Slurm</option>
+      <option value="pbs">PBS/Torque</option>
+    </select>
+    <label>远端根路径（留空 = 登录用户主目录；工具只能在此边界内操作）</label>
+    <input id="mroot" placeholder="/public/home/…">
+    <div class="note">改名称或地址端口需要先断开该服务器；根路径与保持时长可随时修改。</div>
+    <div class="mbtns">
+      <button class="btn ghost" onclick="document.getElementById('modalback').classList.remove('on')">取消</button>
+      <button class="btn" onclick="saveServerModal()">保存修改</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -407,15 +451,20 @@ async function refreshServers() {
     div.innerHTML = `<span class="dot" title="${s.connected ? "已连接" : "未连接"}"></span>
       <span class="nm">${esc(s.name)}${s.is_default ? "<small>默认</small>" : ""}
         <small>${esc(s.scheduler)}</small></span>`;
+    const edit = document.createElement("button");
+    edit.className = "mini"; edit.title = "编辑服务器";
+    edit.textContent = "✎";
+    edit.onclick = () => openServerModal(s);
     const btn = document.createElement("button");
     btn.textContent = s.connected ? "断开" : "连接";
     btn.onclick = async () => {
       if (s.connected) { await api("server.disconnect", {server: s.name}); refreshServers(); }
       else {
         const r = await api("server.connect", {server: s.name});
-        if (r.ok) toast("已打开登录终端：请在其中输入密码和动态验证码", "ok");
+        if (r.ok) toast(`已弹出「${s.name}」的登录窗口：请在其提示处输入该服务器的密码和动态验证码`, "ok");
       }
     };
+    div.appendChild(edit);
     div.appendChild(btn);
     box.appendChild(div);
   }
@@ -872,6 +921,53 @@ async function saveConn() {
     port: parseInt(document.getElementById("cfgport").value || "22"),
   });
   if (r.ok) { toast("连接设置已保存", "ok"); await loadSettings(); }
+}
+
+/* ===================== 服务器 添加/编辑 ===================== */
+function openServerModal(entry) {
+  const back = document.getElementById("modalback");
+  document.getElementById("mtitle").textContent =
+    entry ? `编辑服务器：${entry.name}` : "添加服务器";
+  document.getElementById("mname").value = entry ? entry.name : "";
+  document.getElementById("mname").dataset.orig =
+    entry ? entry.name : "";
+  document.getElementById("mtarget").value = entry ? entry.target : "";
+  document.getElementById("mport").value = entry ? entry.port : 22;
+  document.getElementById("mpersist").value = entry?.persist || "8h";
+  document.getElementById("msched").value = entry
+    ? (entry.scheduler === "pbs" ? "pbs"
+       : entry.scheduler === "slurm" ? "slurm" : "auto")
+    : "auto";
+  document.getElementById("mroot").value = entry ? entry.remote_root : "";
+  back.classList.add("on");
+  setTimeout(() => document.getElementById(
+    entry ? "mtarget" : "mname").focus(), 60);
+}
+async function saveServerModal() {
+  const orig = document.getElementById("mname").dataset.orig;
+  const body = {
+    id: orig,
+    new_name: document.getElementById("mname").value.trim(),
+    target: document.getElementById("mtarget").value.trim(),
+    port: parseInt(document.getElementById("mport").value || "22"),
+    persist: document.getElementById("mpersist").value.trim() || "8h",
+    scheduler: document.getElementById("msched").value,
+    remote_root: document.getElementById("mroot").value.trim(),
+  };
+  let r;
+  if (!orig) {
+    if (!body.new_name || !body.target) return toast("名称与目标地址必填", "err");
+    r = await api("server.add", {...body, name: body.new_name});
+    if (!r.ok) return;
+    toast(`已添加 ${body.new_name}。点其「连接」并在弹窗输入密码/验证码`, "ok");
+  } else {
+    r = await api("server.edit", body);
+    if (!r.ok) return;
+    toast(body.new_name !== orig ? `已改名 ${orig} → ${body.new_name}`
+                                 : `已保存修改：${orig}`, "ok");
+  }
+  document.getElementById("modalback").classList.remove("on");
+  await Promise.all([refreshServers(), loadSettings()]);
 }
 
 /* ===================== 启动 ===================== */

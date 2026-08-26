@@ -196,6 +196,10 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(result)
             elif action == "server.disconnect":
                 self._send_json(client.disconnect(str(body.get("server") or "")))
+            elif action == "server.add":
+                self._add_server(body)
+            elif action == "server.edit":
+                self._edit_server(body)
             elif action == "server.status":
                 self._send_json(client.status(str(body.get("server") or "")))
             elif action == "remote.list":
@@ -294,6 +298,77 @@ class UiHandler(BaseHTTPRequestHandler):
         return {"ok": True, "version": __version__, "servers": servers,
                 "providers": providers,
                 "default_provider": app.config.default_provider()}
+
+    def _add_server(self, body: dict) -> None:
+        from ..core.errors import ValidationError
+        client = self.state.app.client()
+        name = str(body.get("name") or "").strip()
+        target = str(body.get("target") or "").strip()
+        if not target or "@" not in target:
+            raise ValidationError("target must be user@host")
+        result = client.server_add(
+            name=name, target=target,
+            port=int(body.get("port") or 22),
+            remote_root=str(body.get("remote_root") or "").strip(),
+            persist=str(body.get("persist") or "8h").strip() or "8h",
+            scheduler=str(body.get("scheduler") or "auto"),
+            set_default=bool(body.get("make_default")))
+        self._send_json({"added": name, "result": result})
+
+    def _edit_server(self, body: dict) -> None:
+        from ..core.errors import ValidationError
+        app = self.state.app
+        client = app.client()
+        old = str(body.get("id") or "").strip()
+        new_name = str(body.get("new_name") or "").strip()
+        entry = client.server_entry(old)
+        try:
+            connected = bool(client.status(old).get("connected"))
+        except Exception:
+            connected = False
+        fields = dict(
+            target=str(body.get("target") or "").strip() or entry.target,
+            port=int(body.get("port") or 0) or entry.port,
+            remote_root=(str(body.get("remote_root") or "").strip()
+                         if body.get("remote_root") is not None
+                         else entry.remote_root),
+            persist=str(body.get("persist") or "").strip() or entry.persist,
+            scheduler=str(body.get("scheduler") or "").strip() or entry.scheduler)
+
+        identity_changed = (new_name and new_name != old) or \
+            fields["target"] != entry.target or fields["port"] != entry.port
+        if connected and identity_changed:
+            raise ValidationError(
+                f"{old} 已连接：改名或修改地址/端口前请先断开该服务器；"
+                "根路径与保持时长可随时修改")
+
+        if not identity_changed:
+            edited = client.server_edit(
+                old, target=None, port=None,
+                remote_root=fields["remote_root"],
+                persist=fields["persist"], scheduler=fields["scheduler"])
+            self._send_json({"edited": old, "result": edited})
+            return
+
+        if not new_name or new_name == old:
+            # target/port change while disconnected: apply all fields
+            edited = client.server_edit(
+                old, target=fields["target"], port=fields["port"],
+                remote_root=fields["remote_root"],
+                persist=fields["persist"], scheduler=fields["scheduler"])
+            self._send_json({"edited": old, "result": edited})
+            return
+
+        # rename while disconnected: add the new identity, retire the old
+        keep_default = app.config.default_server() == old
+        result = client.server_add(
+            name=new_name, target=fields["target"], port=fields["port"],
+            remote_root=fields["remote_root"], persist=fields["persist"],
+            scheduler=fields["scheduler"])
+        client.server_remove(old)
+        if keep_default:
+            client.server_set_default(new_name)
+        self._send_json({"renamed": [old, new_name], "result": result})
 
     def _settings_payload(self) -> dict:
         """Full settings view for the console's 配置 page. Never includes key
@@ -480,7 +555,7 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
     httpd = _bind_with_fallback(BoundHandler, host, port)
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
-    if bound_port != port:
+    if port and bound_port != port:
         print(f"port {port} unavailable; using {bound_port} instead", flush=True)
     url = f"http://{host}:{bound_port}/t/{state.token}"
     print(f"VASPilot UI ready: {url}", flush=True)

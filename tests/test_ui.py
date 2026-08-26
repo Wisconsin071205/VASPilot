@@ -389,3 +389,55 @@ class TestSettingsApi:
 
 
 import pytest as _pytest  # noqa: E402,F401  (pytest.raises used above)
+
+
+class TestServerAdminApi:
+    """添加/编辑服务器对话框背后的 API。"""
+
+    def test_add_edit_delete_roundtrip(self, ui):
+        added = call(ui, "server.add", {
+            "name": "ghost5", "target": "tester@ghost5.example.com",
+            "port": 22, "remote_root": "/public/home/tester",
+            "persist": "8h", "scheduler": "slurm"})
+        assert added["ok"]
+        state = call(ui, "state")
+        names = [s["name"] for s in state["servers"]]
+        assert "ghost5" in names
+
+        edited = call(ui, "server.edit", {
+            "id": "ghost5", "new_name": "",
+            "remote_root": "/public/home/tester/runs",
+            "persist": "12h", "scheduler": "pbs"})
+        assert edited["ok"]
+        entry = ui["app"].client().server_entry("ghost5")
+        assert entry.remote_root == "/public/home/tester/runs"
+        assert entry.scheduler == "pbs"
+
+        removed = call(ui, "provider.delete", {"id": "ghost5"})  # wrong action guard
+        del removed
+        # rename requires a disconnected server in the fake too
+        call(ui, "server.disconnect", {"server": "ghost5"})
+        renamed = call(ui, "server.edit", {
+            "id": "ghost5", "new_name": "ghost6",
+            "target": "tester@ghost5.example.com", "port": 22,
+            "remote_root": "/public/home/tester/runs", "persist": "8h",
+            "scheduler": "pbs"})
+        assert renamed["ok"]
+        names = [s.name for s in ui["app"].config.load_servers()]
+        assert "ghost6" in names and "ghost5" not in names
+
+    def test_rename_connected_refused(self, ui, fake_state, monkeypatch):
+        fake_state.connected["cl9"] = True  # already true by default fixture
+        r = call(ui, "server.edit", {
+            "id": "cl9", "new_name": "renamed9",
+            "target": "user@cl9", "port": 22,
+            "remote_root": ROOT, "persist": "8h", "scheduler": "slurm"})
+        assert r["ok"] is False
+        assert "断开" in r["error"]["message"]
+
+    def test_identity_change_needs_disconnect(self, ui):
+        r = call(ui, "server.edit", {
+            "id": "cl9", "new_name": "", "target": "other@host2",
+            "port": 2222, "remote_root": ROOT, "persist": "8h",
+            "scheduler": "slurm"})
+        assert r["ok"] is False
