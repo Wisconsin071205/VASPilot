@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VASPilot 控制台</title>
+<style>
+:root{
+  --bg:#0d1117; --bg2:#161b22; --bg3:#1c2330; --line:#2d3644;
+  --fg:#e6edf3; --fg2:#9aa7b8; --acc:#4f9cf7; --ok:#3fb950; --warn:#d29922;
+  --err:#f85149; --mono:'Cascadia Code',Consolas,'Courier New',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.55 "Segoe UI","Microsoft YaHei",sans-serif;height:100vh;display:flex;overflow:hidden}
+a{color:var(--acc)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#2d3644;border-radius:5px}
+
+/* ---------- layout ---------- */
+#side{width:248px;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0}
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#brand{padding:16px 16px 12px;border-bottom:1px solid var(--line)}
+#brand h1{font-size:17px;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+#brand .v{font-size:11px;color:var(--fg2);font-family:var(--mono)}
+.logo{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#4f9cf7,#7ee787);display:inline-block;flex-shrink:0}
+.side-h{padding:12px 16px 6px;font-size:11px;color:var(--fg2);letter-spacing:1px;display:flex;justify-content:space-between;align-items:center}
+.side-h button{background:none;border:none;color:var(--acc);cursor:pointer;font-size:11px}
+#servers{flex:1;overflow-y:auto;padding:0 8px 8px}
+.srv{padding:8px 10px;border-radius:8px;margin-bottom:4px;cursor:default;display:flex;align-items:center;gap:8px}
+.srv:hover{background:var(--bg3)}
+.srv .dot{width:9px;height:9px;border-radius:50%;background:var(--err);flex-shrink:0}
+.srv.on .dot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.srv .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srv .nm small{color:var(--fg2);margin-left:6px;font-size:11px}
+.srv button{background:var(--bg3);border:1px solid var(--line);color:var(--fg2);border-radius:6px;padding:2px 7px;font-size:11px;cursor:pointer}
+.srv button:hover{color:var(--fg);border-color:var(--acc)}
+#prov{padding:8px 16px 14px;border-top:1px solid var(--line)}
+#prov select{width:100%;background:var(--bg3);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:6px}
+#prov .mode{font-size:11px;margin-top:5px;color:var(--fg2)}
+#prov .mode.full{color:var(--ok)} #prov .mode.degraded{color:var(--warn)}
+#prov .probe{margin-top:6px;font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:0}
+
+/* ---------- header tabs ---------- */
+#tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
+.tab{padding:11px 16px;cursor:pointer;color:var(--fg2);border-bottom:2px solid transparent;font-size:14px}
+.tab.on{color:var(--fg);border-bottom-color:var(--acc)}
+.view{display:none;flex:1;overflow-y:auto;padding:18px 22px}
+.view.on{display:block}
+.view.noscroll{display:none;flex:1;overflow:hidden}
+.view.noscroll.on{display:flex;flex-direction:column}
+
+/* ---------- generic ---------- */
+h2{font-size:15px;margin-bottom:12px;color:var(--fg)}
+h3{font-size:13px;margin:14px 0 8px;color:var(--fg2)}
+button.btn{background:var(--acc);border:none;color:#fff;border-radius:7px;padding:7px 16px;cursor:pointer;font-size:13px}
+button.btn:disabled{background:#2d3644;color:var(--fg2);cursor:not-allowed}
+button.btn.ghost{background:var(--bg3);border:1px solid var(--line);color:var(--fg)}
+button.btn.danger{background:var(--err)}
+input,select{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:7px 10px;font-size:13px}
+input:focus,select:focus{outline:none;border-color:var(--acc)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--fg2);font-weight:500;font-size:12px}
+td.wrap{white-space:normal}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-family:var(--mono)}
+.b-ok{background:#12351f;color:var(--ok)} .b-err{background:#3d1a1a;color:var(--err)}
+.b-warn{background:#3a2d10;color:var(--warn)} .b-info{background:#12283f;color:var(--acc)}
+.mono{font-family:var(--mono);font-size:12px}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.fg{display:flex;flex-direction:column;gap:4px;margin-right:8px}
+.fg label{font-size:11px;color:var(--fg2)}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-family:var(--mono);font-size:12px}
+#toasts{position:fixed;right:18px;bottom:18px;z-index:99;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--bg3);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:10px 14px;max-width:420px;font-size:13px;animation:in .2s}
+.toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
+@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
+
+/* ---------- overview ---------- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi b{font-size:22px;font-family:var(--mono)} .kpi span{display:block;color:var(--fg2);font-size:12px;margin-top:2px}
+
+/* ---------- chat ---------- */
+#v-chat.noscroll{padding:0}
+#chatlog{flex:1;overflow-y:auto;padding:18px 22px}
+.msg{max-width:860px;margin:0 auto 14px;display:flex;gap:10px}
+.msg .av{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+.msg.user .av{background:#2b3a55;color:#9cc3ff}
+.msg.bot .av{background:linear-gradient(135deg,#4f9cf7,#7ee787);color:#0d1117}
+.msg .bd{min-width:0;flex:1}
+.msg .who{font-size:11px;color:var(--fg2);margin-bottom:3px}
+.bubble{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;white-space:pre-wrap;word-break:break-word}
+.msg.user .bubble{background:#1a2436}
+.toolcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin:8px 0;max-width:860px;margin-left:auto;margin-right:auto;overflow:hidden}
+.toolcard .tc-h{display:flex;gap:8px;align-items:center;padding:8px 12px;cursor:pointer;font-size:12px}
+.toolcard .tc-h .st{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.toolcard .tc-h .st.ok{background:var(--ok)} .toolcard .tc-h .st.fail{background:var(--err)}
+.toolcard .tc-h .nm{font-family:var(--mono);color:var(--acc)}
+.toolcard .tc-b{display:none;border-top:1px solid var(--line);padding:8px 12px;max-height:280px;overflow:auto}
+.toolcard.open .tc-b{display:block}
+#chatbar{border-top:1px solid var(--line);padding:12px 22px;background:var(--bg2)}
+#chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
+#chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
+#chathint{max-width:860px;margin:6px auto 0;font-size:11px;color:var(--fg2);text-align:center}
+.cursor{display:inline-block;width:8px;height:15px;background:var(--acc);animation:blink 1s infinite;vertical-align:-2px}
+@keyframes blink{50%{opacity:0}}
+
+/* ---------- workflow ---------- */
+.step{display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.step .st{width:18px;text-align:center;flex-shrink:0}
+.planfiles td{font-family:var(--mono);font-size:12px}
+#approval_ref{word-break:break-all}
+.timeline{border-left:2px solid var(--line);margin-left:8px;padding-left:16px}
+.attempt{margin-bottom:12px}
+.attempt h4{font-size:12px;color:var(--fg2);margin-bottom:4px}
+.step-row{display:flex;gap:8px;font-size:12px;padding:3px 0}
+.step-row .ic{width:16px;flex-shrink:0;text-align:center}
+.empty{color:var(--fg2);font-size:13px;padding:20px;text-align:center}
+</style>
+</head>
+<body>
+
+<aside id="side">
+  <div id="brand"><h1><span class="logo"></span>VASPilot <span class="v" id="ver"></span></h1></div>
+  <div class="side-h">服务器 <button onclick="refreshServers()">刷新</button></div>
+  <div id="servers"><div class="empty">加载中…</div></div>
+  <div id="prov">
+    <div class="side-h" style="padding:0 0 4px">模型服务</div>
+    <select id="provsel"></select>
+    <div class="mode" id="provmode"></div>
+    <button class="probe" onclick="probeProvider()">⟳ 能力探测</button>
+  </div>
+</aside>
+
+<main id="main">
+  <nav id="tabs">
+    <div class="tab on" data-v="chat">对话</div>
+    <div class="tab" data-v="overview">总览</div>
+    <div class="tab" data-v="files">文件</div>
+    <div class="tab" data-v="jobs">作业</div>
+    <div class="tab" data-v="flow">工作流</div>
+  </nav>
+
+  <!-- ============ 对话 ============ -->
+  <section class="view noscroll on" id="v-chat">
+    <div id="chatlog">
+      <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">VASPilot</div>
+        <div class="bubble">你好。我可以查询服务器、浏览远端目录、跟踪 VASP 计算的科学收敛，并帮你预览工作流计划。
+ destructive 操作需要你在本地确认审批，我不会接触你的密码或密钥。
+试试：「查看 cl9 的作业」「/public/home/wuhong/runs 下有哪些计算目录」。</div></div></div>
+    </div>
+    <div id="chatbar">
+      <div id="chatbox">
+        <textarea id="chatinput" placeholder="向 VASPilot 提问（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button class="btn" id="sendbtn" onclick="sendChat()">发送</button>
+      </div>
+      <div id="chathint">受命名工具约束 · 无任意 shell · 调度器完成 ≠ 科学收敛</div>
+    </div>
+  </section>
+
+  <!-- ============ 总览 ============ -->
+  <section class="view" id="v-overview">
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">集群快照</h2>
+        <label style="font-size:12px;color:var(--fg2)">
+          <input type="checkbox" id="autoref" checked style="width:auto"> 每 60 秒自动刷新
+        </label>
+      </div>
+      <table id="snaptable"><thead><tr>
+        <th>服务器</th><th>连接</th><th>调度器</th><th>活动作业</th><th>状态</th><th>错误</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ============ 文件 ============ -->
+  <section class="view" id="v-files">
+    <div class="card">
+      <div class="row">
+        <div class="fg"><label>服务器</label><select id="fsrv"></select></div>
+        <div class="fg" style="flex:1"><label>远端路径（须在服务器根内）</label>
+          <input id="fpath" style="width:420px" placeholder="/public/home/…"></div>
+        <button class="btn" onclick="browse()">浏览</button>
+      </div>
+    </div>
+    <div class="card"><h2>目录内容</h2><table id="filetable">
+      <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th></tr></thead>
+      <tbody><tr><td colspan="4" class="empty">输入路径后点击浏览</td></tr></tbody></table></div>
+    <div class="card" id="reader" style="display:none">
+      <div class="row" style="justify-content:space-between"><h2 id="readerpath" style="margin:0"></h2>
+        <button class="btn ghost" onclick="document.getElementById('reader').style.display='none'">关闭</button></div>
+      <pre id="readerbody" style="max-height:420px"></pre>
+    </div>
+  </section>
+
+  <!-- ============ 作业 ============ -->
+  <section class="view" id="v-jobs">
+    <div class="card"><div class="row">
+      <div class="fg"><label>服务器</label><select id="jsrv"></select></div>
+      <button class="btn" onclick="loadJobs()">查询作业</button>
+    </div></div>
+    <div class="card"><h2>活动作业</h2><table id="jobtable">
+      <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="card"><h2>历史作业</h2><table id="rectable">
+      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th></tr></thead>
+      <tbody></tbody></table></div>
+    <div class="card">
+      <h2>VASP 科学进度（区别于调度器状态）</h2>
+      <div class="row">
+        <div class="fg" style="flex:1"><label>计算目录</label>
+          <input id="progdir" style="width:420px" placeholder="/public/home/…/runs/case-1"></div>
+        <button class="btn" onclick="loadProgress()">查询</button>
+      </div>
+      <div id="progout"></div>
+    </div>
+  </section>
+
+  <!-- ============ 工作流 ============ -->
+  <section class="view" id="v-flow">
+    <div class="card">
+      <h2>1 · 准备计划（本地输入目录 → 远端运行）</h2>
+      <div class="row">
+        <div class="fg"><label>本地输入目录</label><input id="wfrom" style="width:230px" placeholder="C:\...\case-01"></div>
+        <div class="fg"><label>服务器</label><select id="wsrv"></select></div>
+        <div class="fg"><label>远端目录</label><input id="wremote" style="width:260px" placeholder="/public/home/…/runs/case-01"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div class="fg"><label>作业名</label><input id="wname" value="vaspilot"></div>
+        <div class="fg"><label>分区</label><input id="wpart" placeholder="可空"></div>
+        <div class="fg"><label>核数</label><input id="wntasks" type="number" value="8" style="width:80px"></div>
+        <div class="fg"><label>时限</label><input id="wwall" value="24:00:00" style="width:110px"></div>
+        <button class="btn" onclick="preparePlan()">生成预览</button>
+      </div>
+    </div>
+    <div class="card" id="plancard" style="display:none">
+      <h2>2 · 计划预览 <span class="mono" id="planid" style="color:var(--acc)"></span></h2>
+      <div id="plansummary"></div>
+      <h3>文件（SHA-256 绑定审批）</h3>
+      <table class="planfiles"><thead><tr><th>文件</th><th>大小</th><th>SHA-256</th></tr></thead>
+        <tbody id="planfiles"></tbody></table>
+      <h3>步骤 DAG</h3><div id="plansteps"></div>
+      <h3>风险摘要</h3><pre id="planrisk"></pre>
+    </div>
+    <div class="card" id="approvecard" style="display:none">
+      <h2>3 · 本地审批（人工输入确认短语）</h2>
+      <div class="row">
+        <input id="phrase" style="flex:1" placeholder="">
+        <button class="btn" onclick="approvePlan()">批准</button>
+      </div>
+      <div style="font-size:12px;color:var(--fg2);margin-top:8px">
+        需要原样输入 <span class="mono" id="phrasehint" style="color:var(--warn)"></span>。审批绑定服务器+计划哈希+文件哈希，一次性有效。</div>
+      <div id="approval_ref" class="mono" style="margin-top:8px;color:var(--ok)"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn" id="runbtn" onclick="runPlan()">执行已批准计划</button>
+        <span style="font-size:12px;color:var(--fg2)">执行无人值守：mkdir→上传(校验哈希)→验证→提交→监控→下载→解析</span>
+      </div>
+    </div>
+    <div class="card" id="runcard" style="display:none">
+      <h2>4 · 运行状态 <span class="mono" id="runplanid"></span></h2>
+      <div id="runstate"></div>
+    </div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+
+<script>
+/* ===================== 基础 ===================== */
+const TOKEN = location.pathname.split("/").pop();
+let STATE = {servers:[], providers:[], default_provider:""};
+let CURRENT_PLAN = null, CURRENT_APPROVAL = null;
+
+async function api(action, body = {}) {
+  const res = await fetch("/api/" + action, {
+    method: action === "workflow.status" ? "GET" : "POST",
+    headers: {"Content-Type": "application/json", "X-Vaspilot-Token": TOKEN},
+    body: action === "workflow.status" ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({ok:false, error:{message:"响应解析失败"}}));
+  if (!data.ok && data.error) toast(data.error.message, "err");
+  return data;
+}
+function toast(text, kind = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + kind; el.textContent = text;
+  document.getElementById("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 6000);
+}
+const esc = s => String(s ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const badge = (t, cls) => `<span class="badge b-${cls}">${esc(t)}</span>`;
+
+/* ===================== 初始化 ===================== */
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t.dataset.v));
+  if (t.dataset.v === "overview") loadSnapshot();
+});
+document.getElementById("ver").textContent = "v" + (location.search.includes("debug") ? "?" : "");
+document.getElementById("chatinput").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+});
+
+async function refreshServers() {
+  const st = await api("state");
+  if (!st.ok) return;
+  STATE = st;
+  document.getElementById("ver").textContent = "v" + st.version;
+  // sidebar servers
+  const box = document.getElementById("servers");
+  box.innerHTML = st.servers.length ? "" : `<div class="empty">未注册服务器<br><span style="font-size:11px">运行 vaspilot server add …</span></div>`;
+  for (const s of st.servers) {
+    const div = document.createElement("div");
+    div.className = "srv" + (s.connected ? " on" : "");
+    div.innerHTML = `<span class="dot" title="${s.connected ? "已连接" : "未连接"}"></span>
+      <span class="nm">${esc(s.name)}${s.is_default ? "<small>默认</small>" : ""}
+        <small>${esc(s.scheduler)}</small></span>`;
+    const btn = document.createElement("button");
+    btn.textContent = s.connected ? "断开" : "连接";
+    btn.onclick = async () => {
+      if (s.connected) { await api("server.disconnect", {server: s.name}); refreshServers(); }
+      else {
+        const r = await api("server.connect", {server: s.name});
+        if (r.ok) toast("已打开登录终端：请在其中输入密码和动态验证码", "ok");
+      }
+    };
+    div.appendChild(btn);
+    box.appendChild(div);
+  }
+  // providers
+  const sel = document.getElementById("provsel");
+  sel.innerHTML = st.providers.map(p =>
+    `<option value="${esc(p.id)}" ${p.is_default ? "selected" : ""}>${esc(p.name)} · ${esc(p.model)}</option>`).join("")
+    || "<option>未注册服务</option>";
+  renderProviderMode();
+  // server pickers
+  for (const id of ["fsrv", "jsrv", "wsrv"]) {
+    const el = document.getElementById(id);
+    const prev = el.value;
+    el.innerHTML = st.servers.map(s =>
+      `<option value="${esc(s.name)}" ${s.is_default ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+    if (prev && st.servers.some(s => s.name === prev)) el.value = prev;
+  }
+}
+function currentProvider() { return document.getElementById("provsel").value; }
+function renderProviderMode() {
+  const p = STATE.providers.find(x => x.id === currentProvider());
+  const el = document.getElementById("provmode");
+  if (!p) { el.textContent = ""; return; }
+  el.textContent = p.mode ? "模式：" + (p.mode === "full" ? "完全（可写）" : "仅分析（只读）") : "未探测（首次对话时自动探测）";
+  el.className = "mode " + (p.mode === "full" ? "full" : p.mode ? "degraded" : "");
+}
+document.getElementById("provsel").onchange = renderProviderMode;
+async function probeProvider() {
+  toast("正在探测（会发起真实模型调用）…");
+  const r = await api("provider.probe", {id: currentProvider()});
+  if (r.ok) {
+    toast(`探测完成：可达 ${r.reachable} · 流式 ${r.streaming} · 工具 ${r.tool_calling} · 结构化 ${r.structured_json}`,
+          r.mode === "full" ? "ok" : "");
+    await refreshServers();
+  }
+}
+
+/* ===================== 总览 ===================== */
+async function loadSnapshot() {
+  const snap = await api("monitor.snapshot");
+  if (!snap.ok) return;
+  const on = snap.connected || 0;
+  document.getElementById("kpis").innerHTML = `
+    <div class="kpi"><b>${on}/${snap.total}</b><span>已连接服务器</span></div>
+    <div class="kpi"><b>${snap.servers.reduce((a, s) => a + (s.active_jobs || 0), 0)}</b><span>活动作业</span></div>
+    <div class="kpi"><b>${snap.servers.filter(s => (s.states || []).length).length}</b><span>有排队/运行的服务器</span></div>`;
+  document.querySelector("#snaptable tbody").innerHTML = snap.servers.map(s => `
+    <tr><td class="mono">${esc(s.server)}</td>
+    <td>${s.connected ? badge("已连接", "ok") : badge("未连接", "err")}</td>
+    <td>${esc(s.scheduler_detected || s.scheduler || "?")}</td>
+    <td class="mono">${s.active_jobs ?? 0}</td>
+    <td>${(s.states || []).map(x => badge(x, x === "RUNNING" ? "ok" : "info")).join(" ") || "—"}</td>
+    <td class="wrap" style="color:var(--fg2)">${esc(s.error || s.jobs_error || "")}</td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">无服务器</td></tr>`;
+}
+setInterval(() => {
+  if (document.getElementById("autoref").checked &&
+      document.getElementById("v-overview").classList.contains("on")) loadSnapshot();
+}, 60000);
+
+/* ===================== 文件 ===================== */
+async function browse() {
+  const server = document.getElementById("fsrv").value;
+  const path = document.getElementById("fpath").value.trim();
+  const r = await api("remote.list", {server, path});
+  if (!r.ok) return;
+  document.querySelector("#filetable tbody").innerHTML = (r.entries || []).map(e => `
+    <tr><td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
+      ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
+    <td>${e.type === "dir" ? "目录" : "文件"}</td>
+    <td class="mono">${e.size}</td><td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("")
+    || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
+}
+async function readFile(server, path) {
+  const r = await api("remote.read", {server, path});
+  if (!r.ok) return;
+  document.getElementById("reader").style.display = "";
+  document.getElementById("readerpath").textContent = path + `  (${r.size} B)`;
+  document.getElementById("readerbody").textContent = r.content || "(空文件)";
+}
+
+/* ===================== 作业 ===================== */
+async function loadJobs() {
+  const server = document.getElementById("jsrv").value;
+  const [jobs, recent] = await Promise.all([api("job.list", {server}), api("job.recent", {server})]);
+  if (jobs.ok) document.querySelector("#jobtable tbody").innerHTML = (jobs.jobs || []).map(j => `
+    <tr><td class="mono">${esc(j.job_id)}</td>
+    <td>${badge(j.state, j.state === "RUNNING" ? "ok" : "info")}</td>
+    <td class="mono">${esc(j.elapsed)}</td><td>${esc(j.partition)}</td><td>${esc(j.name)}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="empty">无活动作业</td></tr>`;
+  if (recent.ok) document.querySelector("#rectable tbody").innerHTML = (recent.jobs || []).map(j => `
+    <tr><td class="mono">${esc(j.job_id)}</td>
+    <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED"].includes(j.state) ? "err" : "info")}</td>
+    <td class="mono">${esc(j.elapsed)}</td></tr>`).join("")
+    || `<tr><td colspan="3" class="empty">无历史</td></tr>`;
+}
+async function loadProgress() {
+  const server = document.getElementById("jsrv").value;
+  const directory = document.getElementById("progdir").value.trim();
+  const r = await api("vasp.progress", {server, directory});
+  if (!r.ok) return;
+  const sci = r.scientific_converged;
+  document.getElementById("progout").innerHTML = `
+    <table style="margin-top:10px"><tbody>
+    <tr><th>科学收敛</th><td>${sci === undefined ? "—" : badge(sci ? "已收敛" : "未收敛", sci ? "ok" : "err")}</td></tr>
+    <tr><th>离子收敛</th><td>${badge(r.ionic_converged ? "是" : "否", r.ionic_converged ? "ok" : "warn")}</td></tr>
+    <tr><th>电子收敛</th><td>${badge(r.electronic_converged ? "是" : "否", r.electronic_converged ? "ok" : "warn")}
+      ${r.electronic_reached_nelem || r.electronic_reached_nelm ? badge("达到 NELM 上限", "err") : ""}</td></tr>
+    <tr><th>离子步数</th><td class="mono">${r.ionic_steps ?? "—"}　最后 E0: ${fmt(r.last_e0_ev)}</td></tr>
+    <tr><th>错误特征</th><td>${(r.error_signatures || []).length ? (r.error_signatures || []).map(e => badge(e, "err")).join(" ") : "无"}</td></tr>
+    <tr><th>已产出文件</th><td class="mono">${esc((r.files_present || []).join(", ") || "—")}</td></tr>
+    </tbody></table>
+    <div style="font-size:11px;color:var(--fg2);margin-top:6px">调度器状态是另一个维度：请以 job.list/recent 为准。</div>`;
+}
+const fmt = v => (v === null || v === undefined) ? "—" : Number(v).toFixed(4) + " eV";
+
+/* ===================== 工作流 ===================== */
+async function preparePlan() {
+  const spec = {
+    from_dir: document.getElementById("wfrom").value.trim(),
+    server: document.getElementById("wsrv").value,
+    remote_dir: document.getElementById("wremote").value.trim(),
+    job_name: document.getElementById("wname").value.trim() || "vaspilot",
+    partition: document.getElementById("wpart").value.trim(),
+    ntasks: parseInt(document.getElementById("wntasks").value || "8"),
+    walltime: document.getElementById("wwall").value.trim() || "24:00:00",
+  };
+  const r = await api("workflow.prepare", {spec});
+  if (!r.ok) return;
+  CURRENT_PLAN = r;
+  document.getElementById("plancard").style.display = "";
+  document.getElementById("approvecard").style.display = "";
+  document.getElementById("runplanid").textContent = "";
+  document.getElementById("planid").textContent = r.plan_id;
+  const p = r.plan;
+  document.getElementById("plansummary").innerHTML = `
+    <div class="row" style="gap:18px">
+      <span>服务器 <b>${esc(p.server)}</b></span><span>远端 <span class="mono">${esc(p.remote_dir)}</span></span>
+      <span>plan_hash <span class="mono">${esc(p.plan_hash.slice(0, 16))}…</span></span>
+      <span>文件哈希 <span class="mono">${esc(r.files_hash.slice(0, 16))}…</span></span></div>`;
+  document.getElementById("planfiles").innerHTML = p.files.map(f => `
+    <tr><td>${esc(f.name)}</td><td class="mono">${f.size} B</td>
+    <td class="mono">${esc(f.sha256.slice(0, 24))}…</td></tr>`).join("");
+  document.getElementById("plansteps").innerHTML = p.steps.map(s =>
+    `<div class="step"><span class="st">${stepIcon(s.type)}</span>
+     <span class="mono" style="color:var(--acc);min-width:88px">${esc(s.type)}</span>
+     <span>${esc(s.id === s.type ? "" : s.id)} ${esc(s.path || s.file || s.script || "")}</span></div>`).join("");
+  document.getElementById("planrisk").textContent = JSON.stringify(p.risk_summary, null, 2);
+  document.getElementById("phrasehint").textContent = `approve ${r.plan_id}`;
+  document.getElementById("phrase").value = "";
+  document.getElementById("approval_ref").textContent = "";
+  document.getElementById("runcard").style.display = "none";
+  document.getElementById("plancard").scrollIntoView({behavior: "smooth"});
+}
+const stepIcon = t => ({"mkdir":"📁","upload":"⬆","validate":"✓","submit":"🚀",
+  "monitor":"⏳","progress":"🔬","download":"⬇","parse":"📊"}[t] || "•");
+async function approvePlan() {
+  if (!CURRENT_PLAN) return toast("请先生成计划预览", "err");
+  const r = await api("workflow.approve", {
+    plan_id: CURRENT_PLAN.plan_id,
+    phrase: document.getElementById("phrase").value.trim()});
+  if (!r.ok) return;
+  CURRENT_APPROVAL = r;
+  document.getElementById("approval_ref").textContent =
+    "approval_ref（复制备用，仅显示一次）：\n" + r.approval_ref;
+  toast("审批通过，有效期至 " + r.expires_at, "ok");
+}
+async function runPlan() {
+  if (!CURRENT_PLAN) return toast("请先生成计划预览", "err");
+  if (!CURRENT_APPROVAL) return toast("请先完成本地审批（输入确认短语）", "err");
+  const r = await api("workflow.run", {plan_id: CURRENT_PLAN.plan_id,
+                                       approval_ref: CURRENT_APPROVAL.approval_ref});
+  if (!r.ok) return;
+  toast("计划已开始执行", "ok");
+  document.getElementById("runcard").style.display = "";
+  document.getElementById("runplanid").textContent = CURRENT_PLAN.plan_id;
+  pollRun(CURRENT_PLAN.plan_id, true);
+}
+let runTimer = null;
+function pollRun(planId, start = false) {
+  if (runTimer) clearInterval(runTimer);
+  const tick = async () => {
+    const r = await api("workflow.status", {plan_id: planId});
+    if (!r.ok) { clearInterval(runTimer); return; }
+    renderRun(r);
+    if (r.status !== "running") clearInterval(runTimer);
+  };
+  if (start) tick();
+  runTimer = setInterval(tick, 5000);
+}
+function renderRun(r) {
+  const lines = [`<div class="row" style="gap:14px;margin-bottom:10px">
+    <span>状态 ${badge(statusLabel(r.status), statusClass(r.status))}</span>
+    <span>调度器 ${badge(r.scheduler_state || "—", "info")}</span>
+    <span>科学收敛 ${badge(r.scientific_converged ? "是" : (r.status === "completed" ? "否" : "—"),
+      r.scientific_converged ? "ok" : "warn")}</span></div>`];
+  if (r.failure) lines.push(`<div style="color:var(--err);margin-bottom:8px">失败步骤：
+    <span class="mono">${esc(r.failure.step)}</span> — ${esc(r.failure.detail)}</div>`);
+  for (const a of (r.attempts || []).slice().reverse()) {
+    lines.push(`<div class="attempt"><h4>第 ${a.attempt} 次尝试 · ${esc(a.status)} · ${esc(a.started_at)}</h4>
+      <div class="timeline">${(a.steps || []).map(s => `
+        <div class="step-row"><span class="ic">${s.ok ? "✅" : "❌"}</span>
+        <span class="mono" style="color:var(--acc);min-width:86px">${esc(s.type)}</span>
+        <span style="color:var(--fg2)">${esc(s.job_id ? "job " + s.job_id : "")} ${esc(s.state || "")}</span>
+        ${s.error ? `<span style="color:var(--err)">${esc(String(s.error).slice(0, 120))}</span>` : ""}</div>`).join("")
+        || '<div class="step-row" style="color:var(--fg2)">（无步骤）</div>'}</div></div>`);
+  }
+  document.getElementById("runstate").innerHTML = lines.join("");
+}
+const statusLabel = s => ({"running":"执行中","completed":"完成（科学收敛）","needs_review":"需人工判读","failed":"失败"}[s] || s);
+const statusClass = s => ({"running":"info","completed":"ok","needs_review":"warn","failed":"err"}[s] || "info");
+
+/* ===================== 对话（SSE 流式） ===================== */
+async function sendChat() {
+  const input = document.getElementById("chatinput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  addMsg("user", text);
+  const log = document.getElementById("chatlog");
+  const botBody = addMsg("bot", "");
+  const bubble = botBody.querySelector(".bubble");
+  bubble.innerHTML = '<span class="cursor"></span>';
+  document.getElementById("sendbtn").disabled = true;
+  let acc = "";
+  try {
+    const res = await fetch("/api/agent/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Vaspilot-Token": TOKEN},
+      body: JSON.stringify({provider: currentProvider(), message: text}),
+    });
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        const line = frame.split("\n").find(l => l.startsWith("data:"));
+        if (!line) continue;
+        let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        handleChatEvent(ev, bubble, log, acc2 => { acc = acc2; });
+      }
+    }
+    if (!acc.trim()) bubble.textContent = bubble.textContent || "（无输出）";
+  } catch (e) {
+    bubble.textContent = "连接中断：" + e.message;
+  } finally {
+    document.getElementById("sendbtn").disabled = false;
+    input.focus();
+  }
+  await refreshServers();
+}
+function handleChatEvent(ev, bubble, log, setAcc) {
+  if (ev.type === "meta") {
+    const mode = ev.mode === "full" ? "完全" : "仅分析";
+    bubble.dataset.meta = `${ev.provider} · ${mode}`;
+  } else if (ev.type === "delta") {
+    const cur = bubble.dataset.acc || "";
+    const next = cur + ev.text;
+    bubble.dataset.acc = next;
+    bubble.innerHTML = esc(next) + '<span class="cursor"></span>';
+    setAcc(next);
+    log.scrollTop = log.scrollHeight;
+  } else if (ev.type === "tool") {
+    const acc = bubble.dataset.acc || "";
+    bubble.innerHTML = esc(acc);   // freeze streaming cursor
+    addToolCard(log, ev);
+  } else if (ev.type === "final") {
+    const acc = bubble.dataset.acc || "";
+    const r = ev.result || {};
+    bubble.innerHTML = esc(r.answer || acc || "（完成）");
+    if (!r.ok && r.error) toast(r.error, "err");
+  } else if (ev.type === "error") {
+    bubble.innerHTML = `<span style="color:var(--err)">${esc((ev.error || {}).message || "错误")}</span>`;
+  }
+  log.scrollTop = log.scrollHeight;
+}
+function addToolCard(log, ev) {
+  const card = document.createElement("div");
+  card.className = "toolcard";
+  const ok = ev.ok !== false;
+  card.innerHTML = `
+    <div class="tc-h" onclick="this.parentElement.classList.toggle('open')">
+      <span class="st ${ok ? "ok" : "fail"}"></span>
+      <span class="nm">${esc(ev.tool)}</span>
+      <span style="color:var(--fg2);flex:1"></span>
+      <span style="color:var(--fg2)">${ok ? "成功" : "失败"} · 点击展开</span>
+    </div>
+    <div class="tc-b"><div style="color:var(--fg2);margin-bottom:4px">参数</div>
+      <pre>${esc(JSON.stringify(ev.arguments ?? {}, null, 2))}</pre>
+      <div style="color:var(--fg2);margin:6px 0 4px">结果</div>
+      <pre>${esc(JSON.stringify(ev.outcome ?? {}, null, 2).slice(0, 4000))}</pre></div>`;
+  log.appendChild(card);
+}
+function addMsg(role, text) {
+  const log = document.getElementById("chatlog");
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.innerHTML = `<div class="av">${role === "user" ? "你" : "V"}</div>
+    <div class="bd"><div class="who">${role === "user" ? "你" : "VASPilot 智能体"}</div>
+    <div class="bubble"></div></div>`;
+  if (text) div.querySelector(".bubble").textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+/* ===================== 启动 ===================== */
+refreshServers().then(loadSnapshot);
+</script>
+</body>
+</html>

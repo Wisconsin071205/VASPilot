@@ -33,17 +33,43 @@ environment through a named tool registry. Core rules:
 """
 
 
+def _bounded(outcome: dict[str, Any], limit: int = 4000) -> dict[str, Any]:
+    """Keep event payloads small enough for UI transport."""
+    try:
+        import json as _json
+        text = _json.dumps(outcome, ensure_ascii=False, default=str)
+        if len(text) <= limit:
+            return outcome
+        return {"ok": bool(outcome.get("ok", True)),
+                "truncated": True,
+                "preview": text[:limit] + "…"}
+    except (TypeError, ValueError):  # pragma: no cover - defensive
+        return {"ok": False, "preview": str(outcome)[:limit]}
+
+
 class AgentRuntime:
     def __init__(self, *, provider: BaseProvider, registry: ToolRegistry,
                  mode: str, audit: AuditLog | None = None,
                  max_turns: int = 12,
-                 stream_cb: Callable[[str], None] | None = None) -> None:
+                 stream_cb: Callable[[str], None] | None = None,
+                 event_cb: Callable[[str, dict[str, Any]], None] | None = None
+                 ) -> None:
         self.provider = provider
         self.registry = registry
         self.mode = mode  # "full" | "analysis_only"
         self.audit = audit
         self.max_turns = max_turns
         self.stream_cb = stream_cb
+        # event_cb(kind, payload) lets hosts (local web UI) observe the loop:
+        # kinds: "tool" (name, ok), "final" (result), "error" (message)
+        self.event_cb = event_cb
+
+    def _emit(self, kind: str, payload: dict[str, Any]) -> None:
+        if self.event_cb is not None:
+            try:
+                self.event_cb(kind, payload)
+            except Exception:  # UI piping must never break the agent loop
+                pass
 
     # ---------------------------------------------------------------- run
     def run(self, goal: str) -> dict[str, Any]:
@@ -69,8 +95,12 @@ class AgentRuntime:
                 })
                 for call in reply.tool_calls:
                     outcome = self._dispatch(call.name, call.arguments)
-                    trace.append({"turn": turn, "tool": call.name,
-                                  "ok": bool(outcome.get("ok", True))})
+                    row = {"turn": turn, "tool": call.name,
+                           "ok": bool(outcome.get("ok", True))}
+                    trace.append(row)
+                    self._emit("tool", {**row,
+                                        "arguments": call.arguments,
+                                        "outcome": _bounded(outcome)})
                     messages.append({
                         "role": "tool",
                         "tool_call_id": call.call_id,
@@ -78,7 +108,7 @@ class AgentRuntime:
                                               default=str)[:20000],
                     })
                 continue
-            return {
+            result = {
                 "ok": True,
                 "answer": reply.text,
                 "turns": turn,
@@ -86,7 +116,9 @@ class AgentRuntime:
                 "trace": trace,
                 "mode": self.mode,
             }
-        return {
+            self._emit("final", result)
+            return result
+        result = {
             "ok": False,
             "error": f"agent exceeded {self.max_turns} turns without finishing",
             "turns": self.max_turns,
@@ -94,6 +126,8 @@ class AgentRuntime:
             "trace": trace,
             "mode": self.mode,
         }
+        self._emit("final", result)
+        return result
 
     # ---------------------------------------------------------------- chat
     def chat(self, user_text: str, history: list[dict[str, Any]] | None = None
@@ -108,7 +142,7 @@ class AgentRuntime:
         tools = [t.to_openai() for t in self.registry.list_tools()]
         reply = self.provider.chat(messages, tools, stream_cb=self.stream_cb)
         if reply.tool_calls:
-            return {
+            result = {
                 "ok": True,
                 "answer": reply.text or
                 "(the model proposed tool calls; use 'agent run' for "
@@ -116,7 +150,10 @@ class AgentRuntime:
                 "proposed_tools": [call.name for call in reply.tool_calls],
                 "mode": self.mode,
             }
-        return {"ok": True, "answer": reply.text, "mode": self.mode}
+        else:
+            result = {"ok": True, "answer": reply.text, "mode": self.mode}
+        self._emit("final", result)
+        return result
 
     # ------------------------------------------------------------ dispatch
     def _dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:

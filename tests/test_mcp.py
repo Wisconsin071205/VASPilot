@@ -57,6 +57,7 @@ class TestMcpProtocol:
                                    {"protocolVersion": "2024-11-05"}))
         assert reply["result"]["serverInfo"]["name"] == "vaspilot"
         assert "tools" in reply["result"]["capabilities"]
+        assert "resources" in reply["result"]["capabilities"]
 
     def test_tools_list(self, mcp_session):
         server, app, registry = mcp_session
@@ -64,7 +65,8 @@ class TestMcpProtocol:
         names = {t["name"] for t in reply["result"]["tools"]}
         assert {"server_list", "remote_list", "remote_read", "vasp_progress",
                 "job_state", "open_remote_login", "open_approval_terminal",
-                "vaspilot_self_check"} <= names
+                "vaspilot_self_check", "fleet_snapshot",
+                "render_fleet_dashboard"} <= names
         for name in names:
             assert not any(word in name for word in ("shell", "exec", "bash"))
 
@@ -125,6 +127,42 @@ class TestMcpProtocol:
         payload = json.loads(reply["result"]["content"][0]["text"])
         assert payload["ok"] is True
         assert payload["registry_tools"] > 10
+
+    def test_fleet_snapshot_is_structured_and_read_only(self, mcp_session, fake_state):
+        server, app, registry = mcp_session
+        fake_state.jobs["cl9"].append({"job_id": "123", "state": "RUNNING",
+                                        "name": "relax"})
+        reply = server._handle(app, registry, rpc("tools/call", {
+            "name": "fleet_snapshot", "arguments": {"servers": ["cl9"]},
+        }))
+        result = reply["result"]
+        assert result["isError"] is False
+        payload = result["structuredContent"]["snapshot"]
+        assert payload["total"] == 1
+        assert payload["servers"][0]["active_jobs"] == 1
+        assert payload["servers"][0]["jobs"][0]["job_id"] == "123"
+        assert payload["monitor_kind"] == "scheduler_poll"
+
+    def test_dashboard_resource_and_render_tool(self, mcp_session):
+        server, app, registry = mcp_session
+        listed = server._handle(app, registry, rpc("resources/list"))
+        resource = listed["result"]["resources"][0]
+        assert resource["mimeType"] == "text/html;profile=mcp-app"
+        assert resource["uri"].startswith("ui://")
+        read = server._handle(app, registry, rpc("resources/read", {
+            "uri": resource["uri"],
+        }))
+        html = read["result"]["contents"][0]["text"]
+        assert "远端集群作业面板" in html
+        rendered = server._handle(app, registry, rpc("tools/call", {
+            "name": "render_fleet_dashboard",
+            "arguments": {"refresh_seconds": 30},
+        }))
+        assert rendered["result"]["isError"] is False
+        assert rendered["result"]["structuredContent"]["refresh_seconds"] == 30
+        tools = server._wrap(app, registry)
+        ui_tool = next(tool for tool in tools if tool["name"] == "render_fleet_dashboard")
+        assert ui_tool["_meta"]["ui"]["resourceUri"] == resource["uri"]
 
     def test_open_login_needs_valid_server_name(self, mcp_session):
         server, app, registry = mcp_session

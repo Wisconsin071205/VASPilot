@@ -105,7 +105,25 @@ def build_parser() -> argparse.ArgumentParser:
     register_workflow(sub)
     register_monitor(sub)
     register_agent(sub)
+
+    ui = sub.add_parser("ui", help="local web console (chat + fleet + workflow)")
+    ui.add_argument("--host", default="127.0.0.1")
+    ui.add_argument("--port", type=int, default=8930)
+    ui.add_argument("--no-open", dest="open_browser", action="store_false",
+                    help="do not open the browser automatically")
+    ui.set_defaults(handler=cmd_ui)
     return parser
+
+
+def cmd_ui(app, args):
+    """Start the local web console; blocks until Ctrl-C."""
+    from .. import __version__
+    from ..ui import serve
+    print(f"VASPilot UI {__version__} listening on "
+          f"http://{args.host}:{args.port} (Ctrl-C to stop)")
+    serve(app, host=args.host, port=args.port,
+          open_browser=args.open_browser)
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:

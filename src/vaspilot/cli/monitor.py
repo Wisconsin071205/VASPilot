@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 
 from ..core.errors import ValidationError
 from ..core.jsonio import emit
@@ -51,6 +52,15 @@ def _snapshot(app, names=None) -> dict:
                 record["states"] = sorted({str(j.get("state", "?"))
                                            for j in active})
                 record["scheduler_detected"] = jobs.get("scheduler")
+                # Only retain the short, public scheduler summary needed by
+                # dashboard clients.  No command text, remote paths, stdout or
+                # scheduler environment is propagated into the UI.
+                record["jobs"] = [{
+                    key: str(job.get(key, ""))[:160]
+                    for key in ("job_id", "name", "state", "elapsed",
+                                "time_limit", "limit", "partition", "nodes")
+                    if job.get(key) not in (None, "")
+                } for job in active[:50] if isinstance(job, dict)]
             except Exception as exc:
                 record["jobs_error"] = str(exc)[:200]
         else:
@@ -59,7 +69,10 @@ def _snapshot(app, names=None) -> dict:
         entries.append(record)
     return {"servers": entries,
             "connected": sum(1 for e in entries if e.get("connected")),
-            "total": len(entries)}
+            "total": len(entries),
+            "generated_at": datetime.now(timezone.utc).astimezone().isoformat(
+                timespec="seconds"),
+            "monitor_kind": "scheduler_poll"}
 
 
 def cmd_snapshot(app, args):

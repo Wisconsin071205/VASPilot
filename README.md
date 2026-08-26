@@ -66,11 +66,29 @@ py -3.12 scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
 | `workflow` | `prepare validate preview approve approve-submit run resume status` |
 | `monitor` | `snapshot watch` |
 | `agent` | `provider list/add/remove/probe/set-default`, `chat --provider`, `run --provider --goal` |
+| `ui` | `vaspilot ui` — 统一 Web 控制台 |
 
 Every command prints one stable JSON document and uses documented exit codes:
 `0` ok · `1` error · `2` usage · `3 auth_required` · `4 approval` · `5 validation`.
 `auth_required` is never auto-filled — the CLI opens no hidden prompt; you
 re-authenticate visibly via `server connect`.
+
+## 统一 Web 控制台（`vaspilot ui`）
+
+本地零依赖 Web UI（默认 `http://127.0.0.1:8930`，浏览器自动打开）：
+
+- **对话** — 多 Provider 智能体聊天，流式输出 + 工具调用卡片（可展开参数/结果），
+  与 CLI/MCP 共用同一注册表和权限语义；
+- **总览** — 全服务器快照（连接、调度器、活动作业、状态）+ 60 秒自动刷新；
+- **文件** — 远端目录浏览与小型文本查看（POTCAR/大二进制拒绝）；
+- **作业** — 活动/历史作业 + VASP 科学进度卡（调度器状态与科学收敛分列）；
+- **工作流** — 计划预览（文件 SHA-256 + 步骤 DAG + 风险）→ 本地审批
+  （在页面输入 `approve <plan_id>` 确认短语）→ 无人值守执行 + 尝试时间线。
+
+安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
+必须携带；UI 不接触密码/TOTP/API Key——交互式登录通过「连接」按钮在**独立的
+可见系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
+桌面快捷方式「VASPilot 控制台」或 `%USERPROFILE%\bin\vaspilot-ui.cmd` 一键启动。
 
 ## Approval model (immutable plan, one approval, unattended inside the plan)
 

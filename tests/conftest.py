@@ -168,23 +168,32 @@ class FakeTransport:
 
     def op_list(self, args):
         server = self._server(args)
-        path = args[-1] if not args[-1].startswith("--") else "."
-        if path == "." or path is None:
-            path = self.state.servers[server]["root"]
+        positional = [a for a in self._positionals(args) if not a.startswith("--")]
+        path = positional[0] if positional else self.state.servers[server]["root"]
         if not self._in_root(server, path):
             return {"ok": False, "error": {"code": "outside_root",
                                            "message": "path outside root"}}
-        entries = []
-        names = set(self.state.files.get(server, {})) | \
+        prefix = path.rstrip("/") + "/"
+        explicit = set(self.state.files.get(server, {})) | \
             set(self.state.dirs.get(server, set()))
-        for name in sorted(n for n in names if str(n).startswith(path.rstrip("/") + "/")):
-            rel = str(name)[len(path.rstrip("/")) + 1:]
-            if "/" in rel:
+        children: dict[str, dict] = {}
+        for name in explicit:
+            name = str(name)
+            if not name.startswith(prefix):
                 continue
-            is_dir = name in self.state.dirs.get(server, set())
-            content = self.state.files[server].get(name, b"")
-            entries.append({"name": rel, "type": "dir" if is_dir else "file",
-                            "size": len(content), "mtime": "2026-01-01T00:00:00"})
+            rel = name[len(prefix):]
+            if not rel:
+                continue
+            first, _, rest = rel.partition("/")
+            if rest:  # deeper entry -> an implicit directory
+                children.setdefault(first, {"type": "dir", "size": 0})
+            else:
+                is_dir = name in self.state.dirs.get(server, set())
+                content = self.state.files[server].get(name, b"")
+                children[first] = {"type": "dir" if is_dir else "file",
+                                   "size": len(content)}
+        entries = [{"name": n, "mtime": "2026-01-01T00:00:00", **meta}
+                   for n, meta in sorted(children.items())]
         return {"ok": True, "path": path, "entries": entries}
 
     def op_read(self, args):
