@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..core.errors import AuthRequiredError, RemoteError, ValidationError
+from ..core.validation import valid_server_name
 
 # stderr fragments that mean "the reusable session is gone / never existed".
 _AUTH_HINTS = (
@@ -148,16 +149,18 @@ class SshTransport:
         """Open a *visible* terminal for interactive login (never headless).
 
         Passwords and TOTP are typed by the human in this window only.
+
+        Windows note: spawn ``cmd /k ssh …`` directly with
+        CREATE_NEW_CONSOLE — do NOT go through ``start``, which would treat
+        the joined command line as one file name ("Windows cannot find
+        'ssh -q …'"). /k keeps the window open so the connect result (job
+        prompts, OTP retry, success line) stays readable.
         """
+        valid_server_name(server)
         inner = f"{self.gateway_path} connect --server {server}"
-        cmd = self._base(batch=False, tty=True) + [inner]
-        creationflags = 0
-        if hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-            creationflags = subprocess.CREATE_NEW_CONSOLE
-            # A new console needs a shell wrapper so the window stays open.
-            joined = subprocess.list2cmdline(cmd)
-            cmd = ["cmd", "/c", "start", "VASPilot login", "/min",
-                   joined.replace("^", "^^")]
+        ssh_args = self._base(batch=False, tty=True) + [inner]
+        cmd = ["cmd", "/k"] + ssh_args
+        creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
         try:
             subprocess.Popen(cmd, creationflags=creationflags)
         except OSError as exc:
