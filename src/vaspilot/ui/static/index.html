@@ -276,6 +276,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <button onclick="newSession()">＋ 新会话</button>
       <button onclick="clearSession()">清空记忆</button>
       <button onclick="loadSessions()" title="刷新会话列表">⟳</button>
+      <span id="sesshint" style="font-size:11px;color:var(--fg2)"></span>
     </div>
     <div id="chatlog">
       <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">VASPilot</div>
@@ -792,6 +793,7 @@ const badge = (t, cls) => `<span class="badge b-${cls}">${esc(t)}</span>`;
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t.dataset.v));
+  if (t.dataset.v === "chat") loadSessions();
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "flow") refreshProjects();
@@ -1153,6 +1155,9 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     const r = ev.result || {};
     bubble.innerHTML = esc(r.answer || acc || "（完成）");
     if (!r.ok && r.error) toast(r.error, "err");
+    // 回答落库后立即刷新会话列表（排序/标题），不等下一次轮询
+    if (!loadSessionsbusy) { loadSessionsbusy = true;
+      loadSessions().finally(() => loadSessionsbusy = false); }
   } else if (ev.type === "pending") {
     for (const entry of ev.pending || []) addConfirmCard(log, entry);
   } else if (ev.type === "error") {
@@ -1221,6 +1226,9 @@ async function pollPendingCards() {
     const log = document.getElementById("chatlog");
     for (const entry of r.pending) addConfirmCard(log, entry);
   }
+  // 会话列表随心跳保持新鲜：updated_at/标题/新会话不会被旧渲染卡住
+  if (!loadSessionsbusy) { loadSessionsbusy = true;
+    loadSessions().finally(() => loadSessionsbusy = false); }
 }
 function addMsg(role, text) {
   const log = document.getElementById("chatlog");
@@ -1455,14 +1463,21 @@ async function loadSessions(pickLatest = false) {
   const sessions = r.sessions || [];
   lastSessions = sessions;
   const sel = document.getElementById("sesssel");
+  // 空标题的新会话显示成可读的「新会话 HH:MM」，避免看起来像丢了一条
+  const label = s => esc((s.project ? "[" + s.project + "] " : "")
+    + (s.title || (s.message_count ? "" :
+        "新会话 " + String(s.session_id).match(/T(\d{6})/)?.[1]
+          ?.replace(/(\d{2})(\d{2})(\d{2})/, "$1:$2:$3") || s.session_id))
+    ) + `${s.pending ? "  ⏳待确认" : ""}`;
   sel.innerHTML = sessions.map(s =>
-    `<option value="${esc(s.session_id)}">${esc((s.project ? "[" + s.project + "] " : "")
-      + (s.title || s.session_id))}${s.pending ? "  ⏳待确认" : ""}</option>`).join("")
+    `<option value="${esc(s.session_id)}">${label(s)}</option>`).join("")
     || "<option value=''>（无会话）</option>";
   if (pickLatest && sessions.length) CURRENT_SESSION = sessions[0].session_id;
   if (sessions.length && !sessions.some(s => s.session_id === CURRENT_SESSION))
     CURRENT_SESSION = sessions[0].session_id;
   sel.value = CURRENT_SESSION || "";
+  document.getElementById("sesshint").textContent =
+    sessions.length > 1 ? `共 ${sessions.length} 个会话` : "";
   renderProjectSidebar(sessions);
 }
 document.getElementById("sesssel").onchange = () => openSession(document.getElementById("sesssel").value);
@@ -1555,6 +1570,7 @@ function toggleProjSess(row) {
   box.style.display = box.style.display === "none" ? "" : "none";
 }
 let lastSessions = [];
+let loadSessionsbusy = false;
 async function refreshProjects() {
   const r = await api("project.list");
   if (!r.ok) return;
