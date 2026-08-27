@@ -236,6 +236,25 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .useg{height:100%}
 .ukey{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--fg2);margin-top:6px}
 .ukey i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
+
+/* ---------- 对话排版（Claude Code 风格） ---------- */
+.bubble{white-space:normal;line-height:1.6;font-size:13.5px}
+.bubble .mdh{margin:12px 0 6px;font-size:14.5px;color:var(--acc)}
+.bubble ul,.bubble ol{margin:6px 0 6px 20px;padding:0}
+.bubble li{margin:3px 0}
+.bubble .mdtable{border-collapse:collapse;margin:10px 0;font-size:12.5px}
+.bubble .mdtable th,.bubble .mdtable td{border:1px solid var(--line);
+  padding:4px 9px;text-align:left;vertical-align:top}
+.bubble .mdtable th{background:var(--bg3)}
+.bubble pre.mdcode{background:var(--bg);border:1px solid var(--line);
+  border-radius:8px;padding:9px 11px;overflow-x:auto;margin:8px 0}
+.bubble code.ic{background:var(--bg3);border-radius:4px;padding:1px 5px;
+  font-family:var(--mono);font-size:12px;color:#79c0ff}
+.bubble .mp{margin:4px 0}
+.turnmeta{font-size:11px;color:var(--fg2);margin-top:8px}
+.tc-sum{font-family:var(--mono);font-size:11.5px;color:var(--fg2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  max-width:46%;margin-left:8px}
 </style>
 </head>
 <body>
@@ -1100,6 +1119,14 @@ async function sendChat() {
   const botBody = addMsg("bot", "");
   const bubble = botBody.querySelector(".bubble");
   bubble.innerHTML = '<span class="cursor"></span>';
+  // Claude Code 式的回合元信息：思考计时 → 完成用时与工具调用数
+  const meta = document.createElement("div");
+  meta.className = "turnmeta"; meta.textContent = "思考中… 0s";
+  botBody.querySelector(".bd").appendChild(meta);
+  log._meta = meta; log._t0 = Date.now(); log.dataset.tc = "0";
+  log._timer = setInterval(() => {
+    meta.textContent = `思考中… ${Math.round((Date.now() - log._t0) / 1000)}s`;
+  }, 500);
   document.getElementById("sendbtn").disabled = true;
   let acc = "";
   try {
@@ -1127,6 +1154,7 @@ async function sendChat() {
     }
     if (!acc.trim()) bubble.textContent = bubble.textContent || "（无输出）";
   } catch (e) {
+    if (log._timer) { clearInterval(log._timer); log._timer = null; }
     bubble.textContent = "连接中断：" + e.message;
   } finally {
     document.getElementById("sendbtn").disabled = false;
@@ -1140,6 +1168,8 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     bubble.dataset.meta = `${ev.provider} · ${mode}`;
     if (ev.session_id) CURRENT_SESSION = ev.session_id;
   } else if (ev.type === "delta") {
+    if (log._timer) { clearInterval(log._timer); log._timer = null;
+      if (log._meta) log._meta.textContent = ""; }
     const cur = bubble.dataset.acc || "";
     const next = cur + ev.text;
     bubble.dataset.acc = next;
@@ -1153,8 +1183,12 @@ function handleChatEvent(ev, bubble, log, setAcc) {
   } else if (ev.type === "final") {
     const acc = bubble.dataset.acc || "";
     const r = ev.result || {};
-    bubble.innerHTML = esc(r.answer || acc || "（完成）");
+    bubble.innerHTML = safeMD(r.answer || acc || "（完成）");
     if (!r.ok && r.error) toast(r.error, "err");
+    if (log._timer) { clearInterval(log._timer); log._timer = null; }
+    if (log._meta) log._meta.textContent =
+      `完成 · 用时 ${Math.round((Date.now() - (log._t0 || Date.now())) / 1000)}s`
+      + ` · ${log.dataset.tc || 0} 次工具调用`;
     // 回答落库后立即刷新会话列表（排序/标题），不等下一次轮询
     if (!loadSessionsbusy) { loadSessionsbusy = true;
       loadSessions().finally(() => loadSessionsbusy = false); }
@@ -1166,15 +1200,23 @@ function handleChatEvent(ev, bubble, log, setAcc) {
   log.scrollTop = log.scrollHeight;
 }
 function addToolCard(log, ev) {
+  log.dataset.tc = String(parseInt(log.dataset.tc || "0", 10) + 1);
   const card = document.createElement("div");
   card.className = "toolcard";
   const ok = ev.ok !== false;
   const outcome = ev.outcome || {};
   const pending = outcome.status === "pending_confirmation";
+  // 折叠态摘要：让一摞卡片不点开也能读懂（命令/路径/目标优先）
+  const args = ev.arguments || {};
+  const sumSrc = args.command || args.path || args.directory ||
+                 args.destination || args.job_id || args.name ||
+                 args.server || "";
+  const sum = String(sumSrc).slice(0, 72);
   card.innerHTML = `
     <div class="tc-h" onclick="this.parentElement.classList.toggle('open')">
       <span class="st ${ok ? "ok" : "fail"}"></span>
       <span class="nm">${esc(ev.tool)}</span>
+      <span class="tc-sum" title="${esc(sum)}">${esc(sum)}</span>
       <span style="color:var(--fg2);flex:1">${pending ? badge("等待确认", "warn") : ""}</span>
       <span style="color:var(--fg2)">${ok ? "成功" : "失败"} · 点击展开</span>
     </div>
@@ -1230,6 +1272,66 @@ async function pollPendingCards() {
   if (!loadSessionsbusy) { loadSessionsbusy = true;
     loadSessions().finally(() => loadSessionsbusy = false); }
 }
+/* ---- 轻量安全 Markdown：先整体转义，再只认白名单结构 ---- */
+function safeMD(src) {
+  const lines = esc(src ?? "").split("\n");
+  let html = "", inCode = false, codeBuf = [];
+  let listBuf = "", listType = "";
+  let tableBuf = null, tableHead = null;
+
+  const inline = s => s
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/`([^`]+)`/g, "<code class='ic'>$1</code>");
+  const flushList = () => {
+    if (listBuf) { html += `<${listType}>` + listBuf + `</${listType}>`;
+      listBuf = ""; listType = ""; }
+  };
+  const flushTable = () => {
+    if (!tableBuf) return;
+    let body = "";
+    tableBuf.forEach(cells => {
+      body += "<tr>" + cells.map((c, i) =>
+        `<${tableHead && i < tableHead.length ? "th" : "td"}>` +
+        inline(c.trim()) + `</${tableHead && i < tableHead.length ? "th" : "td"}>`
+      ).join("") + "</tr>";
+    });
+    html += `<table class="mdtable">${body}</table>`;
+    tableBuf = null; tableHead = null;
+  };
+  for (const raw of lines) {
+    const line = raw;
+    if (line.trim().startsWith("```")) {
+      if (inCode) { html += `<pre class="mdcode">${codeBuf.join("\n")}</pre>`;
+        codeBuf = []; inCode = false; }
+      else { flushList(); flushTable(); inCode = true; }
+      continue;
+    }
+    if (inCode) { codeBuf.push(line); continue; }
+    if (/^\s*\|.*\|\s*$/.test(line)) {
+      const cells = line.trim().replace(/^\||\|$/g, "").split("|");
+      if (cells.every(c => /^\s*:?-{2,}:?\s*$/.test(c))) continue; // 分隔行
+      if (tableBuf === null) { tableHead = cells; tableBuf = []; }
+      else tableBuf.push(cells);
+      continue;
+    }
+    flushTable();
+    const li = line.match(/^\s*[-*]\s+(.*)/);
+    if (li) { if (listType !== "ul") flushList();
+      listType = "ul"; listBuf += `<li>${inline(li[1])}</li>`; continue; }
+    const ol = line.match(/^\s*\d+[.)]\s+(.*)/);
+    if (ol) { if (listType !== "ol") flushList();
+      listType = "ol"; listBuf += `<li>${inline(ol[1])}</li>`; continue; }
+    flushList();
+    const h = line.match(/^(#{1,6})\s+(.*)/);
+    if (h) { html += `<div class="mdh">${inline(h[2])}</div>`; continue; }
+    if (!line.trim()) { html += "<div style='height:5px'></div>"; continue; }
+    html += `<div class="mp">${inline(line)}</div>`;
+  }
+  if (inCode) html += `<pre class="mdcode">${codeBuf.join("\n")}</pre>`;
+  flushList(); flushTable();
+  return html;
+}
+
 function addMsg(role, text) {
   const log = document.getElementById("chatlog");
   const div = document.createElement("div");
@@ -1237,7 +1339,11 @@ function addMsg(role, text) {
   div.innerHTML = `<div class="av">${role === "user" ? "你" : "V"}</div>
     <div class="bd"><div class="who">${role === "user" ? "你" : "VASPilot 智能体"}</div>
     <div class="bubble"></div></div>`;
-  if (text) div.querySelector(".bubble").textContent = text;
+  if (text) {
+    const bubble = div.querySelector(".bubble");
+    if (role === "user") bubble.textContent = text;
+    else bubble.innerHTML = safeMD(text);
+  }
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
