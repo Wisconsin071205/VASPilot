@@ -306,8 +306,9 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div class="card"><h2>活动作业</h2><table id="jobtable">
       <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card"><h2>历史作业</h2><table id="rectable">
-      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th></tr></thead>
+    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（本机台账：集群查不到的完成作业也会保留，含完成时间）</span></h2>
+      <table id="rectable">
+      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th></tr></thead>
       <tbody></tbody></table></div>
     <div class="card">
       <h2>VASP 科学进度（区别于调度器状态）</h2>
@@ -784,9 +785,11 @@ async function loadJobs() {
     || `<tr><td colspan="5" class="empty">无活动作业</td></tr>`;
   if (recent.ok) document.querySelector("#rectable tbody").innerHTML = (recent.jobs || []).map(j => `
     <tr><td class="mono">${esc(j.job_id)}</td>
-    <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED"].includes(j.state) ? "err" : "info")}</td>
-    <td class="mono">${esc(j.elapsed)}</td></tr>`).join("")
-    || `<tr><td colspan="3" class="empty">无历史</td></tr>`;
+    <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED","CANCELED"].includes(String(j.state).toUpperCase()) ? "err" : "info")}</td>
+    <td class="mono">${esc(j.elapsed || "—")}</td>
+    <td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc((j.completed_at || "").replace("T", " ").slice(0, 19)) || "—"}</td>
+    <td>${esc(j.name || "")}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
 }
 async function loadProgress() {
   const server = document.getElementById("jsrv").value;

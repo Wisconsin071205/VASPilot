@@ -81,6 +81,19 @@ def _json_bytes(payload: dict) -> bytes:
     return json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
 
 
+def _server_name(body: dict) -> str:
+    from ..core.validation import valid_server_name
+    try:
+        return valid_server_name(str(body.get("server") or ""))
+    except Exception:
+        return ""
+
+
+def _server_or_default(body: dict, app) -> str:
+    name = _server_name(body)
+    return name or app.config.default_server()
+
+
 class UiHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "vaspilot-ui/" + __version__
@@ -209,9 +222,20 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(client.read(str(body.get("path") or ""),
                                             server=body.get("server")))
             elif action == "job.list":
-                self._send_json(client.jobs(server=body.get("server")))
+                document = client.jobs(server=body.get("server"))
+                self._job_ledger().observe(_server_name(body),
+                                           document.get("jobs") or [])
+                self._send_json(document)
             elif action == "job.recent":
-                self._send_json(client.recent_jobs(server=body.get("server")))
+                fresh = client.recent_jobs(server=body.get("server"))
+                # fold the cluster's own history in, then serve the union
+                # from the local ledger so completed jobs persist with
+                # their completion timestamps even when the scheduler
+                # forgets them (PBS shows active jobs only)
+                merged = self._job_ledger().observe(
+                    _server_name(body), fresh.get("jobs") or [])
+                self._send_json({"ok": True, "jobs": merged,
+                                 "scheduler": fresh.get("scheduler")})
             elif action == "vasp.progress":
                 self._send_json(client.vasp_progress(
                     str(body.get("directory") or ""), server=body.get("server")))
@@ -476,7 +500,12 @@ class UiHandler(BaseHTTPRequestHandler):
                          "key_saved": app.config.provider_key_saved(pid),
                          "auth_ready": auth_ready})
 
-    # ---------------------------------------------------- projects / chat / skills
+    # ---------------------------------------------------- jobs ledger
+    def _job_ledger(self):
+        from ..core.jobhistory import JobLedger
+        return JobLedger(self.state.app.config.jobs_dir)
+
+    # ----------------------------------------------------- projects / chat / skills
     def _project_action(self, action: str, body: dict) -> None:
         from ..workflow.projects import TEMPLATES, ProjectStore
         app = self.state.app
@@ -612,6 +641,12 @@ class UiHandler(BaseHTTPRequestHandler):
         result = client.submit(str(entry["directory"]), str(entry["script"]),
                                server=entry["server"] or None)
         settled = store.settle(entry_id, "approved", result)
+        job_id = str((result or {}).get("job_id") or "")
+        if job_id:
+            self._job_ledger().seed_submitted(
+                str(entry["server"]) if entry.get("server")
+                else _server_or_default({}, app),
+                job_id, name=str(entry["script"]))
         self._note_session(app, entry, "[提交确认已批准并执行] "
                            f"{entry['server']}:{entry['directory']}/"
                            f"{entry['script']} -> "

@@ -193,6 +193,10 @@ class Config:
         return self.home / "metrics"
 
     @property
+    def jobs_dir(self) -> Path:
+        return self.home / "jobs"
+
+    @property
     def pending_submits_path(self) -> Path:
         return self.home / "pending_submits.json"
 

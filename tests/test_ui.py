@@ -737,3 +737,37 @@ class TestSkillsApi:
         assert deleted["ok"]
 
 
+
+
+class TestJobLedger:
+    def test_history_persists_with_completion_time(self, ui):
+        """Cluster forgets finished jobs (PBS); the local ledger must not."""
+        st = ui["state"]
+        st.jobs["cl9"] = [{"job_id": "9001", "state": "RUNNING",
+                           "name": "NaOH_relax", "elapsed": "0:10"}]
+        r = call(ui, "job.list", {"server": "cl9"})
+        assert r["ok"] and any(j["job_id"] == "9001" for j in r["jobs"])
+
+        # it completes: one last sighting stamps completed_at
+        st.jobs["cl9"] = [{"job_id": "9001", "state": "COMPLETED",
+                           "name": "NaOH_relax", "elapsed": "01:20:00"}]
+        r = call(ui, "job.recent", {"server": "cl9"})
+        row = next(j for j in r["jobs"] if j["job_id"] == "9001")
+        assert row["completed_at"], row
+
+        # then the scheduler forgets it entirely — the ledger remembers
+        st.jobs["cl9"] = []
+        r = call(ui, "job.recent", {"server": "cl9"})
+        kept = [j for j in r["jobs"] if j["job_id"] == "9001"]
+        assert kept and kept[0]["completed_at"] is not None
+        assert kept[0]["name"] == "NaOH_relax"
+        assert kept[0]["elapsed"] == "01:20:00"
+        assert (ui["app"].config.jobs_dir / "cl9.json").is_file()
+
+    def test_failed_state_marked_terminal(self, ui):
+        ui["state"].jobs["cl9"] = [{"job_id": "9002", "state": "FAILED",
+                                    "name": "bad", "elapsed": "0:05"}]
+        call(ui, "job.recent", {"server": "cl9"})
+        r = call(ui, "job.recent", {"server": "cl9"})
+        row = next(j for j in r["jobs"] if j["job_id"] == "9002")
+        assert row["state"] == "FAILED" and row["completed_at"]

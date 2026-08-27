@@ -353,7 +353,10 @@ class FakeTransport:
     def op_recent(self, args):
         server = self._server(args)
         return {"ok": True, "scheduler": "slurm",
-                "jobs": [{"job_id": str(j["job_id"]), "state": j["state"]}
+                "jobs": [{"job_id": str(j["job_id"]), "state": j["state"],
+                          "name": j.get("name", ""),
+                          "elapsed": j.get("elapsed", ""),
+                          "partition": "cpu"}
                          for j in self.state.jobs[server]]}
 
     def op_submit(self, args):
