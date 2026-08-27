@@ -249,6 +249,28 @@ class Config:
         self.update_settings(agent_submit_mode=mode)
         return mode
 
+    # -- monitoring ------------------------------------------------------------
+    def temperature_alert_c(self) -> float:
+        """GPU temperature above which the UI raises one cooled-down toast."""
+        value = self.load_settings().get("temperature_alert_c")
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 85.0
+        return min(110.0, max(40.0, number))
+
+    def set_temperature_alert_c(self, value) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            raise ValidationError("temperature threshold must be a number")
+        if not 40.0 <= number <= 110.0:
+            raise ValidationError(
+                "temperature threshold must be between 40 and 110 °C")
+        number = round(number, 1)
+        self.update_settings(temperature_alert_c=number)
+        return number
+
     # -- web search configuration -------------------------------------------------
     WEBSEARCH_PROVIDERS = ("zhipu", "bocha")
 

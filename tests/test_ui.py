@@ -771,3 +771,54 @@ class TestJobLedger:
         r = call(ui, "job.recent", {"server": "cl9"})
         row = next(j for j in r["jobs"] if j["job_id"] == "9002")
         assert row["state"] == "FAILED" and row["completed_at"]
+
+
+class TestMonitorApi:
+    """The monitoring section's server endpoints (UI-only surface)."""
+
+    def test_history_without_collector(self, ui):
+        r = call(ui, "monitor.history", {"server": "cl9"})
+        assert r["ok"]
+        assert r["collector"]["installed"] is False
+        assert r["collector"]["reachable"] is True
+        assert r["heatmap"]["window_days"] == 30
+        assert r["usage"]["users"] == []
+
+    def test_history_merges_collector_tails(self, ui):
+        st = ui["state"]
+        st.monitor_installed = True
+        base = int(time.time()) // 60 * 60
+        st.monitor_tails = (f"{base}|12.0|34.0|0:5:1024:32510\n"
+                            "__VP_USE__\n"
+                            f"{base}|wuhong|0|2000\n{base + 60}|wuhong|0|2100")
+        r = call(ui, "monitor.history", {"server": "cl9", "days": 7})
+        assert r["collector"]["installed"] is True
+        assert r["fetched"]["added"] == 1
+        assert r["fetched"]["usage"] == 2
+        user = r["usage"]["users"][0]
+        assert user["user"] == "wuhong" and user["minutes"] >= 1.0
+        assert r["heatmap"]["gpu_indexes"] == ["0"]
+
+    def test_daemon_install_then_remove(self, ui):
+        r = call(ui, "monitor.daemon", {"server": "cl9", "on": True})
+        assert r["ok"] and r["running"] is True
+        assert f"{ROOT}/.vp-monitor/collector.sh" in ui["state"].files["cl9"]
+        assert f"{ROOT}/.vp-monitor/daemon.sh" in ui["state"].files["cl9"]
+        ui["state"].monitor_installed = False
+        r2 = call(ui, "monitor.daemon", {"server": "cl9", "on": False})
+        assert r2["stopped"] is True and r2["trash"] is True
+
+    def test_live_poll_fills_minute_bucket(self, ui):
+        r = call(ui, "server.metrics", {"server": "cl9"})
+        assert r["ok"] and any(g.get("util_pct") is not None
+                               for g in r["gpus"])
+        from vaspilot.core.metricsstore import MetricsStore
+        bucket = MetricsStore(ui["app"].config.metrics_dir).latest("cl9")
+        assert bucket and bucket["g"]["0"][0] == pytest.approx(5.0)
+
+    def test_temperature_threshold_save_and_validate(self, ui):
+        r = call(ui, "monitor.save", {"temperature_alert_c": "90"})
+        assert r["temperature_alert_c"] == 90.0
+        assert call(ui, "settings")["temperature_alert_c"] == 90.0
+        bad = call(ui, "monitor.save", {"temperature_alert_c": 200})
+        assert bad["ok"] is False

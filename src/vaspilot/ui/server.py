@@ -322,6 +322,12 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json({"websearch": saved})
             elif action == "server.metrics":
                 self._server_metrics(str(body.get("server") or ""))
+            elif action == "monitor.history":
+                self._monitor_history(body)
+            elif action == "monitor.daemon":
+                self._monitor_daemon(body)
+            elif action == "monitor.save":
+                self._monitor_save(body)
             elif action.startswith("project."):
                 self._project_action(action, body)
             elif action.startswith("chat."):
@@ -465,7 +471,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 "default_provider": app.config.default_provider(),
                 "vlab": {**vlab, "identity_file_exists": identity_ok},
                 "agent_submit_mode": app.config.agent_submit_mode(),
-                "websearch": app.config.websearch()}
+                "websearch": app.config.websearch(),
+                "temperature_alert_c": app.config.temperature_alert_c()}
 
     def _save_provider(self, body: dict) -> None:
         from ..core.config import ProviderEntry
@@ -704,6 +711,16 @@ class UiHandler(BaseHTTPRequestHandler):
                "load_one": (document.get("load") or {}).get("one"),
                "gpu_pct": max([g.get("util_pct") or 0
                                for g in document.get("gpus") or ()] or [0])}
+        # minute-bucket history (heat maps / idle persistence) — the same
+        # sample feeds the local store so the timeline stays continuous
+        # whenever the UI is polling; the offline daemon covers the rest.
+        try:
+            from ..core.metricsstore import MetricsStore
+            MetricsStore(app.config.metrics_dir).append_sample(
+                name, cpu_pct=row["cpu_pct"], mem_pct=row["mem_pct"],
+                gpus=document.get("gpus") or [])
+        except Exception:
+            pass  # bookkeeping must never break the live payload
         try:
             with open(history_path, "a", encoding="utf-8", newline="\n") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -726,6 +743,68 @@ class UiHandler(BaseHTTPRequestHandler):
         except OSError:
             pass
         self._send_json({**document, "history": history})
+
+    # ------------------------------------------------- monitoring section
+    def _monitor_store(self):
+        from ..core.metricsstore import MetricsStore
+        return MetricsStore(self.state.app.config.metrics_dir)
+
+    def _monitor_history(self, body: dict) -> None:
+        """Aggregate timeline for one server: local buckets first, then a
+        best-effort incremental merge of the offline collector's TSVs."""
+        from ..core.validation import valid_server_name
+        app = self.state.app
+        client = app.client()
+        name = valid_server_name(str(body.get("server")
+                                     or app.config.default_server()))
+        try:
+            days = max(1, min(int(body.get("days") or 30), 90))
+        except (TypeError, ValueError):
+            days = 30
+        store = self._monitor_store()
+        collector: dict = {"installed": False, "reachable": False}
+        fetched = {"added": 0, "duplicate": 0, "usage": 0}
+        if body.get("fetch", True):
+            try:
+                from ..core import remotemon
+                info = remotemon.status(client, name)
+                collector = {**info, "reachable": True}
+                if info.get("installed"):
+                    raw = remotemon.fetch(client, name)
+                    if raw.get("ok"):
+                        hist = store.merge_hist_tsv(name, raw["hist_text"])
+                        usage = store.merge_usage_tsv(name,
+                                                      raw["usage_text"])
+                        fetched = {"added": hist.get("added", 0),
+                                   "duplicate": hist.get("duplicate", 0),
+                                   "usage": usage.get("added", 0)}
+            except Exception as exc:
+                collector["error"] = str(exc)[:200]
+        self._send_json({
+            "ok": True, "server": name, "collector": collector,
+            "fetched": fetched,
+            "heatmap": store.heatmap(name, days=days),
+            "usage": store.usage_summary(name, days=days),
+            "latest": store.latest(name),
+        })
+
+    def _monitor_daemon(self, body: dict) -> None:
+        from ..core import remotemon
+        from ..core.validation import valid_server_name
+        app = self.state.app
+        client = app.client()
+        name = valid_server_name(str(body.get("server")
+                                     or app.config.default_server()))
+        if body.get("on"):
+            result = remotemon.install(client, name)
+        else:
+            result = remotemon.uninstall(client, name)
+        self._send_json(result)
+
+    def _monitor_save(self, body: dict) -> None:
+        threshold = self.state.app.config.set_temperature_alert_c(
+            body.get("temperature_alert_c"))
+        self._send_json({"temperature_alert_c": threshold})
 
     # ----------------------------------------------------- background runs
     def _start_run(self, plan_id: str, approval_ref: str,

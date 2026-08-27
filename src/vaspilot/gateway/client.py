@@ -429,6 +429,26 @@ class GatewayClient:
                 "truncated": bool(document.get("truncated")),
                 "command": str(document.get("command", command))}
 
+    def exec_raw(self, command: str, *, timeout_seconds: int = 120,
+                 server: str | None = None) -> dict:
+        """Like run_command but keeps the gateway's full stdout payload
+        (up to its own ~256 KiB truncation) for bulk TSV history fetches."""
+        name = self._require(server)
+        command = str(command or "").strip()
+        if not command:
+            raise ValidationError("command is required")
+        timeout = max(5, min(int(timeout_seconds or 120), 600)) + 15
+        document = self._call("remote.run",
+                              ["exec", "--server", name,
+                               "--timeout", str(int(timeout_seconds or 120)),
+                               "--", command],
+                              timeout=timeout)
+        rc = document.get("rc")
+        return {"ok": rc == 0, "server": name, "rc": rc,
+                "stdout": str(document.get("stdout", "")),
+                "stderr": str(document.get("stderr", ""))[:20000],
+                "truncated": bool(document.get("truncated"))}
+
     def metrics(self, server: str | None = None) -> dict:
         """Live node resources parsed from the gateway's tagged sections."""
         name = self._require(server)
@@ -577,7 +597,8 @@ def _parse_metric_sections(sections: dict) -> dict:
     elif gpu_raw == "_ERR_":
         gpu_status = "degraded"
 
-    # -- gpu processes
+    # -- gpu processes (5th field = owning user, appended by the collector
+    #    script via `ps -o user=`; older gateways emit 4 fields -> "")
     gpu_procs = []
     for line in str(sections.get("gpu_proc", "")).splitlines():
         parts = [p.strip() for p in line.split(",")]
@@ -588,6 +609,7 @@ def _parse_metric_sections(sections: dict) -> dict:
                 "process": parts[2][:80],
                 "mem_mib": _float(parts[3].split()[0]) if len(parts) > 3 and
                 parts[3].split() else None,
+                "username": parts[4][:32] if len(parts) > 4 else "",
             })
 
     # -- scheduler queue summary

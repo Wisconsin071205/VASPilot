@@ -45,7 +45,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.1.0"
+GATEWAY_VERSION = "1.2.0"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -1061,7 +1061,7 @@ echo __VP_NPROC__; nproc 2>/dev/null
 echo __VP_MEM__; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo 2>/dev/null
 echo __VP_DF__; df -P -k 2>/dev/null | sed -n '1,18p'
 echo __VP_GPU__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>&1 || echo _ERR_; else echo _MISSING_; fi
-echo __VP_GPUPROC__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory --format=csv,noheader,nounits 2>&1 || true; fi
+echo __VP_GPUPROC__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory --format=csv,noheader,nounits 2>/dev/null | while IFS=, read -r G P N M; do U=$(ps --no-headers -o user= -p "$(echo \"$P\" | tr -d ' ')" 2>/dev/null | tr -d ' '); printf '%s , %s , %s , %s , %s\n' \"$G\" \"$P\" \"$N\" \"$M\" \"$U\"; done; fi
 echo __VP_SCHED__; if command -v sinfo >/dev/null 2>&1; then echo slurm; sinfo -h -o '%R|%a|%D|%C' 2>/dev/null; elif command -v qstat >/dev/null 2>&1; then echo pbs; qstat -q 2>/dev/null | sed -n '1,20p'; fi
 echo __VP_DONE__
 """
@@ -1071,11 +1071,15 @@ def op_metrics(args) -> int:
     """Collect raw node-resource sections in one SSH round trip.
 
     The remote script is fixed; the LOCAL client parses the tagged sections
-    (RackTop-style). Read-only by construction.
+    (RackTop-style). Read-only by construction. A final heartbeat section
+    touches <root>/.vp-monitor/hb when the offline collector directory
+    exists, so the daemon only self-samples while no live poller is around.
     """
     name, entry = resolve_server(args.server)
     require_connection(name)
-    raw = remote(name, METRICS_SCRIPT)
+    hb = (f"mon={q(str(effective_root(name, entry)) + '/.vp-monitor')}; "
+          f'[ -d "$mon" ] && touch "$mon/hb" 2>/dev/null; true')
+    raw = remote(name, METRICS_SCRIPT + "\necho __VP_HB__\n" + hb + "\n")
     sections: dict = {}
     current = None
     for line in raw.splitlines():

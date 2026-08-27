@@ -114,7 +114,7 @@ class FakeTransport:
 
     # -- operations --------------------------------------------------------------
     def op_version(self, args):
-        return {"ok": True, "gateway_version": "1.1.0", "protocol": "2"}
+        return {"ok": True, "gateway_version": "1.2.0", "protocol": "2"}
 
     def op_servers(self, args):
         servers = [{"name": name, "target": e["target"], "port": e["port"],
@@ -123,7 +123,7 @@ class FakeTransport:
                     "connected": self.state.connected.get(name, False)}
                    for name, e in self.state.servers.items()]
         return {"ok": True, "servers": servers, "default": self.state.default,
-                "gateway_version": "1.1.0", "protocol": "2"}
+                "gateway_version": "1.2.0", "protocol": "2"}
 
     def op_server_add(self, args):
         name = args[1]
@@ -431,6 +431,28 @@ class FakeTransport:
             return {"ok": True, "server": server, "rc": 0,
                     "stdout": command[5:] + "\n", "stderr": "",
                     "truncated": False, "command": command}
+        if ".vp-monitor/collector.sh" in command:
+            # daemon status probe; flip state.monitor_installed to simulate
+            if getattr(self.state, "monitor_installed", False):
+                return {"ok": True, "server": server, "rc": 0,
+                        "stdout": "INSTALLED\nUP\n", "stderr": "",
+                        "truncated": False, "command": command}
+            return {"ok": True, "server": server, "rc": 0,
+                    "stdout": "ABSENT\n", "stderr": "", "truncated": False,
+                    "command": command}
+        if "pkill" in command and ".vp-monitor/daemon.sh" in command:
+            return {"ok": True, "server": server, "rc": 0,
+                    "stdout": "GONE\n", "stderr": "", "truncated": False,
+                    "command": command}
+        if ".vp-monitor" in command and "nohup" in command:
+            return {"ok": True, "server": server, "rc": 0,
+                    "stdout": "VP_UP\n", "stderr": "", "truncated": False,
+                    "command": command}
+        if "hist.tsv" in command or "__VP_USE__" in command:
+            tails = getattr(self.state, "monitor_tails", "")
+            return {"ok": True, "server": server, "rc": 0,
+                    "stdout": tails, "stderr": "", "truncated": False,
+                    "command": command}
         if "boom" in command:
             return {"ok": True, "server": server, "rc": 2, "stdout": "",
                     "stderr": "boom failed\n", "truncated": False,
@@ -458,7 +480,8 @@ class FakeTransport:
                           "/dev/sda1      500000000 200000000 300000000     "
                           "40% /",
                     "gpu": "0, NVIDIA A100, 5, 1200, 32510, 45, 70.5",
-                    "gpu_proc": "GPU-0, 12345, python, 1200 MiB",
+                    "gpu_proc": "GPU-0, 12345, python, 1200, wuhong",
+                    "hb": "",
                     "sched": "slurm\ncpu|up|4|160/64/0/224",
                     "done": "",
                 }}
