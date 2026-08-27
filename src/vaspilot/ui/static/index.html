@@ -153,12 +153,22 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .msg .who{font-size:11px;color:var(--fg2);margin-bottom:3px}
 .bubble{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;white-space:pre-wrap;word-break:break-word}
 .msg.user .bubble{background:#1a2436}
-.toolcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;margin:8px 0;max-width:860px;margin-left:auto;margin-right:auto;overflow:hidden}
-.toolcard .tc-h{display:flex;gap:8px;align-items:center;padding:8px 12px;cursor:pointer;font-size:12px}
-.toolcard .tc-h .st{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+/* 工具调用 = Claude Code 式紧凑行（└ $ 名称 摘要），不再是盒子 */
+.toolcard{background:none;border:0;margin:1px 0 1px 14px;max-width:860px;
+  font-family:var(--mono);font-size:12px;overflow:visible}
+.toolcard .tc-h{display:flex;gap:7px;align-items:center;padding:1px 2px;
+  cursor:pointer;color:var(--fg2);border-radius:6px}
+.toolcard .tc-h:hover{background:var(--bg2)}
+.toolcard .tc-h .st{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 .toolcard .tc-h .st.ok{background:var(--ok)} .toolcard .tc-h .st.fail{background:var(--err)}
-.toolcard .tc-h .nm{font-family:var(--mono);color:var(--acc)}
-.toolcard .tc-b{display:none;border-top:1px solid var(--line);padding:8px 12px;max-height:280px;overflow:auto}
+.toolcard .tc-h .pr{color:var(--fg2)}
+.toolcard .tc-h .nm{color:#79c0ff}
+.toolcard .tc-h.fail .nm{color:var(--err)}
+.toolcard .tc-sum{color:var(--fg)}
+.toolcard .tc-b{display:none;margin:3px 0 7px 16px;
+  border-left:2px solid var(--line);padding:4px 0 4px 12px;
+  max-height:280px;overflow:auto;color:var(--fg2)}
+.toolcard .tc-b pre{margin:0 0 6px}
 .toolcard.open .tc-b{display:block}
 #chatbar{border-top:1px solid var(--line);padding:12px 22px;background:var(--bg2)}
 #chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
@@ -1213,18 +1223,25 @@ function addToolCard(log, ev) {
                  args.server || "";
   const sum = String(sumSrc).slice(0, 72);
   card.innerHTML = `
-    <div class="tc-h" onclick="this.parentElement.classList.toggle('open')">
+    <div class="tc-h ${ok ? "" : "fail"}" onclick="this.parentElement.classList.toggle('open')">
       <span class="st ${ok ? "ok" : "fail"}"></span>
+      <span class="pr">└ $</span>
       <span class="nm">${esc(ev.tool)}</span>
       <span class="tc-sum" title="${esc(sum)}">${esc(sum)}</span>
-      <span style="color:var(--fg2);flex:1">${pending ? badge("等待确认", "warn") : ""}</span>
-      <span style="color:var(--fg2)">${ok ? "成功" : "失败"} · 点击展开</span>
+      ${pending ? badge("等待确认", "warn") : ""}
+      ${ok ? "" : '<span style="color:var(--err)">失败</span>'}
     </div>
     <div class="tc-b"><div style="color:var(--fg2);margin-bottom:4px">参数</div>
       <pre>${esc(JSON.stringify(ev.arguments ?? {}, null, 2))}</pre>
       <div style="color:var(--fg2);margin:6px 0 4px">结果</div>
       <pre>${esc(JSON.stringify(outcome, null, 2).slice(0, 4000))}</pre></div>`;
-  log.appendChild(card);
+  // Claude Code 式穿插：工具行插到当前 bot 气泡的上方（思考与回答之间）
+  const bots = log.querySelectorAll(".msg.bot");
+  const last = bots[bots.length - 1];
+  if (last) {
+    const bd = last.querySelector(".bd");
+    bd.insertBefore(card, bd.querySelector(".bubble"));
+  } else log.appendChild(card);
 }
 function addConfirmCard(log, entry) {
   if (document.getElementById("cf-" + entry.id)) return;
