@@ -170,6 +170,15 @@ textarea:focus{outline:none;border-color:var(--acc)}
   max-height:280px;overflow:auto;color:var(--fg2)}
 .toolcard .tc-b pre{margin:0 0 6px}
 .toolcard.open .tc-b{display:block}
+/* 回合工具组：回答一出即折叠为一行摘要（Claude Code 式） */
+.turntools{margin:0 0 6px}
+.turntools .tsum{display:flex;gap:7px;align-items:center;cursor:pointer;
+  font-family:var(--mono);font-size:12px;color:var(--fg2);padding:2px 4px;
+  border-radius:6px}
+.turntools .tsum:hover{background:var(--bg2)}
+.turntools .tsum .arrow{display:inline-block;transition:transform .15s}
+.turntools.collapsed .toolcard{display:none}
+.turntools.collapsed .tsum .arrow{transform:rotate(-90deg)}
 #chatbar{border-top:1px solid var(--line);padding:12px 22px;background:var(--bg2)}
 #chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
 #chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
@@ -795,6 +804,9 @@ textarea:focus{outline:none;border-color:var(--acc)}
 <script>
 /* ===================== 基础 ===================== */
 const TOKEN = location.pathname.split("/").pop();
+window.addEventListener("error", e => {
+  try { toast("JS错误: " + e.message, "err"); } catch (_) {}
+});
 let STATE = {servers:[], providers:[], default_provider:""};
 let CURRENT_PLAN = null, CURRENT_APPROVAL = null;
 
@@ -1132,8 +1144,13 @@ async function sendChat() {
   // Claude Code 式的回合元信息：思考计时 → 完成用时与工具调用数
   const meta = document.createElement("div");
   meta.className = "turnmeta"; meta.textContent = "思考中… 0s";
-  botBody.querySelector(".bd").appendChild(meta);
-  log._meta = meta; log._t0 = Date.now(); log.dataset.tc = "0";
+  const tools = document.createElement("div");
+  tools.className = "turntools";          // 过程行容器：结束后整体折叠
+  const bd0 = botBody.querySelector(".bd");
+  bd0.insertBefore(tools, bubble);
+  bd0.appendChild(meta);
+  log._tools = tools; log._meta = meta; log._t0 = Date.now();
+  log.dataset.tc = "0"; log._labels = [];
   log._timer = setInterval(() => {
     meta.textContent = `思考中… ${Math.round((Date.now() - log._t0) / 1000)}s`;
   }, 500);
@@ -1196,6 +1213,38 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     bubble.innerHTML = safeMD(r.answer || acc || "（完成）");
     if (!r.ok && r.error) toast(r.error, "err");
     if (log._timer) { clearInterval(log._timer); log._timer = null; }
+    // 回答一出，过程行整体折叠为一行摘要（Claude Code 式）
+    if (log._tools) {
+      const names = log._labels || [];
+      const VERBS = {remote_run: "执行命令", shell_run: "本地命令",
+                     remote_read: "读取文件", remote_tail: "查看文件末尾",
+                     remote_list: "列出目录", remote_copy: "服务器内拷贝",
+                     remote_move: "服务器内移动", remote_mkdir: "创建目录",
+                     upload_file: "上传文件", download_file: "下载结果",
+                     job_submit: "提交作业", job_state: "查询作业",
+                     job_list: "查询队列", vasp_progress: "检查收敛",
+                     vasp_validate: "校验输入", server_metrics: "查看负载",
+                     web_search: "联网搜索", web_fetch: "抓取网页",
+                     project_write: "写入项目文件",
+                     project_read: "读取项目文件"};
+      const counts = {};
+      for (const n of names) {
+        const v = VERBS[n] || n;
+        counts[v] = (counts[v] || 0) + 1;
+      }
+      const fails = log._tools.querySelectorAll(".tc-h.fail").length;
+      const sumText = Object.entries(counts)
+        .map(([v, n]) => n > 1 ? `${v}×${n}` : v).join("、");
+      const head = document.createElement("div");
+      head.className = "tsum";
+      head.onclick = () => log._tools.classList.toggle("collapsed");
+      head.innerHTML = `<span class="arrow">▾</span>` +
+        `<span>操作 ${names.length} 次：${esc(sumText) || "无"}` +
+        (fails ? ` · <span style="color:var(--err)">${fails} 项失败</span>` : "") +
+        `（点击展开）</span>`;
+      log._tools.insertBefore(head, log._tools.firstChild);
+      if (names.length) log._tools.classList.add("collapsed");
+    }
     if (log._meta) log._meta.textContent =
       `完成 · 用时 ${Math.round((Date.now() - (log._t0 || Date.now())) / 1000)}s`
       + ` · ${log.dataset.tc || 0} 次工具调用`;
@@ -1211,6 +1260,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
 }
 function addToolCard(log, ev) {
   log.dataset.tc = String(parseInt(log.dataset.tc || "0", 10) + 1);
+  (log._labels = log._labels || []).push(String(ev.tool || ""));
   const card = document.createElement("div");
   card.className = "toolcard";
   const ok = ev.ok !== false;
@@ -1235,13 +1285,17 @@ function addToolCard(log, ev) {
       <pre>${esc(JSON.stringify(ev.arguments ?? {}, null, 2))}</pre>
       <div style="color:var(--fg2);margin:6px 0 4px">结果</div>
       <pre>${esc(JSON.stringify(outcome, null, 2).slice(0, 4000))}</pre></div>`;
-  // Claude Code 式穿插：工具行插到当前 bot 气泡的上方（思考与回答之间）
-  const bots = log.querySelectorAll(".msg.bot");
-  const last = bots[bots.length - 1];
-  if (last) {
-    const bd = last.querySelector(".bd");
-    bd.insertBefore(card, bd.querySelector(".bubble"));
-  } else log.appendChild(card);
+  // 插入本轮工具组容器（思考与回答之间）；没有容器时退回旧位置
+  const wrap = log._tools;
+  if (wrap) wrap.appendChild(card);
+  else {
+    const bots = log.querySelectorAll(".msg.bot");
+    const last = bots[bots.length - 1];
+    if (last) {
+      const bd = last.querySelector(".bd");
+      bd.insertBefore(card, bd.querySelector(".bubble"));
+    } else log.appendChild(card);
+  }
 }
 function addConfirmCard(log, entry) {
   if (document.getElementById("cf-" + entry.id)) return;
