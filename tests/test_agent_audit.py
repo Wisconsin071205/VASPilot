@@ -97,7 +97,8 @@ class TestAgentRuntime:
 
 def _registry_of(app_with_fake):
     app, _ = app_with_fake
-    return app, app.registry()
+    # session-scoped so persistent-terminal tests can track cwd memory
+    return app, app.build_registry(session_id="test-session")
 
 
 class TestRuntimeHistory:
@@ -182,6 +183,28 @@ class TestShellTools:
         result = registry.dispatch("remote_run", {"command": "boom now"})
         assert result["ok"] is False
         assert result["rc"] == 2
+
+    def test_remote_run_persists_cwd_across_commands(self, app_with_fake):
+        app, registry = _registry_of(app_with_fake)
+        first = registry.dispatch("remote_run", {"command": "cd /tmp && ls"})
+        assert first["cwd"] == "/fake/cwd-1"
+        second = registry.dispatch("remote_run", {"command": "ls"})
+        assert second["cwd"] == "/fake/cwd-2"
+        # 第二条命令确实先 cd 回了上一条停下的目录
+        state_exec = [c for _, c in registry.context.client.transport
+                      .state.exec_log]
+        assert state_exec[-1].count("cd ") == 1 and \
+            "cd /fake/cwd-1 2>/dev/null" in state_exec[-1]
+
+    def test_remote_run_reset_forgets_cwd(self, app_with_fake):
+        app, registry = _registry_of(app_with_fake)
+        registry.dispatch("remote_run", {"command": "cd /tmp && ls"})
+        reset = registry.dispatch("remote_run",
+                                  {"command": "pwd", "reset": True})
+        assert reset["cwd"] == "/fake/cwd-2"
+        state_exec = [c for _, c in registry.context.client.transport
+                      .state.exec_log]
+        assert "cd '" not in state_exec[-1]
 
     def test_shell_audited(self, app_with_fake):
         app, _ = _registry_of(app_with_fake)

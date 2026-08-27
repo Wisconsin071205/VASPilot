@@ -265,11 +265,13 @@ class ToolRegistry:
             {"server": _server_param(), "path": _path_param("new directory")},
             lambda a: client.mkdir(str(a["path"]), server=a.get("server")))
         self._add(
-            "remote_copy", "Copy a remote path inside the same server.", "write",
+            "remote_copy",
+            "Copy a remote path INSIDE the same server (source and "
+            "destination both stay on the HPC). To bring files to THIS "
+            "computer use download_file instead.", "write",
             {"server": _server_param(), "path": _path_param("source"),
-             "destination": _path_param("destination")},
-            lambda a: client.copy(str(a["path"]), str(a["destination"]),
-                                  server=a.get("server")))
+             "destination": _path_param("destination under the same root")},
+            lambda a: self._copy_checked(client, a))
         self._add(
             "remote_move", "Move/rename a remote path inside the same server.", "write",
             {"server": _server_param(), "path": _path_param("source"),
@@ -347,15 +349,18 @@ class ToolRegistry:
         self._add(
             "remote_run",
             "Run one shell command on a remote HPC server (login node) "
-            "through the gateway. Fully audited on both sides.", "write",
+            "through the gateway. Persistent terminal: the working "
+            "directory you left last time is still in effect (see the "
+            "`cwd` field of the result); pass reset=true to jump back to "
+            "the home directory. Fully audited on both sides.", "write",
             {"server": _server_param(),
              "command": {"type": "string", "minLength": 1, "maxLength": 8000},
+             "reset": {"type": "boolean", "default": False,
+                       "description": "forget the remembered working "
+                                      "directory for this server"},
              "timeout_seconds": {"type": "integer", "minimum": 1,
                                  "maximum": 600, "default": 120}},
-            lambda a: client.run_command(
-                str(a["command"]),
-                timeout_seconds=int(a.get("timeout_seconds", 120)),
-                server=a.get("server")))
+            lambda a: self._remote_run_terminal(client, a))
 
         # ---- local projects ----------------------------------------------------------
         self._add(
@@ -474,6 +479,59 @@ class ToolRegistry:
             raise ValidationError(
                 f"{Path(path).name} may not be read as text through tools")
         return self.context.client.read(path, server=args.get("server"))
+
+    def _remote_run_terminal(self, client, args: dict[str, Any]):
+        """Stateful remote shell: remember and re-apply the working
+        directory between commands of the same chat session, so the model
+        drives the login node like a real terminal instead of one-shot
+        execs."""
+        import shlex as _shlex
+        from ..core.terminals import MARKER, hub_for, strip_marker
+
+        server = str(args.get("server") or "")
+        command = str(args.get("command") or "").strip()
+        hub = hub_for(self.context.session_id)
+        key = f"{self.context.session_id}:{server}"
+        if args.get("reset"):
+            hub.reset(key)
+        saved_cwd = hub.get(key)
+
+        if saved_cwd:
+            wrapped = (f"cd {_shlex.quote(saved_cwd)} 2>/dev/null; "
+                       f"{command}; __vp_rc=$?; "
+                       f'printf "\\n{MARKER}%s\\n" "$(pwd)" 2>/dev/null; '
+                       f"exit $__vp_rc")
+        else:
+            wrapped = (f"{command}; __vp_rc=$?; "
+                       f'printf "\\n{MARKER}%s\\n" "$(pwd)" 2>/dev/null; '
+                       f"exit $__vp_rc")
+        result = client.run_command(
+            wrapped, timeout_seconds=int(args.get("timeout_seconds", 120)),
+            server=server or None)
+        stdout = str(result.get("stdout", ""))
+        cleaned, new_cwd = strip_marker(stdout)
+        if new_cwd:
+            hub.set(key, new_cwd)
+        result["stdout"] = cleaned
+        result["cwd"] = new_cwd or saved_cwd or ""
+        return result
+
+    def _copy_checked(self, client, args: dict[str, Any]):
+        """Validate copy arguments BEFORE the gateway so a malformed call
+        returns an actionable message instead of a raw argparse usage dump
+        (the Codex brain produced exactly that on its first try)."""
+        source = str(args.get("path") or "").strip()
+        destination = str(args.get("destination") or "").strip()
+        missing = [label for label, value in
+                   (("path (source)", source),
+                    ("destination", destination)) if not value]
+        if missing:
+            raise ValidationError(
+                f"remote_copy needs {(' and '.join(missing))}; both paths "
+                "must be absolute paths under the SAME server root. If your "
+                "goal is to fetch files to this computer, call download_file "
+                "instead.")
+        return client.copy(source, destination, server=args.get("server"))
 
     def _potcar_metadata(self, args: dict[str, Any]) -> dict[str, Any]:
         library = self.context.potcar_library

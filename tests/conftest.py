@@ -427,6 +427,24 @@ class FakeTransport:
         if not hasattr(self.state, "exec_log"):
             self.state.exec_log = []
         self.state.exec_log.append((server, command))
+        if "@@VP_CWD@@" in command:
+            # persistent-terminal wrapper: emulate a shell that reports its
+            # cwd back; keep any leading "echo x" body for passthrough tests
+            import re as _re
+            if "boom" in command:
+                return {"ok": True, "server": server, "rc": 2,
+                        "stdout": "", "stderr": "boom failed\n",
+                        "truncated": False, "command": command}
+            body = ""
+            m = _re.search(r"echo (.+?);\s*__vp_rc", command, _re.S)
+            if m:
+                body = m.group(1).strip().strip("'\"")
+            n = getattr(self.state, "term_n", 0) + 1
+            self.state.term_n = n
+            out = (body + "\n" if body else "") + f"@@VP_CWD@@/fake/cwd-{n}\n"
+            return {"ok": True, "server": server, "rc": 0,
+                    "stdout": out, "stderr": "", "truncated": False,
+                    "command": command}
         if command.startswith("echo "):
             return {"ok": True, "server": server, "rc": 0,
                     "stdout": command[5:] + "\n", "stderr": "",
