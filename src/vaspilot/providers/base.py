@@ -41,8 +41,11 @@ class CapabilityProbe:
 
     @property
     def full(self) -> bool:
+        # structured_json is deliberately NOT required: nothing in the
+        # runtime consumes response_format=json mode (the agent loop rides
+        # on tool calling), so an endpoint lacking it stays fully usable.
         return (self.reachable and self.streaming
-                and self.tool_calling and self.structured_json)
+                and self.tool_calling)
 
     def to_dict(self) -> dict:
         return {

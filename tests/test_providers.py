@@ -242,6 +242,30 @@ class TestChatCompatible:
         assert report.mode == ANALYSIS_ONLY
         assert "degraded" in report.detail
 
+    def test_structured_json_is_informational_only(self, mock_backend,
+                                                   monkeypatch):
+        """An endpoint without response_format support stays FULL when
+        reachability/streaming/tool-calling all pass (common with GLM web
+        proxies): the runtime never consumes json_object mode."""
+        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+
+        def route(body):
+            if any(t.get("function", {}).get("name") == "probe_echo"
+                   for t in body.get("tools", [])):
+                return "probe_tool"
+            if body.get("response_format"):
+                return "text"          # no JSON object comes back
+            return "text"
+
+        mock_backend.route = route
+        provider = build_provider(_entry("openai-chat-compatible",
+                                         mock_backend.server_address[1]))
+        report = provider.probe()
+        assert report.tool_calling is True
+        assert report.structured_json is False
+        assert report.mode == FULL
+        assert "informational only" in report.detail
+
     def test_rate_limit_retry_then_success(self, mock_backend, monkeypatch):
         monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
         mock_backend.behavior = "tools"

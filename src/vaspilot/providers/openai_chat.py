@@ -232,10 +232,16 @@ class OpenAIChatCompatibleProvider(BaseProvider):
             report.streaming = events >= 1
         except ProviderError:
             report.streaming = False
-        report.detail = "probe completed" if report.full else \
-            "provider degraded: " + ",".join(
-                name for name, ok in (("streaming", report.streaming),
-                                      ("tool_calling", report.tool_calling),
-                                      ("structured_json", report.structured_json))
-                if not ok)
+        required = [name for name, ok in (("streaming", report.streaming),
+                                          ("tool_calling",
+                                           report.tool_calling))
+                    if not ok]
+        if required:
+            report.detail = "provider degraded: " + ",".join(required)
+        elif report.structured_json:
+            report.detail = "probe completed"
+        else:
+            # optional capability: informational, never gates write tools
+            report.detail = ("probe completed; structured_json unsupported "
+                             "(informational only)")
         return report
