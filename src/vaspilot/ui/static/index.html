@@ -1359,7 +1359,10 @@ async function saveProviders() {
     if ((body.protocol !== "codex-sdk") && !body.base_url) {
       toast(`「${body.name || "新服务商"}」缺少 API 地址`, "err"); return;
     }
-    if (!body.model) { toast(`「${body.name || "新服务商"}」缺少模型名`, "err"); return; }
+    // codex-sdk 走本机 Codex 登录态，桥接协议不含模型字段
+    if (!body.model && body.protocol !== "codex-sdk") {
+      toast(`「${body.name || "新服务商"}」缺少模型名`, "err"); return;
+    }
     const r = await api("provider.save", body);
     if (!r.ok) return;
     if (body.id && ids.has(body.id)) { toast("服务商 ID 重复，已跳过", "err"); break; }

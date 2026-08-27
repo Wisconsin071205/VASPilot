@@ -64,29 +64,58 @@ function locateSdk() {
   return null;
 }
 
-function locateCodexBin() {
-  if (process.env.VASPILOT_CODEX_BIN && existsSync(process.env.VASPILOT_CODEX_BIN))
-    return process.env.VASPILOT_CODEX_BIN;
-  const probe = spawnSync("codex", ["--version"], { encoding: "utf8", shell: true });
-  if (probe.status === 0) return "codex";
-  return "";
+/**
+ * Resolve how to launch the codex CLI without a command shell in the way:
+ * Windows can only spawn .cmd shims through cmd.exe, and shell-mode joining
+ * previously split the prompt into stray CLI flags ("unexpected argument
+ * 'with'"). Preference order: explicit VASPILOT_CODEX_BIN, then node running
+ * the npm package entry directly, then bare `codex` via shell with quoting.
+ */
+function codexSpec() {
+  const envBin = process.env.VASPILOT_CODEX_BIN;
+  if (envBin && existsSync(envBin)) {
+    return { file: envBin, preArgs: [], shell: /\.(cmd|bat)$/i.test(envBin),
+             quote: false };
+  }
+  const root = npmGlobalRoot();
+  const entry = root ? path.join(root, "@openai", "codex", "bin", "codex.js")
+                     : "";
+  if (entry && existsSync(entry)) {
+    return { file: process.execPath, preArgs: [entry], shell: false,
+             quote: false };
+  }
+  const probe = spawnSync("codex", ["--version"],
+                          { encoding: "utf8", shell: true });
+  if (probe.status === 0) {
+    return { file: "codex", preArgs: [], shell: true, quote: true };
+  }
+  return null;
 }
 
-function codexVersion(bin) {
-  const probe = spawnSync(bin, ["--version"], { encoding: "utf8", shell: bin === "codex" });
+function quoteWin(s) {
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(s)) return s;
+  return '"' + String(s).replace(/(\\*)"/g, "$1$1\\\"") + '"';
+}
+
+function codexVersion(spec) {
+  const argv = [...spec.preArgs, "--version"];
+  const probe = spawnSync(spec.file, spec.quote ? argv.map(quoteWin) : argv,
+                          { encoding: "utf8", shell: spec.shell });
   return probe.status === 0 ? probe.stdout.trim() : "unknown";
 }
 
 /** Run one `codex exec --json` turn; onDelta receives incremental item text. */
 async function codexExecTurn(prompt, { onDelta, timeoutS, model }) {
-  const bin = locateCodexBin();
-  if (!bin) throw new Error("codex CLI binary was not found");
-  const args = ["exec", "--json", "--sandbox", "read-only",
+  const spec = codexSpec();
+  if (!spec) throw new Error("codex CLI binary was not found");
+  const rest = ["exec", "--json", "--sandbox", "read-only",
                 "--skip-git-repo-check"];
-  if (model) args.push("--model", model);
-  args.push(prompt);
-  const child = spawn(bin, args, {
-    shell: bin === "codex",
+  if (model) rest.push("--model", model);
+  rest.push(prompt);
+  let args = [...spec.preArgs, ...rest];
+  if (spec.shell && spec.quote) args = args.map(quoteWin);
+  const child = spawn(spec.file, args, {
+    shell: spec.shell,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let buffer = "";
@@ -128,11 +157,10 @@ async function codexExecTurn(prompt, { onDelta, timeoutS, model }) {
 }
 
 async function probeOffline(backendInfo, id) {
-  const backend = backendInfo.sdk ? "codex-sdk"
-    : backendInfo.bin ? "codex-cli" : "none";
+  const backend = backendInfo.spec ? "codex-cli" : "none";
   const version = backendInfo.sdk
     ? String(backendInfo.sdk.version || "sdk")
-    : backendInfo.bin ? codexVersion(backendInfo.bin) : "";
+    : backendInfo.spec ? codexVersion(backendInfo.spec) : "";
   const auth = existsSync(path.join(process.env.USERPROFILE || process.env.HOME || "",
                                     ".codex", "auth.json"));
   emit({
@@ -147,7 +175,7 @@ async function probeOffline(backendInfo, id) {
 
 async function probeLive(backendInfo, id) {
   const backend = backendInfo.sdk ? "codex-sdk"
-    : backendInfo.bin ? "codex-cli" : "none";
+    : backendInfo.spec ? "codex-cli" : "none";
   if (backend === "none") {
     emit({
       id, type: "probe_result", node: process.version, backend: "none",
@@ -192,7 +220,7 @@ async function probeLive(backendInfo, id) {
   }
   emit({
     id, type: "probe_result", node: process.version,
-    backend, backend_version: codexVersion(backendInfo.bin), auth: true,
+    backend, backend_version: codexVersion(backendInfo.spec), auth: true,
     live, detail: detail || "live probe completed",
   });
 }
@@ -213,7 +241,7 @@ async function chat(request) {
 }
 
 async function main() {
-  const backendInfo = { sdk: locateSdk(), bin: locateCodexBin() };
+  const backendInfo = { sdk: locateSdk(), spec: codexSpec() };
   let pending = 0;
   process.stdin.setEncoding("utf8");
   let buffer = "";
