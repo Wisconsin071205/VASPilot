@@ -479,8 +479,8 @@ class FakeTransport:
                           "0% /dev/shm\n"
                           "/dev/sda1      500000000 200000000 300000000     "
                           "40% /",
-                    "gpu": "0, NVIDIA A100, 5, 1200, 32510, 45, 70.5",
-                    "gpu_proc": "GPU-0, 12345, python, 1200, wuhong",
+                    "gpu": "0, GPU-fake-a100-0, NVIDIA A100, 5, 1200, 32510, 45, 70.5",
+                    "gpu_proc": "GPU-fake-a100-0, 12345, python, 1200, wuhong",
                     "hb": "",
                     "sched": "slurm\ncpu|up|4|160/64/0/224",
                     "done": "",

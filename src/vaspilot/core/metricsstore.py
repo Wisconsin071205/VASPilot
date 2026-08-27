@@ -320,3 +320,10 @@ class MetricsStore:
     def latest(self, server: str) -> dict | None:
         rows = self._read_rows(self._hist_path(server))
         return rows[-1] if rows else None
+
+    def recent(self, server: str, hours: int = 48) -> list[dict]:
+        """Raw minute buckets for the last N hours (idle-persistence math)."""
+        cutoff = time.time() - max(1, min(int(hours or 48), KEEP_DAYS * 24)) \
+            * 3600
+        return [r for r in self._read_rows(self._hist_path(server))
+                if r["t"] >= cutoff]

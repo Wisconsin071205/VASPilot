@@ -295,10 +295,33 @@ class TestCatalogAndSessions:
         sections = result["sections"]
         assert "cpu  " in sections["cpu1"]
         assert "MemTotal" in sections["mem"]
-        assert sections["gpu"].startswith("0, NVIDIA A100")
+        # v1.2.0: gpu rows carry uuid as the second field, proc rows carry
+        # the owning user as a fifth field, and a heartbeat section exists
+        assert sections["gpu"].startswith("0, GPU-fake-a100-0")
+        assert sections["gpu_proc"].strip().endswith(", wuhong")
+        assert "hb" in sections
         assert sections["sched"].startswith("slurm")
 
     def test_metrics_offline_rejected(self, gateway_env):
         gateway_env["run"]("disconnect", "--server", "cl9", check=True)
         result = gateway_env["run"]("metrics", "--server", "cl9")
         assert result is None or not result.get("ok")
+
+
+def test_pbs_sched_section_columns():
+    """qstat -q columns must map to state/run/queued correctly (v1.2.0 fix:
+    previously 状态 showed the Run count)."""
+    from vaspilot.gateway.client import _parse_metric_sections
+    parsed = _parse_metric_sections({
+        "sched": "pbs\n"
+                 "Queue Memory CPU_Time Time_In_Q Run Que Lm State\n"
+                 "normal -- -- -- 5 2 5 E R\n"
+                 "short -- -- -- 0 0 30 E R\n"
+                 "atk -- -- -- 1 0 2 R 10\n"})
+    queue = parsed["queue"]
+    assert queue["kind"] == "pbs"
+    rows = {p["queue"]: p for p in queue["partitions"]}
+    assert rows["normal"]["run"] == 5 and rows["normal"]["queued"] == 2
+    assert rows["normal"]["state"].startswith("E")
+    assert rows["short"]["queued"] == 0
+    assert rows["atk"]["run"] == 1

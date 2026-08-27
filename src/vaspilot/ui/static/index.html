@@ -129,7 +129,6 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .confirmcard .cbtns{display:flex;gap:10px;margin-top:8px}
 
 /* ---------- server resource cards ---------- */
-.resgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-bottom:16px}
 .rescard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .rescard h3{margin:0 0 8px;font-size:13px}
 .bar{height:7px;border-radius:4px;background:var(--bg3);overflow:hidden;margin:3px 0 7px}
@@ -198,6 +197,45 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
 .pgrid label{display:block;font-size:11px;color:var(--fg2);margin-bottom:3px}
 .pgrid input,.pgrid select{width:100%}
+
+/* ---------- 监测板块 ---------- */
+#mnav,#mnav2{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.mitem{padding:7px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);
+  cursor:pointer;font-size:13px;color:var(--fg2)}
+.mitem:hover{color:var(--fg)}
+.mitem.on{outline:2px solid var(--acc);color:var(--fg)}
+.msrvgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+.msrv{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer}
+.msrv:hover{border-color:var(--acc)}
+.msrv h3{margin:0 0 8px;display:flex;align-items:center;gap:8px;font-size:14.5px}
+.msrv .host{font-size:11.5px;color:var(--fg2);font-weight:normal}
+.gpurow{display:flex;align-items:center;gap:8px;font-size:12px;padding:3px 0}
+.gpurow .gchip{min-width:66px;font-size:10.5px;padding:1px 6px;border-radius:5px;
+  background:var(--bg3);text-align:center;color:var(--fg2)}
+.gpurow .gval{margin-left:auto;color:var(--fg2)}
+.msrvfoot{display:flex;justify-content:space-between;font-size:11.5px;color:var(--fg2);
+  border-top:1px dashed var(--line);margin-top:8px;padding-top:6px}
+.dot.err{background:var(--err)!important}
+.dot.warn{background:var(--warn)!important}
+.gpuwrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:14px}
+.gpucard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.gpucard h3{margin:0 0 6px;font-size:13.5px;display:flex;justify-content:space-between}
+.gbar{height:7px;border-radius:4px;background:var(--bg3);overflow:hidden;margin:4px 0 8px}
+.gbar i{display:block;height:100%;border-radius:4px}
+.gbar span{font-size:11px;color:var(--fg2);float:right}
+.gsrow{display:flex;justify-content:space-between;flex-wrap:wrap;gap:4px 12px;
+  font-size:11.5px;color:var(--fg2);border-top:1px dashed var(--line);padding-top:8px}
+.gsrow b{color:var(--fg);font-weight:600}
+.heatwrap{overflow-x:auto;padding-bottom:4px}
+.hrow{display:flex;align-items:center;gap:3px;margin-bottom:3px}
+.hlab{width:30px;flex-shrink:0;font-size:10px;color:var(--fg2);text-align:right;padding-right:4px}
+.hcell{width:20px;height:20px;border-radius:4px;background:var(--bg3);flex-shrink:0}
+#hmcols{white-space:nowrap}
+#hmcols span{display:inline-block;width:132px;text-align:center}
+.ustrip{display:flex;height:18px;border-radius:5px;overflow:hidden;background:var(--bg3);margin:6px 0 2px}
+.useg{height:100%}
+.ukey{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--fg2);margin-top:6px}
+.ukey i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 </style>
 </head>
 <body>
@@ -224,10 +262,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
 <main id="main">
   <nav id="tabs">
     <div class="tab on" data-v="chat">对话</div>
-    <div class="tab" data-v="overview">总览</div>
     <div class="tab" data-v="files">文件</div>
     <div class="tab" data-v="jobs">作业</div>
     <div class="tab" data-v="flow">工作流</div>
+    <div class="tab" data-v="monitor">监测</div>
     <div class="tab" data-v="cfg">⚙ 配置</div>
   </nav>
 
@@ -253,26 +291,135 @@ textarea:focus{outline:none;border-color:var(--acc)}
     </div>
   </section>
 
-  <!-- ============ 总览 ============ -->
-  <section class="view" id="v-overview">
-    <div class="kpis" id="kpis"></div>
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">服务器资源（CPU · 内存 · 磁盘 · GPU · 队列）</h2>
-        <button class="btn ghost" onclick="loadAllMetrics()">刷新资源</button>
-      </div>
-      <div class="resgrid" id="resgrid" style="margin-top:10px"></div>
+  <!-- ============ 监测（与计算任务分开的独立板块） ============ -->
+  <section class="view" id="v-monitor">
+    <div id="mnav">
+      <div class="mitem on" data-m="overview" onclick="showMview('overview')">总览</div>
+      <div class="mitem" data-m="idle" onclick="showMview('idle')">空闲算力</div>
+      <div class="mitem" data-m="detail" id="mitem-detail" style="display:none"
+           onclick="showMview('detail')">详情：<span id="mdsrvname"></span></div>
     </div>
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <h2 style="margin:0">集群快照</h2>
-        <label style="font-size:12px;color:var(--fg2)">
-          <input type="checkbox" id="autoref" checked style="width:auto"> 每 60 秒自动刷新
-        </label>
+
+    <!-- ---- 监测·总览 ---- -->
+    <div id="m-overview">
+      <div class="kpis" id="kpis"></div>
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <h2 style="margin:0">服务器资源（点击卡片进入单机详情）</h2>
+          <span class="row" style="gap:8px">
+            <button class="btn ghost" onclick="loadAllMetrics()">刷新资源</button>
+            <label style="font-size:12px;color:var(--fg2)">
+              <input type="checkbox" id="autoref" checked style="width:auto"> 每 60 秒自动刷新
+            </label>
+          </span>
+        </div>
+        <div class="msrvgrid" id="msrvgrid" style="margin-top:10px"></div>
       </div>
-      <table id="snaptable"><thead><tr>
-        <th>服务器</th><th>连接</th><th>调度器</th><th>活动作业</th><th>状态</th><th>错误</th>
-      </tr></thead><tbody></tbody></table>
+      <div class="card">
+        <h2 style="margin-top:0">集群快照</h2>
+        <table id="snaptable"><thead><tr>
+          <th>服务器</th><th>连接</th><th>调度器</th><th>活动作业</th><th>状态</th><th>错误</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <!-- ---- 监测·空闲算力 ---- -->
+    <div id="m-idle" style="display:none">
+      <div class="card">
+        <div class="row">
+          <div class="fg"><label>GPU 空闲显存 ≥ (GB)</label><input id="idleVram" type="number" min="0" value="0" style="width:110px"></div>
+          <div class="fg"><label>利用率 ≤ (%)</label><input id="idleUtil" type="number" min="0" max="100" value="10" style="width:90px"></div>
+          <div class="fg"><label>持续 ≥ (分钟)</label><input id="idleMin" type="number" min="0" max="2880" value="0" style="width:90px"></div>
+          <div class="fg"><label>排序</label>
+            <select id="idleSort" style="width:130px">
+              <option value="vram">按空闲显存</option><option value="util">按利用率低</option><option value="name">按服务器名</option>
+            </select></div>
+          <button class="btn" onclick="renderIdlePool()">筛选</button>
+          <button class="btn ghost" onclick="loadAllMetrics().then(renderIdlePool)">重扫资源</button>
+        </div>
+        <div style="font-size:12px;color:var(--fg2)">
+          持续时长依据本机缓存的历史分钟桶（在单机详情里打开过「趋势」或开启离线采集后数据更完整）；无历史时标注 "?"。
+          这里只做纯观测，不代任何计算任务入口。
+        </div>
+      </div>
+      <div class="msrvgrid" id="idlegrid"></div>
+    </div>
+
+    <!-- ---- 监测·单机详情 ---- -->
+    <div id="m-detail" style="display:none">
+      <div class="card"><div class="row" style="justify-content:space-between">
+        <h2 style="margin:0" id="mtitle"></h2>
+        <button class="btn ghost" onclick="showMview('overview')">← 返回总览</button>
+      </div></div>
+      <div id="mnav2">
+        <div class="mitem on" data-d="d-overview" onclick="showDtab('d-overview')">概览</div>
+        <div class="mitem" data-d="d-procs" onclick="showDtab('d-procs')">进程</div>
+        <div class="mitem" data-d="d-trend" onclick="showDtab('d-trend')">趋势</div>
+        <div class="mitem" data-d="d-sched" onclick="showDtab('d-sched')">队列</div>
+      </div>
+
+      <div id="d-overview">
+        <div class="kpis" id="dkpis"></div>
+        <div class="gpuwrap" id="gpuwrap"></div>
+        <div class="gpuwrap" id="cpuwrap"></div>
+      </div>
+
+      <div id="d-procs" style="display:none">
+        <div class="card"><h2 style="margin-top:0">当前 GPU 进程（按用户归属）</h2>
+          <table id="proctable"><thead><tr>
+            <th>GPU</th><th>PID</th><th>用户</th><th>命令</th><th>显存</th>
+          </tr></thead><tbody>
+            <tr><td colspan="5" class="empty">读取中…</td></tr></tbody></table></div>
+      </div>
+
+      <div id="d-trend" style="display:none">
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">资源热力图（每列 1 天 · 每格 3 小时平均）</h2>
+            <span class="row" style="gap:8px;font-size:12px;color:var(--fg2)">
+              天数
+              <select id="hmDays" onchange="reloadTrend()" style="width:90px">
+                <option value="7">7 天</option><option value="14">14 天</option>
+                <option value="30" selected>30 天</option><option value="60">60 天</option>
+              </select>
+              <span id="hmmetricwrap"></span>
+            </span>
+          </div>
+          <div id="hmcols" style="font-size:10.5px;color:var(--fg2);margin:6px 0 2px;overflow:hidden"></div>
+          <div class="heatwrap" id="hmbody"></div>
+          <div style="font-size:11px;color:var(--fg2);margin-top:6px">灰格 = 无数据 ·
+            CPU 蓝系 / GPU 绿系，颜色越深占用越高</div>
+        </div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <h2 style="margin:0">GPU 使用分布（按用户）</h2>
+            <span class="row" style="gap:6px">
+              <button class="btn ghost" onclick="setUsageRange(7)">7 天</button>
+              <button class="btn ghost" onclick="setUsageRange(14)">14 天</button>
+              <button class="btn ghost" onclick="setUsageRange(30)">30 天</button>
+            </span>
+          </div>
+          <div id="udist"></div>
+        </div>
+        <div class="card">
+          <div class="row" style="justify-content:space-between">
+            <div>
+              <b>离线采集守护</b>
+              <div style="font-size:12px;color:var(--fg2)" id="colstate"></div>
+            </div>
+            <span class="row" style="gap:8px">
+              <button class="btn" onclick="daemonToggle(true)">启用</button>
+              <button class="btn danger" onclick="daemonToggle(false)">停用并清理</button>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div id="d-sched" style="display:none">
+        <div class="card"><h2 style="margin-top:0">调度器队列实时概况</h2>
+          <table id="schedtable"><thead><tr id="schead"></tr></thead>
+            <tbody><tr><td colspan="5" class="empty">无数据</td></tr></tbody></table></div>
+      </div>
     </div>
   </section>
 
@@ -387,6 +534,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <div class="cfgitem" data-c="agent">智能体</div>
       <div class="cfgitem" data-c="web">联网搜索</div>
       <div class="cfgitem" data-c="skills">技能</div>
+      <div class="cfgitem" data-c="monitor">监测</div>
       <div class="cfgitem" data-c="about">关于</div>
     </aside>
     <div id="cfgbody">
@@ -480,6 +628,29 @@ textarea:focus{outline:none;border-color:var(--acc)}
           <button class="btn ghost" onclick="editSkill(null)">＋ 新建技能</button>
           <button class="btn ghost" onclick="loadSkills()">⟳ 刷新</button>
         </div>
+      </div>
+
+      <!-- ---- 监测 ---- -->
+      <div class="cfghan" id="c-monitor" style="display:none">
+        <h2>监测</h2>
+        <p class="desc">「监测」板块只做观测，与智能体计算任务完全分开：智能体不能看到本页的任何
+          历史/用量数据，它依旧通过自己的只读工具在提交前查询实时资源。</p>
+        <div class="card">
+          <div class="row">
+            <div class="fg"><label>GPU 高温告警阈值 (°C)</label>
+              <input id="tempth" type="number" min="40" max="110" step="0.5" style="width:110px"></div>
+            <button class="btn" onclick="saveMonitorCfg()">保存阈值</button>
+          </div>
+          <div style="font-size:12px;color:var(--fg2)">
+            掉线提醒在状态翻转时提示一次；超温提醒对每台服务器有 10 分钟冷却期。
+          </div>
+        </div>
+        <div class="card"><b>离线采集守护（可选）</b>
+          <div style="font-size:12px;color:var(--fg2);margin-top:4px">
+            在远端 <span class="mono">~/.vp-monitor/</span> 放置一个每分钟自采的小循环：
+            只在你离开页面（心跳静默 &gt;90 秒）时补采 CPU/内存/GPU 占用与按用户的 GPU 使用快照，
+            断线期间热力图与使用分布不再出现空洞。卸载时脚本与数据一并移入远端回收站。
+          </div></div>
       </div>
 
       <!-- ---- 关于 ---- -->
@@ -621,7 +792,7 @@ const badge = (t, cls) => `<span class="badge b-${cls}">${esc(t)}</span>`;
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t.dataset.v));
-  if (t.dataset.v === "overview") { loadSnapshot(); loadAllMetrics(); }
+  if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "flow") refreshProjects();
 });
@@ -661,6 +832,7 @@ async function refreshServers() {
     div.appendChild(btn);
     box.appendChild(div);
   }
+  connFlips();
   // providers
   const sel = document.getElementById("provsel");
   sel.innerHTML = st.providers.map(p =>
@@ -714,8 +886,8 @@ async function loadSnapshot() {
     || `<tr><td colspan="6" class="empty">无服务器</td></tr>`;
 }
 setInterval(() => {
-  if (document.getElementById("autoref").checked &&
-      document.getElementById("v-overview").classList.contains("on")) loadSnapshot();
+  if (document.getElementById("autoref")?.checked &&
+      document.getElementById("v-monitor").classList.contains("on")) loadSnapshot();
 }, 60000);
 
 /* ===================== 文件 ===================== */
@@ -1061,7 +1233,7 @@ function addMsg(role, text) {
 let CFG = {providers: [], vlab: {}};
 document.querySelectorAll(".cfgitem").forEach(t => t.onclick = () => {
   document.querySelectorAll(".cfgitem").forEach(x => x.classList.toggle("on", x === t));
-  for (const id of ["providers", "conn", "agent", "web", "skills", "about"])
+  for (const id of ["providers", "conn", "agent", "web", "skills", "monitor", "about"])
     document.getElementById("c-" + id).style.display =
       t.dataset.c === id ? "" : "none";
   if (t.dataset.c === "skills") loadSkills();
@@ -1081,9 +1253,17 @@ async function loadSettings() {
   document.getElementById("identbadge").innerHTML =
     v.identity_file_exists ? badge("密钥文件存在", "ok")
                            : badge("密钥文件缺失", "err");
-  // agent / web tabs
+  // agent / web / monitor tabs
   renderAgentMode(r.agent_submit_mode || "confirm");
   renderWebsearch(r.websearch);
+  const th = document.getElementById("tempth");
+  if (th) th.value = r.temperature_alert_c ?? 85;
+}
+async function saveMonitorCfg() {
+  const v = parseFloat(document.getElementById("tempth").value);
+  const r = await api("monitor.save", {temperature_alert_c: v});
+  if (r.ok) { CFG.temperature_alert_c = r.temperature_alert_c;
+    toast(`已保存：GPU 高温告警阈值 ${r.temperature_alert_c} °C`, "ok"); }
 }
 function renderProviderCards() {
   const box = document.getElementById("provcards");
@@ -1495,21 +1675,68 @@ async function saveEditFile() {
   }
 }
 
-/* ===================== 服务器资源（总览） ===================== */
-function resBar(label, pct, detail) {
-  const p = Math.max(0, Math.min(100, pct ?? 0));
-  const color = p >= 90 ? "var(--err)" : p >= 70 ? "var(--warn)" : "var(--acc)";
-  return `<div class="resline"><span>${label}</span><span>${detail}</span></div>
-    <div class="bar"><i style="width:${p}%;background:${color}"></i></div>`;
+/* ===================== 监测板块（与计算任务分开的纯观测区） ===================== */
+let CURRENT_METRICS = {};        // server -> 最近一次 server.metrics 文档
+let PREV_CONN = null;            // 上一次在线集合（用于掉线翻转提醒）
+let HOT_TOLD = {};               // server -> 上次超温 toast 时间（10 分钟冷却）
+let MVIEW = "overview", MTAB = "d-overview", MSEL = "";
+let TREND = {};                  // server -> monitor.history 载荷
+let HM_DAYS = 30, HM_SRC = "cpu", HM_MET = "u", USAGE_RANGE = 30;
+const UPALETTE = ["#4f9cf7", "#3fb950", "#d29922", "#f85149",
+                  "#bc8cff", "#39c5cf", "#e3b341", "#f778ba",
+                  "#7ee787", "#ffa657"];
+const userColor = u => UPALETTE[[...String(u)].reduce((a, c) =>
+  (a * 31 + c.charCodeAt(0)) >>> 0, 5381) % UPALETTE.length];
+
+function ensureMonitor() {
+  loadSnapshot(); loadAllMetrics();
 }
-function trendStrip(history, key) {
-  const vals = (history || []).map(h => h[key]).filter(v => v !== null && v !== undefined);
-  if (vals.length < 2) return "";
-  return `<div class="trend" title="最近趋势（${key}）">` + vals.slice(-40).map(v =>
-    `<i style="height:${Math.max(6, Math.min(100, v))}%;opacity:${0.35 + 0.65 * Math.min(1, v / 100)}"></i>`).join("") + "</div>";
+function showMview(v) {
+  MVIEW = v;
+  for (const id of ["overview", "idle", "detail"])
+    document.getElementById("m-" + id).style.display = id === v ? "" : "none";
+  document.querySelectorAll("#mnav .mitem").forEach(x =>
+    x.classList.toggle("on", x.dataset.m === v));
+  if (v === "idle") {
+    if (!document.getElementById("idlegrid").children.length) renderIdlePool();
+    ensureIdleHistory();
+  }
+  if (v === "detail") renderDetail(false);
 }
+function showDtab(id) {
+  MTAB = id;
+  for (const el of document.querySelectorAll("#m-detail > div[id^='d-'], #d-overview"))
+    if (el.id && el.id.startsWith("d-")) el.style.display =
+      el.id === id ? "" : "none";
+  document.querySelectorAll("#mnav2 .mitem").forEach(x =>
+    x.classList.toggle("on", x.dataset.d === id));
+  if (id === "d-trend") reloadTrend(true);
+}
+
+/* ---- 告警：掉线翻转 + 高温冷却 ---- */
+function connFlips() {
+  const now = new Set(STATE.servers.filter(s => s.connected).map(s => s.name));
+  if (PREV_CONN) {
+    for (const n of PREV_CONN)
+      if (!now.has(n)) toast(`服务器 ${n} 连接已断开`, "err");
+    for (const n of now)
+      if (!PREV_CONN.has(n)) toast(`服务器 ${n} 已连接`, "ok");
+  }
+  PREV_CONN = now;
+}
+function checkTemps(server, gpus) {
+  const th = CFG.temperature_alert_c ?? 85;
+  const hot = (gpus || []).filter(g => g.temp_c >= th);
+  if (!hot.length) return;
+  const last = HOT_TOLD[server] || 0;
+  if (Date.now() - last < 600000) return;
+  HOT_TOLD[server] = Date.now();
+  toast(`${server} GPU 高温：${hot.map(g => `GPU${g.index} ${g.temp_c}°C`).join("、")} ≥ 阈值 ${th}°C`, "warn");
+}
+
+/* ---- 资源拉取与总览渲染 ---- */
 async function loadAllMetrics() {
-  const grid = document.getElementById("resgrid");
+  const grid = document.getElementById("msrvgrid");
   const connected = STATE.servers.filter(s => s.connected);
   if (!connected.length) {
     grid.innerHTML = `<div class="empty">没有已连接的服务器——连接后才能读取资源</div>`;
@@ -1519,46 +1746,376 @@ async function loadAllMetrics() {
   const parts = [];
   for (const s of connected) {
     const r = await api("server.metrics", {server: s.name});
-    if (!r.ok) {
-      parts.push(`<div class="rescard"><h3>${esc(s.name)}</h3>
-        <div style="font-size:12px;color:var(--err)">${esc((r.error || {}).message || "读取失败")}</div></div>`);
-      continue;
-    }
-    const cpu = r.cpu || {}, mem = r.mem || {}, load = r.load || {};
-    const gpus = r.gpus || [];
-    const queue = r.queue || {};
-    let inner = "";
-    if (cpu.usage_pct !== null && cpu.usage_pct !== undefined)
-      inner += resBar("CPU", cpu.usage_pct, `${cpu.usage_pct}%${cpu.cores ? ` · ${cpu.cores} 核` : ""}`);
-    if (load.one !== undefined)
-      inner += `<div class="resline"><span>负载 1/5/15min</span><span class="mono">${load.one} / ${load.five} / ${load.fifteen}</span></div>`;
-    if (mem.total_gb)
-      inner += resBar("内存", mem.used_pct, `${(mem.total_gb - mem.available_gb).toFixed(1)} / ${mem.total_gb} GB`);
-    for (const d of (r.disks || []).slice(0, 3))
-      inner += resBar("磁盘 " + d.mount, d.used_pct, `${d.used_gb} / ${d.total_gb} GB`);
-    if (r.gpu_status === "available" && gpus.length) {
-      for (const g of gpus.slice(0, 4))
-        inner += resBar(`GPU${g.index} ${g.name}`, g.util_pct,
-          `${g.util_pct}% · ${g.mem_used_gb}/${g.mem_total_gb}GB · ${g.temp_c}°C · ${g.power_w}W`);
-    } else if (r.gpu_status === "missing") {
-      inner += `<div class="resline"><span>GPU</span><span>（该节点无 nvidia-smi）</span></div>`;
-    }
-    const q = (queue.partitions || []).slice(0, 4).map(p =>
-      p.partition !== undefined
-        ? `${p.partition}: ${p.cpus_idle ?? "?"}/${p.cpus_total ?? "?"} CPU 空闲`
-        : `${p.queue ?? "?"} 运行 ${p.run ?? "?"}`).join(" · ");
-    if (q) inner += `<div class="resline"><span>队列（${queue.kind || "?"}）</span><span>${esc(q)}</span></div>`;
-    inner += trendStrip(r.history, "cpu_pct");
-    parts.push(`<div class="rescard"><h3>${esc(s.name)}</h3>${inner}</div>`);
+    CURRENT_METRICS[s.name] = r.ok ? r : null;
+    parts.push(renderServerCard(s, r));
+    if (r.ok) checkTemps(s.name, r.gpus);
   }
   grid.innerHTML = parts.join("");
+  renderDetailSnapshotIfOpen();
+  if (MVIEW === "idle") { renderIdlePool(); ensureIdleHistory(); }
 }
-setInterval(() => {
-  if (document.getElementById("autoref").checked &&
-      document.getElementById("v-overview").classList.contains("on")) {
-    loadSnapshot(); loadAllMetrics();
+function gpuColor(p) {
+  return p >= 90 ? "var(--err)" : p >= 70 ? "var(--warn)" : "var(--acc)";
+}
+function renderServerCard(s, r) {
+  if (!r.ok)
+    return `<div class="msrv" style="cursor:default"><h3><span class="dot err"></span> ${esc(s.name)}</h3>
+      <div style="font-size:12px;color:var(--err)">${esc((r.error || {}).message || "读取失败")}</div></div>`;
+  const head = `<h3><span class="dot"></span>
+      <span>${esc(s.name)}${(r.load || {}).one !== undefined ? ` <span class="host">负载 ${r.load.one}</span>` : ""}</span>
+      <span style="margin-left:auto;color:${gpuColor((r.cpu || {}).usage_pct || 0)}">CPU ${(r.cpu ?? {}).usage_pct ?? "?"}%</span></h3>`;
+  const mem = r.mem || {};
+  const rows = [];
+  rows.push(`<div class="gpurow"><span class="gchip">内存</span>
+    <span>${(mem.total_gb - mem.available_gb).toFixed(1)} / ${mem.total_gb} GB</span>
+    <span class="gval">${mem.used_pct}%</span></div>`);
+  const gpus = r.gpus || [];
+  let freeCnt = 0;
+  for (const g of gpus) {
+    const free = (g.mem_total_gb - g.mem_used_gb);
+    if (g.util_pct < 10 && free >= 8) freeCnt++;
+    rows.push(`<div class="gpurow">
+      <span class="gchip">${esc(g.name)}</span>
+      <span style="min-width:118px">${g.mem_used_gb}/${g.mem_total_gb} GB</span>
+      <span class="gval" style="color:${gpuColor(g.util_pct)};font-weight:600">${g.util_pct}%</span>
+      <span class="gval">${g.temp_c}°C</span></div>`);
   }
-}, 60000);
+  if (r.gpu_status === "missing")
+    rows.push(`<div class="gpurow"><span class="gchip">GPU</span><span>该节点无 nvidia-smi</span></div>`);
+  const procs = (r.gpu_procs || []).length;
+  return `<div class="msrv" onclick="openDetail('${esc(s.name)}')" title="进入单机详情">
+    ${head}${rows.join("")}
+    <div class="msrvfoot"><span>${freeCnt} 张 GPU 空闲 · ${procs} 个 GPU 进程</span>
+      <span>详情 →</span></div></div>`;
+}
+
+/* ---- 单机详情 ---- */
+function openDetail(name) {
+  document.getElementById("mdsrvname").textContent = name;
+  document.getElementById("mitem-detail").style.display = "";
+  document.getElementById("mtitle").textContent = `${name} · 资源概览`;
+  MSEL = name;
+  showMview("detail");
+  renderDetail(true);
+}
+function metricOf(server) { return CURRENT_METRICS[server]; }
+function renderDetail(reloadTrendToo) {
+  if (MVIEW !== "detail" || !MSEL) return;
+  const r = metricOf(MSEL);
+  const kpis = document.getElementById("dkpis");
+  if (!r || !r.ok) {
+    kpis.innerHTML = `<div class="empty">暂无快照数据——返回总览刷新资源后重试</div>`;
+    return;
+  }
+  const gpus = r.gpus || [];
+  const procs = r.gpu_procs || [];
+  const usable = gpus.filter(g => g.util_pct < 10 &&
+                                 (g.mem_total_gb - g.mem_used_gb) >= 8).length;
+  const totMem = gpus.reduce((a, g) => a + g.mem_total_gb, 0);
+  const usedMem = gpus.reduce((a, g) => a + g.mem_used_gb, 0);
+  const avgUtil = gpus.length
+    ? Math.round(gpus.reduce((a, g) => a + g.util_pct, 0) / gpus.length) : 0;
+  kpis.innerHTML = `
+    <div class="kpi"><b>${usable}/${gpus.length}</b><span>可用 GPU</span></div>
+    <div class="kpi"><b>${usedMem.toFixed(1)} / ${totMem.toFixed(0)} GB</b><span>GPU 显存</span></div>
+    <div class="kpi"><b>${avgUtil}%</b><span>GPU 平均利用</span></div>
+    <div class="kpi"><b>${procs.length} 个进程</b><span>当前占用</span></div>`;
+  // GPU 卡片
+  document.getElementById("gpuwrap").innerHTML = gpus.map(g => {
+    const th = CFG.temperature_alert_c ?? 85;
+    const hot = g.temp_c >= th;
+    const usedPct = g.mem_total_gb ? Math.round(g.mem_used_gb * 100 / g.mem_total_gb) : 0;
+    const cnt = procs.filter(p => p.gpu_uuid && g.gpu_uuid &&
+                                  p.gpu_uuid.includes(g.gpu_uuid)).length ||
+                procs.filter(p => !p.gpu_uuid).length && 0;
+    return `<div class="gpucard"><h3><span>GPU ${g.index}</span>
+        <span style="color:${hot ? "var(--err)" : "inherit"}">${hot ? "⚠ " : ""}${g.temp_c}°C · ${Math.round(g.power_w)}W</span></h3>
+      <div style="font-size:11px;color:var(--fg2);margin-bottom:4px">${esc(g.name)}</div>
+      MEM<div class="gbar"><i style="width:${usedPct}%;background:#bc8cff"></i></div>
+      <span style="font-size:11px;color:var(--fg2)">${g.mem_used_gb} / ${g.mem_total_gb} GB</span>
+      UTL<div class="gbar"><i style="width:${g.util_pct}%;background:${gpuColor(g.util_pct)}"></i></div>
+      <span style="font-size:11px;color:var(--fg2)">利用率 ${g.util_pct}%${cnt ? ` · ${cnt} 个进程` : ""}</span></div>`;
+  }).join("") || `<div class="empty">无 GPU（该节点没有 nvidia-smi）</div>`;
+  // CPU / 内存卡
+  const cpu = r.cpu || {}, mem = r.mem || {}, load = r.load || {};
+  const disks = (r.disks || []).slice(0, 4);
+  document.getElementById("cpuwrap").innerHTML = `
+    <div class="gpucard"><h3><span>CPU</span><span style="color:${gpuColor(cpu.usage_pct || 0)}">${cpu.usage_pct ?? "?"}%</span></h3>
+      <div style="font-size:11px;color:var(--fg2);margin-bottom:6px">${cpu.cores ?? "?"} 核 · 负载 ${load.one ?? "?"} / ${load.five ?? "?"} / ${load.fifteen ?? "?"}</div>
+      CPU<div class="gbar"><i style="width:${cpu.usage_pct || 0}%;background:${gpuColor(cpu.usage_pct || 0)}"></i></div>
+      内存<div class="gbar"><i style="width:${mem.used_pct || 0}%;background:#bc8cff"></i></div>
+      <span style="font-size:11px;color:var(--fg2)">系统内存 ${(mem.total_gb - mem.available_gb).toFixed(1)} / ${mem.total_gb} GB</span></div>
+    <div class="gpucard"><h3><span>磁盘</span><span style="color:var(--fg2)">${disks.length} 个挂载点</span></h3>
+      ${disks.map(d => `<div class="gpurow"><span class="gchip">${esc(d.mount)}</span>
+        <span>${d.used_gb} / ${d.total_gb} GB</span>
+        <span class="gval" style="color:${gpuColor(d.used_pct)}">${d.used_pct}%</span></div>`).join("")
+        || '<div class="empty">无磁盘数据</div>'}</div>`;
+  renderProcs(r);
+  renderSched(r.queue || {});
+  if (reloadTrendToo) reloadTrend();
+}
+function renderProcs(r) {
+  const idxByUuid = {};
+  for (const g of r.gpus || [])
+    if (g.gpu_uuid) idxByUuid[g.gpu_uuid.toUpperCase()] = g.index;
+  const rows = (r.gpu_procs || []).map(p => {
+    const up = (p.gpu_uuid || "").toUpperCase();
+    const idx = Object.keys(idxByUuid).find(k => k.indexOf(up.slice(0, 24)) >= 0
+                                            || up.indexOf(k.slice(0, 24)) >= 0);
+    return `<tr><td>${idx !== undefined ? "GPU " + idxByUuid[idx]
+                                          : esc((p.gpu_uuid || "?").slice(-8))}</td>
+      <td class="mono">${esc(p.pid)}</td>
+      <td>${p.username ? badge(p.username, "info") : "<span class='empty' style='padding:0'>未知</span>"}</td>
+      <td class="wrap mono">${esc(p.process)}</td>
+      <td>${p.mem_mib !== null && p.mem_mib !== undefined ? (p.mem_mib / 1024).toFixed(1) + " GB" : "—"}</td></tr>`;
+  });
+  document.querySelector("#proctable tbody").innerHTML = rows.join("")
+    || `<tr><td colspan="5" class="empty">当前没有 GPU 进程</td></tr>`;
+}
+function renderSched(q) {
+  const head = document.getElementById("schead");
+  const tbody = document.querySelector("#schedtable tbody");
+  const parts = q.partitions || [];
+  if (!parts.length) {
+    head.innerHTML = "<th>队列</th>";
+    tbody.innerHTML = `<tr><td class="empty">未检测到调度器（或该节点不跑调度器）</td></tr>`;
+    return;
+  }
+  if (q.kind === "slurm") {
+    head.innerHTML = ["分区", "状态", "节点", "CPU 占用/空闲/总数"].map(h => `<th>${h}</th>`).join("");
+    tbody.innerHTML = parts.map(p => `<tr><td>${esc(p.partition)}</td>
+      <td>${badge(p.state, p.state === "up" ? "ok" : "warn")}</td>
+      <td>${p.nodes}</td>
+      <td>${p.cpus_alloc ?? "?"} / ${p.cpus_idle ?? "?"} / ${p.cpus_total ?? "?"}</td></tr>`).join("");
+  } else {
+    head.innerHTML = ["队列", "状态", "运行", "排队"].map(h => `<th>${h}</th>`).join("");
+    tbody.innerHTML = parts.map(p => `<tr><td>${esc(p.queue)}</td>
+      <td>${badge(p.state, p.state === "open" ? "ok" : "warn")}</td>
+      <td>${p.run ?? "?"}</td><td>${p.queued ?? "?"}</td></tr>`).join("");
+  }
+}
+function renderDetailSnapshotIfOpen() {
+  if (MVIEW === "detail" && MSEL) {
+    const el = document.getElementById("mitem-detail");
+    el.style.display = STATE.servers.some(s => s.name === MSEL) ? "" : "none";
+    renderDetail(false);
+  }
+}
+
+/* ---- 趋势：热力图 + 使用分布 + 离线采集 ---- */
+let TREND_LOADING = false;
+async function reloadTrend(force) {
+  if (TREND_LOADING) return;
+  if (!force && TREND[MSEL] && TREND[MSEL]._days === +document.getElementById("hmDays").value) {
+    drawHeatmap(); drawUsage(); renderColState(TREND[MSEL].collector); return;
+  }
+  TREND_LOADING = true;
+  try {
+    const days = +document.getElementById("hmDays").value;
+    const r = await api("monitor.history", {server: MSEL, days,
+                                            bucket_hours: 48,
+                                            with_buckets: true});
+    if (r.ok) { TREND[MSEL] = r; TREND[MSEL]._days = days; }
+  } finally { TREND_LOADING = false; }
+  drawHeatmap(); drawUsage(); renderColState(TREND[MSEL]?.collector);
+}
+function hmColors(v) {
+  if (v === null || v === undefined) return "";
+  const stepsBlue = ["#16324f", "#1f4e79", "#2560ab", "#2f81f7", "#66a3ff", "#9ecbff"];
+  const stepsGreen = ["#12351f", "#1f5c33", "#2ea043", "#46c268", "#7ee787", "#bff0cf"];
+  const arr = HM_SRC === "cpu" ? stepsBlue : stepsGreen;
+  const t = Math.max(0, Math.min(99.9, v)) / 100;
+  return arr[Math.min(arr.length - 1, Math.floor(t * arr.length))];
+}
+function drawHeatmap() {
+  const data = TREND[MSEL];
+  const body = document.getElementById("hmbody");
+  const cols = document.getElementById("hmcols");
+  if (!data || !data.heatmap) { body.innerHTML = `<div class="empty">暂无历史数据（开启离线采集后开始积累）</div>`; cols.innerHTML = ""; return; }
+  const days = data.heatmap.days || [];
+  document.getElementById("hmmetricwrap").innerHTML = HM_SRC === "cpu"
+    ? `<button class="btn ghost" onclick="setHmMetric('u')">看 GPU →</button>`
+    : `<select onchange="HM_MET=this.value;drawHeatmap()" style="width:auto">
+         ${["...", ...data.heatmap.gpu_indexes].map(i =>
+           `<option value="${i}" ${HM_MET === i ? "selected" : ""}>${i === "..." ? "选择 GPU" : "GPU " + i}</option>`).join("")}
+       </select>
+       <button class="btn ghost" onclick="setHmMetric('c')">← 看 CPU</button>`;
+  cols.innerHTML = days.map((d, i) => i % 6 === 0
+    ? `<span style="width:23px;text-align:left;margin-left:${i === 0 ? "34px" : "-6px"}">${d.d.slice(5)}</span>` : "").join("");
+  const seriesFor = d => HM_SRC === "cpu"
+    ? {label: "CPU " + (HM_MET === "u" ? "UTL" : "MEM"), cells: HM_MET === "u" ? d.cpu : d.mem}
+    : {label: `GPU ${HM_MET}`, cells: ((d.gpu || {})[HM_MET] || {})[HM_MET === "u" ? "u" : "m"]};
+  const slotLabels = ["00", "03", "06", "09", "12", "15", "18", "21"];
+  const valueMax = HM_SRC === "cpu" && HM_MET === "m" ? 100 : 100;
+  let html = "";
+  for (let row = 0; row < 8; row++) {
+    html += `<div class="hrow"><span class="hlab">${slotLabels[row]}</span>`;
+    for (const d of days) {
+      const serie = seriesFor(d).cells || [];
+      const v = serie[row] ?? null;
+      const col = hmColors(v);
+      html += `<span class="hcell" title="${d.d} ${slotLabels[row]}-${(+slotLabels[row]) + 3}:00 ≈ ${v === null ? "无数据" : v + "%"}"
+        style="${col ? `background:${col}` : ""}"></span>`;
+    }
+    html += "</div>";
+  }
+  body.innerHTML = html;
+}
+function setHmMetric(m) { HM_SRC = m === "cpu" ? "cpu" : "gpu"; drawHeatmap(); }
+function drawUsage() {
+  const box = document.getElementById("udist");
+  const data = TREND[MSEL];
+  const usage = data?.usage;
+  if (!usage || !(usage.users || []).length) {
+    box.innerHTML = `<div class="empty">暂无用量数据（需要离线采集开启一段时间后才有按用户的统计）
+      ${usage ? `<br><span style="font-size:11px">近 ${usage.window_days} 天覆盖 ${usage.covered_days} 天</span>` : ""}</div>`;
+    return;
+  }
+  const totalMin = usage.users.reduce((a, u) => a + u.minutes, 0) || 1;
+  const segs = usage.users.map(u =>
+    `<span class="useg" style="width:${(u.minutes * 100 / totalMin).toFixed(2)}%;background:${userColor(u.user)}"
+      title="${esc(u.user)}：${u.minutes} 分钟"></span>`).join("");
+  const key = usage.users.map(u =>
+    `<span><i style="background:${userColor(u.user)}"></i>${esc(u.user)}
+       · ${fmtDur(u.minutes)} · 显存积分 ${u.gb_hours} GB·h</span>`).join("");
+  box.innerHTML = `
+    <div class="ustrip">${segs}</div>
+    <div class="ukey">${key}</div>
+    <div style="font-size:11px;color:var(--fg2);margin-top:4px">
+      近 ${usage.window_days} 天，覆盖 ${usage.covered_days} 天；使用时间按每分钟占用快照积分估算，
+      系统用户不计入。</div>`;
+}
+function fmtDur(minutes) {
+  if (minutes >= 60) return (minutes / 60).toFixed(1) + " 小时";
+  return minutes + " 分钟";
+}
+function setUsageRange(days) {
+  USAGE_RANGE = days;
+  api("monitor.history", {server: MSEL, days, bucket_hours: 48,
+                          with_buckets: true}).then(r => {
+    if (r.ok) { TREND[MSEL] = r; TREND[MSEL]._days = +document.getElementById("hmDays").value;
+      drawUsage(); }
+  });
+}
+function renderColState(c) {
+  const el = document.getElementById("colstate");
+  if (!el) return;
+  if (!c) { el.textContent = "状态未知——点击「启用」安装或稍后重试"; return; }
+  el.innerHTML = c.reachable
+    ? (c.installed
+        ? `远端目录 <span class="mono">${esc(c.mon_dir || "")}</span> · 守护${c.running ? "运行中" : "未运行"}`
+          + (c.heartbeat === "live" ? " · 心跳活跃" : c.heartbeat === "stale" ? " · 心跳静默（正在补采）" : "")
+        : "尚未安装离线采集守护")
+    : `无法连接网关获取状态：${esc(c.error || "")}`;
+}
+async function daemonToggle(on) {
+  if (!on && !confirm("停用并清理远端离线采集目录？数据会移入远端回收站。")) return;
+  const r = await api("monitor.daemon", {server: MSEL, on});
+  if (r.ok) {
+    toast(on ? `已在 ${MSEL} 启用离线采集守护` : `已停用并清理`, "ok");
+    reloadTrend(true);
+  } else toast((r.error || {}).message || "操作失败", "err");
+}
+
+/* ---- 空闲算力（纯观测筛选，不接入任何任务入口） ---- */
+function idleCfg() {
+  const def = localStorage.getItem("vp_idle_cfg");
+  if (def) { try { return JSON.parse(def); } catch (_) {} }
+  return {vram: 0, util: 10, min: 0, sort: "vram"};
+}
+function saveIdleCfgFromInputs() {
+  const cfg = {vram: +document.getElementById("idleVram").value || 0,
+               util: +document.getElementById("idleUtil").value || 0,
+               min: +document.getElementById("idleMin").value || 0,
+               sort: document.getElementById("idleSort").value};
+  localStorage.setItem("vp_idle_cfg", JSON.stringify(cfg));
+  return cfg;
+}
+function restoreIdleInputs() {
+  const c = idleCfg();
+  document.getElementById("idleVram").value = c.vram;
+  document.getElementById("idleUtil").value = c.util;
+  document.getElementById("idleMin").value = c.min;
+  document.getElementById("idleSort").value = c.sort;
+}
+function gpuPersistMinutes(server, gpuIdx, utilMax, wantMin) {
+  /* 用缓存的分钟桶判断“持续空闲”；返回 minutes 计数 / null(数据不足) / "snap"(仅快照) */
+  if (!wantMin) return "snap";
+  const raw = TREND[server]?.buckets || [];
+  if (!raw.length) return null;
+  const latest = raw[raw.length - 1].t;
+  const from = latest - wantMin * 60;
+  let okMin = 0, seen = 0;
+  for (const b of raw) {
+    if (b.t < from) continue;
+    const span = (b.g || {})[String(gpuIdx)];
+    if (!span) continue;
+    seen++;
+    const worst = span[1] ?? span[0] ?? 999;
+    if (worst <= utilMax) okMin++;
+  }
+  return seen >= Math.ceil(wantMin * 0.6) ? Math.round(okMin) : null;
+}
+let IDLE_HIST_BUSY = false;
+function ensureIdleHistory() {
+  /* 空闲页需要的分钟桶逐台补取（只打一次，失败不重试直到下次进入页面） */
+  if (IDLE_HIST_BUSY) return;
+  IDLE_HIST_BUSY = true;
+  const pending = STATE.servers.filter(s => s.connected && !TREND[s.name]);
+  Promise.all(pending.map(s =>
+    api("monitor.history", {server: s.name, days: 2, bucket_hours: 48,
+                            with_buckets: true})
+      .then(r => { if (r.ok) { TREND[s.name] = r; } })
+      .catch(() => {}))).then(() => {
+    IDLE_HIST_BUSY = false;
+    if (MVIEW === "idle") renderIdlePool();
+  });
+}
+function renderIdlePool() {
+  const cfg = saveIdleCfgFromInputs();
+  const grid = document.getElementById("idlegrid");
+  const cards = [];
+  for (const s of STATE.servers.filter(x => x.connected)) {
+    const r = CURRENT_METRICS[s.name];
+    if (!r || !r.ok) continue;
+    for (const g of r.gpus || []) {
+      const free = +(g.mem_total_gb - g.mem_used_gb).toFixed(1);
+      const okVram = free >= cfg.vram;
+      const okUtil = g.util_pct <= cfg.util;
+      const avail = okVram && okUtil;
+      cards.push({srv: s.name, g, free,
+                  persist: gpuPersistMinutes(s.name, g.index, cfg.util, cfg.min),
+                  avail});
+    }
+  }
+  cards.sort((a, b) => cfg.sort === "util"
+    ? a.g.util_pct - b.g.util_pct
+    : cfg.sort === "name" ? a.srv.localeCompare(b.srv) || b.free - a.free
+                          : b.free - a.free);
+  grid.innerHTML = cards.length ? cards.map(c => {
+    const bad = !c.avail;
+    const persistTxt = c.persist === null ? "?" :
+                       c.persist === "snap" ? "仅当前快照" : `≥ ${c.persist} 分`;
+    return `<div class="msrv" style="cursor:default">
+      <h3><span class="dot ${bad ? "err" : ""}" style="${bad ? "" : "background:var(--ok)"}"></span>
+        ${esc(c.srv)} · GPU ${c.g.index}
+        <span style="margin-left:auto">${badge(bad ? "不可用" : "可用", bad ? "err" : "ok")}</span></h3>
+      <div style="font-size:12px;color:var(--fg2)">${esc(c.g.name)}</div>
+      <div class="msrvfoot"><span>空闲显存 <b style="color:var(--fg)">${c.free} GB</b></span>
+        <span>利用率 <b style="color:var(--fg)">${c.g.util_pct}%</b></span>
+        <span>温度 <b style="color:${c.g.temp_c >= (CFG.temperature_alert_c ?? 85) ? "var(--err)" : "var(--fg)"}">${c.g.temp_c}°C</b></span>
+        <span>持续 ${persistTxt}</span></div>
+      <div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn ghost" onclick="copyIdle(this)"
+          data-desc="${esc(c.srv)} GPU${c.g.index}：空闲显存 ${c.free} GB，利用率 ${c.g.util_pct}%">复制资源描述</button>
+      </div></div>`;
+  }).join("") : `<div class="empty">没有匹配的 GPU——放宽条件或在总览页点「刷新资源」</div>`;
+}
+function copyIdle(btn) {
+  navigator.clipboard.writeText(btn.dataset.desc).then(
+    () => toast("已复制资源描述，可在对话中交给智能体参考", "ok"),
+    () => toast("剪贴板写入失败", "err"));
+}
 
 /* ===================== 设置：智能体/联网/技能 ===================== */
 async function setSubmitMode(mode) {

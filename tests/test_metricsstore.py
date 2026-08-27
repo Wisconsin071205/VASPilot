@@ -17,7 +17,7 @@ def store(tmp_path):
 
 # ------------------------------------------------------------------ buckets
 def test_append_sample_creates_and_widen_buckets(store):
-    now = time.time()
+    now = int(time.time()) // 60 * 60 + 30      # mid-minute: no bucket roll
     store.append_sample("cl9", ts=now, cpu_pct=30.0, mem_pct=40.0,
                         gpus=[{"index": 0, "util_pct": 10,
                                "mem_used_gb": 1.0, "mem_total_gb": 40}])

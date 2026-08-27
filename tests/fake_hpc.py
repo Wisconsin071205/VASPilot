@@ -141,11 +141,13 @@ class FakeHpc:
                     "/dev/shm\n"
                     "/dev/sda1      500000000 200000000 300000000     40% /\n"
                     "__VP_GPU__\n"
-                    "0, NVIDIA A100, 5, 1200, 32510, 45, 70.5\n"
+                    "0, GPU-fake-a100-0, NVIDIA A100, 5, 1200, 32510, "
+                    "45, 70.5\n"
                     "__VP_GPUPROC__\n"
-                    "GPU-0, 12345, python, 1200 MiB\n"
+                    "GPU-fake-a100-0, 12345, python, 1200, wuhong\n"
                     "__VP_SCHED__\n"
                     "slurm\ncpu|up|4|160/64/0/224\n"
+                    "__VP_HB__\n\n"
                     "__VP_DONE__\n")
             # arbitrary exec passthrough (audit-only remote shell)
             if command.startswith("echo "):

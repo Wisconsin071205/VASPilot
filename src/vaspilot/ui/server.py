@@ -761,6 +761,10 @@ class UiHandler(BaseHTTPRequestHandler):
             days = max(1, min(int(body.get("days") or 30), 90))
         except (TypeError, ValueError):
             days = 30
+        try:
+            hours = max(1, min(int(body.get("bucket_hours") or 48), 24 * 90))
+        except (TypeError, ValueError):
+            hours = 48
         store = self._monitor_store()
         collector: dict = {"installed": False, "reachable": False}
         fetched = {"added": 0, "duplicate": 0, "usage": 0}
@@ -786,6 +790,9 @@ class UiHandler(BaseHTTPRequestHandler):
             "heatmap": store.heatmap(name, days=days),
             "usage": store.usage_summary(name, days=days),
             "latest": store.latest(name),
+            # raw minute buckets for idle-persistence / custom charts
+            **({"buckets": store.recent(name, hours=hours)}
+               if body.get("with_buckets") else {}),
         })
 
     def _monitor_daemon(self, body: dict) -> None:

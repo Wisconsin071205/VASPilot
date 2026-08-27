@@ -572,7 +572,8 @@ def _parse_metric_sections(sections: dict) -> dict:
         if len(disks) >= 16:
             break
 
-    # -- gpus
+    # -- gpus (fields: index, gpu_uuid, name, util%, used MB, total MB,
+    #          temp C, power W; the legacy 7-field shape is accepted too)
     gpus = []
     gpu_raw = str(sections.get("gpu", "")).strip()
     gpu_status = "missing"
@@ -580,19 +581,26 @@ def _parse_metric_sections(sections: dict) -> dict:
         gpu_status = "available"
         for line in gpu_raw.splitlines():
             parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 7:
-                continue
             try:
                 index = int(parts[0])
-            except ValueError:
+            except (ValueError, IndexError):
+                continue
+            if len(parts) >= 8:
+                name, rest = parts[2], parts[3:]
+            elif len(parts) >= 7:
+                name, rest = parts[1], parts[2:]
+            else:
                 continue
             gpus.append({
-                "index": index, "name": parts[1][:60],
-                "util_pct": _clamp_pct(parts[2]),
-                "mem_used_gb": round(_float(parts[3]) / 1024, 1),
-                "mem_total_gb": round(_float(parts[4]) / 1024, 1),
-                "temp_c": _float(parts[5]),
-                "power_w": _float(parts[6]),
+                "index": index, "name": name[:60],
+                "gpu_uuid": (parts[1][:80]
+                             if len(parts) >= 8 and parts[1].startswith("GPU-")
+                             else ""),
+                "util_pct": _clamp_pct(rest[0]),
+                "mem_used_gb": round(_float(rest[1]) / 1024, 1),
+                "mem_total_gb": round(_float(rest[2]) / 1024, 1),
+                "temp_c": _float(rest[3]),
+                "power_w": _float(rest[4]),
             })
     elif gpu_raw == "_ERR_":
         gpu_status = "degraded"
@@ -635,15 +643,15 @@ def _parse_metric_sections(sections: dict) -> dict:
                     "cpus_total": int(match.group(4)) if match else None,
                 })
         elif kind == "pbs":
+            # qstat -q columns: Queue Memory CPU_Time Time_In_Q Run Que Lm State
             for line in sched_lines[1:]:
                 parts = line.split()
-                if len(parts) >= 6 and not parts[0].startswith("-") \
+                if len(parts) >= 8 and not parts[0].startswith("-") \
                         and parts[0] != "Queue":
                     partitions.append({
-                        "queue": parts[0][:32], "state": parts[4][:16],
-                        "run": _float(parts[5]), "queued": _float(parts[6])
-                        if len(parts) > 6 else None,
-                        "lm": parts[-2] if len(parts) > 2 else "",
+                        "queue": parts[0][:32], "state": parts[7][:16],
+                        "run": _float(parts[4]), "queued": _float(parts[5]),
+                        "lm": parts[6],
                     })
         queue["partitions"] = partitions
 

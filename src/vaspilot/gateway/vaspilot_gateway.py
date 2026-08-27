@@ -1060,7 +1060,7 @@ echo __VP_LOAD__; cat /proc/loadavg 2>/dev/null
 echo __VP_NPROC__; nproc 2>/dev/null
 echo __VP_MEM__; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo 2>/dev/null
 echo __VP_DF__; df -P -k 2>/dev/null | sed -n '1,18p'
-echo __VP_GPU__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>&1 || echo _ERR_; else echo _MISSING_; fi
+echo __VP_GPU__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=index,gpu_uuid,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>&1 || echo _ERR_; else echo _MISSING_; fi
 echo __VP_GPUPROC__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory --format=csv,noheader,nounits 2>/dev/null | while IFS=, read -r G P N M; do U=$(ps --no-headers -o user= -p "$(echo \"$P\" | tr -d ' ')" 2>/dev/null | tr -d ' '); printf '%s , %s , %s , %s , %s\n' \"$G\" \"$P\" \"$N\" \"$M\" \"$U\"; done; fi
 echo __VP_SCHED__; if command -v sinfo >/dev/null 2>&1; then echo slurm; sinfo -h -o '%R|%a|%D|%C' 2>/dev/null; elif command -v qstat >/dev/null 2>&1; then echo pbs; qstat -q 2>/dev/null | sed -n '1,20p'; fi
 echo __VP_DONE__
@@ -1085,7 +1085,9 @@ def op_metrics(args) -> int:
     for line in raw.splitlines():
         marker = re.fullmatch(r"__VP_([A-Z0-9_]+)__", line.strip())
         if marker:
-            current = marker.group(1).lower()
+            # the wire name is GPUPROC but the documented/parsed section
+            # is "gpu_proc" -- normalize instead of leaking the mismatch
+            current = marker.group(1).lower().replace("gpuproc", "gpu_proc")
             sections[current] = []
             continue
         if current is not None:
