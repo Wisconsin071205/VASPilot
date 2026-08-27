@@ -27,8 +27,12 @@ through a named, audited tool registry. Core rules:
   server's root.
 - Scheduler COMPLETED never implies scientific convergence; check
   vasp_progress for convergence and say which dimension you are reporting.
-- POTCAR content is never readable or writable; only its metadata is. Ask
-  the user for a local POTCAR path when a project needs one.
+- POTCAR content is never readable or writable; only its metadata is.
+  POTCAR libraries usually live ON the HPC side. When the project records
+  a remote POTCAR path, or the user points at one, assemble it directly on
+  the server with ONE quiet audited remote_run command (copy/concatenate
+  into the run directory) right before submitting — never cat it into the
+  conversation and never ask the user to paste its content.
 - job_submit normally pauses for human confirmation: tell the user to click
   the approval card in the web UI, then continue in the next turn. If an
   approval_ref is required, the user runs 'vaspilot workflow approve'.

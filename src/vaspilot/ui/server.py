@@ -496,7 +496,11 @@ class UiHandler(BaseHTTPRequestHandler):
                 name, {str(k): str(v) for k, v in files.items()
                        if isinstance(v, str)},
                 potcar_path=str(body.get("potcar_path") or "").strip()
-                or None))
+                or None,
+                potcar_remote=str(body.get("potcar_remote") or "")))
+        elif action == "project.potcar_remote":
+            self._send_json(store.set_potcar_remote(
+                name, str(body.get("path") or "")))
         elif action == "project.list":
             self._send_json({"projects": store.list()})
         elif action == "project.read":
@@ -766,11 +770,25 @@ class UiHandler(BaseHTTPRequestHandler):
             if skills_index:
                 system_extra_parts.append(skills_index)
             if project_name:
-                system_extra_parts.append(
-                    f"Active local project: {project_name} "
-                    f"(directory {project_dir}). project_read/project_write "
-                    f"with an empty project name target it implicitly; "
-                    f"upload_file paths resolve inside it.")
+                from ..workflow.projects import ProjectStore
+                meta = next((p for p in ProjectStore(
+                    projects_dir=app.config.projects_dir,
+                    index_path=app.config.projects_index_path).list()
+                    if p["name"] == project_name), {})
+                extra = (f"Active local project: {project_name} "
+                         f"(directory {project_dir}). project_read/"
+                         f"project_write with an empty project name target "
+                         f"it implicitly; upload_file paths resolve inside "
+                         f"it.")
+                if meta.get("potcar_remote"):
+                    extra += (
+                        f"\nRemote POTCAR source recorded for this project: "
+                        f"{meta['potcar_remote']}. When the run directory is "
+                        f"ready but POTCAR is absent, propose ONE audited "
+                        f"remote_run command that copies/concatenates it "
+                        f"into place before job_submit (never print its "
+                        f"content); ask which element-set to use if ambiguous.")
+                system_extra_parts.append(extra)
             submit_mode = app.config.agent_submit_mode()
             system_extra_parts.append(
                 f"agent_submit_mode={submit_mode}: " + (

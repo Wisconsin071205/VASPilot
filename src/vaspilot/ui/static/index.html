@@ -539,9 +539,11 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <label>KPOINTS</label><textarea id="pmkpoints" style="min-height:80px"></textarea>
     <label>POSCAR（粘贴你的结构）</label><textarea id="pmposcar"></textarea>
     <div class="mrow">
-      <div><label>本地 POTCAR 路径（可选；仅逐字节复制，内容不读取）</label>
+      <div><label>本地 POTCAR 路径（可选；仅逐字节复制）</label>
         <input id="pmpotcar" placeholder="C:\potcar-lib\POTCAR.Fe"></div>
-      <div><label>同时创建会话（在项目下开始对话）</label>
+      <div><label>或远端 POTCAR 库路径（可选；提交前由智能体在服务器上组装）</label>
+        <input id="pmremotepotcar" placeholder="/home/you/potcar/POTCAR.Fe"></div>
+      <div style="flex:.7"><label>同时创建会话（在项目下开始对话）</label>
         <select id="pmsession"><option value="yes">是</option><option value="no">否</option></select></div>
     </div>
     <div class="mbtns">
@@ -1382,7 +1384,8 @@ function pickProject() {
   document.getElementById("wfrom").value = p.path;
   info.innerHTML = `项目目录已填入：<span class="mono">${esc(p.path)}</span> ·
     ${p.complete ? badge("输入齐全", "ok") : badge("缺 " + esc((p.missing || []).join(" ")), "warn")}
-    ${p.files && p.files.POTCAR ? "" : " · 建议勾选「跳过 POTCAR」或先补充 POTCAR"}`;
+    ${p.potcar_remote ? ` · 远端 POTCAR 库 <span class="mono">${esc(p.potcar_remote)}</span>（提交前由智能体组装）` :
+      (p.files && p.files.POTCAR ? "" : " · 建议填远端 POTCAR 库路径、勾选「跳过 POTCAR」或先补充 POTCAR")}`;
   if (!document.getElementById("wremote").value.trim()) {
     const root = remoteRootOf(document.getElementById("wsrv").value);
     if (root) document.getElementById("wremote").value = `${root}/runs/${name}`;
@@ -1414,6 +1417,7 @@ async function openProjectModal() {
   }
   document.getElementById("pmname").value = "";
   document.getElementById("pmpotcar").value = "";
+  document.getElementById("pmremotepotcar").value = "";
   back.classList.add("on");
   setTimeout(() => document.getElementById("pmname").focus(), 60);
 }
@@ -1440,6 +1444,7 @@ async function saveProjectModal() {
       POSCAR: document.getElementById("pmposcar").value,
     },
     potcar_path: document.getElementById("pmpotcar").value.trim() || null,
+    potcar_remote: document.getElementById("pmremotepotcar").value.trim() || "",
   });
   if (!r.ok) return;
   toast(`项目 ${name} 已创建：${r.path}`, "ok");

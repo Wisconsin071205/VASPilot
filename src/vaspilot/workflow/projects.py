@@ -164,10 +164,14 @@ class ProjectStore:
 
     # -- create / list / delete -----------------------------------------------------
     def create(self, name: str, files: dict[str, str] | None = None,
-               potcar_path: str | Path | None = None) -> dict[str, Any]:
+               potcar_path: str | Path | None = None,
+               potcar_remote: str = "") -> dict[str, Any]:
         directory = self._project_dir(name)
         if directory.exists():
             raise ValidationError(f"project {name!r} already exists")
+        potcar_remote = str(potcar_remote or "").strip()
+        if len(potcar_remote.encode("utf-8")) > 512:
+            raise ValidationError("potcar_remote path exceeds 512 bytes")
         files = {str(k): str(v) for k, v in (files or {}).items()
                  if str(v).strip()}
         for fname in files:
@@ -206,7 +210,8 @@ class ProjectStore:
             shutil.rmtree(directory, ignore_errors=True)
             raise
         index = self._load_index()
-        index[name] = {"created_at": _now(), "pinned": False}
+        index[name] = {"created_at": _now(), "pinned": False,
+                       "potcar_remote": potcar_remote}
         self._save_index(index)
         self._record("project.create", outcome="ok", project=name,
                      files=[w["name"] for w in written],
@@ -232,6 +237,7 @@ class ProjectStore:
                 "path": str(entry.resolve()),
                 "pinned": bool(meta.get("pinned")),
                 "created_at": meta.get("created_at", ""),
+                "potcar_remote": meta.get("potcar_remote", ""),
                 "mtime": datetime.fromtimestamp(
                     entry.stat().st_mtime, timezone.utc).isoformat(
                         timespec="seconds"),
@@ -254,6 +260,27 @@ class ProjectStore:
         index[name] = meta
         self._save_index(index)
         return {"name": name, "pinned": meta["pinned"]}
+
+    def set_potcar_remote(self, name: str, path: str) -> dict[str, Any]:
+        """Record where the POTCAR lives on the HPC side (library path).
+
+        Pure metadata: nothing is read or copied until a human-approved /
+        audited remote command assembles it into the run directory.
+        """
+        directory = self._project_dir(name)
+        if not directory.is_dir():
+            raise ValidationError(f"project {name!r} not found")
+        path = str(path or "").strip()
+        if len(path.encode("utf-8")) > 512:
+            raise ValidationError("path exceeds 512 bytes")
+        index = self._load_index()
+        meta = index.get(name, {"created_at": _now()})
+        meta["potcar_remote"] = path
+        index[name] = meta
+        self._save_index(index)
+        self._record("project.potcar_remote", outcome="ok",
+                     project=name, remote_path=path)
+        return {"name": name, "potcar_remote": path}
 
     def delete(self, name: str) -> dict[str, Any]:
         directory = self._project_dir(name)

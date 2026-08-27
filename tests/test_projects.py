@@ -69,6 +69,18 @@ class TestCreate:
             store.create("bad", {"INCAR": "NSW=0\n"},
                          potcar_path=tmp_path / "nope")
 
+    def test_potcar_remote_recorded_as_metadata(self, store):
+        store.create("remote-lib", {"INCAR": "NSW=0\n"},
+                     potcar_remote="/home/you/potcar/POTCAR.Fe")
+        listing = {p["name"]: p for p in store.list()}
+        assert listing["remote-lib"]["potcar_remote"] == \
+            "/home/you/potcar/POTCAR.Fe"
+        updated = store.set_potcar_remote(
+            "remote-lib", "/home/you/potcar/PAW/POTCAR.Fe_paw")
+        assert updated["potcar_remote"].endswith("Fe_paw")
+        listing = {p["name"]: p for p in store.list()}
+        assert listing["remote-lib"]["potcar_remote"].endswith("Fe_paw")
+
 
 class TestListPinDelete:
     def test_list_completeness(self, store):

@@ -582,6 +582,44 @@ class TestProjectFlow:
         names = [t["name"] for t in templates["templates"]]
         assert "relax" in names and "scf" in names and "blank" in names
 
+    def test_potcar_remote_flows_into_agent_context(self, ui):
+        created = call(ui, "project.create", {
+            "name": "remote-lib-ui", "files": {"INCAR": "NSW=0\n"},
+            "potcar_remote": "/home/you/potcar/POTCAR.Fe"})
+        assert created["ok"] is True
+        entry = next(p for p in call(ui, "project.list")["projects"]
+                     if p["name"] == "remote-lib-ui")
+        assert entry["potcar_remote"] == "/home/you/potcar/POTCAR.Fe"
+
+        # a chat session bound to this project tells the agent where to
+        # assemble POTCAR from
+        ui["scripted"].script.clear()
+        ui["scripted"].script.extend([{"text": "好的。"}])
+        session_id = call(ui, "chat.new",
+                          {"project": "remote-lib-ui"})["session_id"]
+        req = urllib.request.Request(
+            f"{ui['base']}/api/agent/chat",
+            data=json.dumps({"provider": "mock", "message": "开始",
+                             "session_id": session_id}).encode(),
+            method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("X-Vaspilot-Token", ui["token"])
+        with urllib.request.urlopen(req, timeout=60) as response:
+            sse_body = response.read().decode("utf-8")
+        # drain done; the final (or error) frame explains any short-circuit
+        assert '"type": "final"' in sse_body.replace("'", '"') or \
+            "final" in sse_body, sse_body[-800:]
+        # chat() appends ONE entry per call: the whole messages list
+        system_message = ui["scripted"].calls[0][0]["content"]
+        assert "/home/you/potcar/POTCAR.Fe" in system_message
+
+        # updating it later works too
+        updated = call(ui, "project.potcar_remote", {
+            "name": "remote-lib-ui",
+            "path": "/home/you/potcar/PAW/POTCAR.Fe_paw"})
+        assert updated["ok"] is True
+        assert updated["potcar_remote"].endswith("Fe_paw")
+
 
 class TestSubmitConfirmation:
     def test_confirm_flow_executes_frozen_params(self, ui):

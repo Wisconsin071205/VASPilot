@@ -367,12 +367,16 @@ class ToolRegistry:
             {"name": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
              "incar": {"type": "string", "maxLength": 65536},
              "kpoints": {"type": "string", "maxLength": 65536},
-             "poscar": {"type": "string", "maxLength": 262144}},
+             "poscar": {"type": "string", "maxLength": 262144},
+             "potcar_remote": {"type": "string", "maxLength": 512,
+                               "description": "optional HPC-side POTCAR "
+                               "library path recorded for later assembly"}},
             lambda a: {**self.context.project_store.create(
                 str(a["name"]),
                 {"INCAR": str(a.get("incar") or ""),
                  "KPOINTS": str(a.get("kpoints") or ""),
-                 "POSCAR": str(a.get("poscar") or "")}), "ok": True})
+                 "POSCAR": str(a.get("poscar") or "")},
+                potcar_remote=str(a.get("potcar_remote") or "")), "ok": True})
         self._add(
             "project_list",
             "List local calculation projects with input-file completeness.",
