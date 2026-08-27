@@ -33,6 +33,7 @@ reply. It is ignored in normal operation.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -81,9 +82,12 @@ def out(payload: dict) -> int:
     return 0
 
 
-def fail(code: str, message: str) -> int:
-    return out({"ok": False, "error": {"code": code,
-                                       "message": message[:500]}})
+def fail(code: str, message: str, **fields: str) -> int:
+    error = {"code": code, "message": message[:500]}
+    for key in ("expected", "got"):
+        if key in fields:
+            error[key] = str(fields[key])
+    return out({"ok": False, "error": error})
 
 
 def audit(operation: str, outcome: str, detail: str = "", server: str = "") -> None:
@@ -183,6 +187,103 @@ def _remote_runner(server: str, target: str, command: str, sock: Path,
          target, command],
         stdin=subprocess.DEVNULL, text=True, capture_output=True,
         timeout=timeout)
+
+
+def _ssh_runner_raw(server: str, argv_cmd: list[str], data: bytes | None = None,
+                    timeout: int = 300) -> tuple[int, bytes]:
+    """Binary-safe one-shot ssh through the mux (no shell on our side).
+
+    Used by the stage push/pull helpers; ``data`` is piped verbatim to the
+    remote command's stdin when given. Falls back to the VASPILOT_FAKE_HPC
+    helper so offline tests exercise the same code paths.
+    """
+    fake = os.environ.get("VASPILOT_FAKE_HPC", "")
+    if fake:
+        proc = subprocess.run(
+            [sys.executable, fake, server] + argv_cmd,
+            input=data if data is not None else b"",
+            capture_output=True, timeout=timeout)
+        return proc.returncode, proc.stdout + (proc.stderr or b"")
+    entry = CFG["servers"][server]
+    import subprocess as _sp
+    cmd = ["ssh", "-p", str(entry["port"]),
+           "-o", "BatchMode=yes",
+           "-o", "StrictHostKeyChecking=yes",
+           "-o", "UpdateHostKeys=no",
+           "-o", f"ControlPath={socket_path(server)}",
+           entry["target"]] + argv_cmd
+    proc = _sp.run(cmd, input=data, capture_output=True, timeout=timeout)
+    return proc.returncode, proc.stdout + (proc.stderr or b"")
+
+
+STAGE_PUSH_MARKER = "__VP_STAGE_PUSH__"
+STAGE_PULL_MARKER = "__VP_STAGE_PULL__"
+
+
+def stage_push(name: str, stage_path_local_to_gateway: str,
+               dest_resolved: str) -> None:
+    """Move the gateway-local staged file onto the HPC target path."""
+    with open(_stage_fs_path(stage_path_local_to_gateway), "rb") as handle:
+        payload = handle.read()
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        argv = [f"{STAGE_PUSH_MARKER} {shlex.quote(dest_resolved)}"]
+    else:
+        # a real HPC just needs a stdin-consuming writer through the mux
+        argv = [f"cat > {shlex.quote(dest_resolved)}"]
+    rc, out_bytes = _ssh_runner_raw(name, argv, data=payload)
+    if rc != 0:
+        stderr = out_bytes.decode("utf-8", "replace")
+        raise GatewayError("stage_push_failed",
+                           f"could not place the staged file: {stderr[:200]}")
+
+
+def stage_pull(name: str, src_resolved: str,
+               stage_path_local_to_gateway: str) -> None:
+    """Copy a file from the HPC into a gateway-local staged file."""
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        argv = [f"{STAGE_PULL_MARKER} {shlex.quote(src_resolved)}"]
+        rc, out_bytes = _ssh_runner_raw(name, argv)
+        marker_line = b"OK "
+        if rc != 0 or not out_bytes.startswith(marker_line):
+            raise GatewayError("stage_pull_failed",
+                               "could not fetch the remote file: "
+                               + out_bytes.decode("utf-8", "replace")[:200])
+        decoded = base64.b64decode(out_bytes[len(marker_line):].strip())
+    else:
+        rc, out_bytes = _ssh_runner_raw(
+            name, [f"cat {shlex.quote(src_resolved)}"])
+        if rc != 0:
+            raise GatewayError("stage_pull_failed",
+                               "could not fetch the remote file: "
+                               + out_bytes.decode("utf-8", "replace")[:200])
+        decoded = out_bytes
+    local = _stage_fs_path(stage_path_local_to_gateway)
+    tmp = str(local) + ".part"
+    with open(tmp, "wb") as handle:
+        handle.write(decoded)
+    os.replace(tmp, local)
+
+
+def vlab_stage_sha256(stage: str) -> str:
+    """SHA-256 of a gateway-local staged file, read directly (binary)."""
+    digest = hashlib.sha256()
+    with open(_stage_fs_path(stage), "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _stage_fs_path(stage: str) -> Path:
+    """Filesystem path of a gateway-local stage id.
+
+    Normal operation: the POSIX path as-is (the gateway host IS where the
+    CLI scp'd the file). Test seam: VASPILOT_GATEWAY_STAGE_DIR redirects
+    lookups into a fixture directory by basename.
+    """
+    override = os.environ.get("VASPILOT_GATEWAY_STAGE_DIR", "").strip()
+    if override:
+        return Path(override) / PurePosixPath(stage).name
+    return Path(stage)
 
 
 def connected(name: str, timeout: int = 4) -> bool:
@@ -996,7 +1097,12 @@ def op_metrics(args) -> int:
 
 # ------------------------------------------------------------- data motion
 def op_upload(args) -> int:
-    """Move a staged /tmp file into place after SHA-256 verification."""
+    """Move a gateway-local staged file into place after SHA-256 check.
+
+    The CLI scps to the GATEWAY host's /tmp stage; the hash is therefore
+    computed HERE (direct read), then the bytes are pushed onto the HPC
+    through the mux. Mixing the two hosts would corrupt verification.
+    """
     name, entry = resolve_server(args.server)
     stage = validated_stage_path(args.stage)
     target = validated_remote_path(args.path, entry, name)
@@ -1004,23 +1110,23 @@ def op_upload(args) -> int:
     expected = (args.sha256 or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", expected):
         return fail("invalid_sha256", "upload requires the local SHA-256")
-    actual = remote(
-        name,
-        f"sha256=$(sha256sum -- {q(str(stage))} 2>/dev/null | cut -d' ' -f1); "
-        f"echo \"$sha256\"").strip()
+    try:
+        actual = vlab_stage_sha256(stage)
+    except OSError:
+        return fail("stage_missing",
+                    f"staged file {stage} not found on the gateway host")
     if actual != expected:
-        try:
-            remote(name, f"rm -f -- {q(str(stage))}")
-        except GatewayError:
-            pass
+        _stage_fs_path(stage).unlink(missing_ok=True)
         return fail("sha_mismatch",
-                    f"staged file hash {actual[:12]}… != expected {expected[:12]}…")
+                    f"staged file hash {actual[:12]}… != expected "
+                    f"{expected[:12]}…",
+                    expected=expected, got=actual)
     existing = remote(
         name,
         f"if [ -e {q(resolved)} ]; then sha256sum -- {q(resolved)} "
         f"2>/dev/null | cut -d' ' -f1; fi").strip()
     if existing == expected:
-        remote(name, f"rm -f -- {q(str(stage))}")
+        _stage_fs_path(stage).unlink(missing_ok=True)
         out({"path": resolved, "sha256": expected, "status": "identical"})
         return 0
     if existing:
@@ -1028,15 +1134,16 @@ def op_upload(args) -> int:
                     f"{resolved} already exists with different content; "
                     f"remove it to the trash first")
     parent = str(PurePosixPath(resolved).parent)
-    remote(name, f"mkdir -p -- {q(parent)} && cp -- {q(str(stage))} {q(resolved)} "
-                 f"&& rm -f -- {q(str(stage))}")
+    remote(name, f"mkdir -p -- {q(parent)}")
+    stage_push(name, stage, resolved)
+    _stage_fs_path(stage).unlink(missing_ok=True)
     out({"path": resolved, "sha256": expected, "status": "uploaded"})
     audit("upload", "ok", f"{resolved} sha={expected[:12]}", name)
     return 0
 
 
 def op_download(args) -> int:
-    """Copy a remote file to a /tmp stage and report its SHA-256."""
+    """Copy a remote file to a gateway-local staged /tmp file + report sha."""
     name, entry = resolve_server(args.server)
     path = validated_remote_path(args.path, entry, name)
     resolved = require_resolved_within_root(name, path, entry)
@@ -1044,12 +1151,14 @@ def op_download(args) -> int:
     exists = remote(name, f"test -f {q(resolved)} && echo YES || echo NO").strip()
     if exists != "YES":
         return fail("not_found", f"{resolved} is not a regular file")
-    remote(name, f"cp -- {q(resolved)} {q(str(stage))}")
-    sha = remote(name, f"sha256sum -- {q(str(stage))} | cut -d' ' -f1").strip()
-    size = remote(name, f"stat -c %s -- {q(str(stage))}").strip()
-    out({"path": resolved, "sha256": sha,
-         "size": int(size) if size.isdigit() else 0})
-    audit("download", "ok", f"{resolved} sha={sha[:12]}", name)
+    try:
+        stage_pull(name, resolved, stage)
+    except GatewayError as exc:
+        return fail(exc.code, exc.message)
+    actual = vlab_stage_sha256(stage)
+    size = _stage_fs_path(stage).stat().st_size
+    out({"path": resolved, "sha256": actual, "size": size})
+    audit("download", "ok", f"{resolved} sha={actual[:12]}", name)
     return 0
 
 

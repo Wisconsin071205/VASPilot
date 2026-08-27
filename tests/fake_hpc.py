@@ -394,6 +394,23 @@ class FakeHpc:
 
 def main() -> int:
     server, command = sys.argv[1], sys.argv[2]
+    # binary stage push/pull used by the gateway's data-motion helpers:
+    # push takes the payload on stdin; pull emits "OK <base64>" on stdout
+    if command.startswith("__VP_STAGE_PUSH__ "):
+        hpc = FakeHpc(server)
+        dest = hpc.to_real(path_tokens(command)[0])
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(sys.stdin.buffer.read())
+        return 0
+    if command.startswith("__VP_STAGE_PULL__ "):
+        hpc = FakeHpc(server)
+        src = hpc.to_real(path_tokens(command)[0])
+        if not src.is_file():
+            sys.stderr.write(f"cat: {src}: No such file\n")
+            return 1
+        sys.stdout.buffer.write(b"OK " + __import__("base64").b64encode(
+            src.read_bytes()))
+        return 0
     code, out = FakeHpc(server).execute(command)
     sys.stdout.write(out)
     return code

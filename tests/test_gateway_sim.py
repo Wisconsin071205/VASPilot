@@ -39,6 +39,8 @@ def gateway_env(tmp_path, monkeypatch):
     monkeypatch.setenv("VASPILOT_GATEWAY_CACHE", str(cache_dir))
     monkeypatch.setenv("VASPILOT_FAKE_HPC", str(Path(__file__).parent / "fake_hpc.py"))
     monkeypatch.setenv("VASPILOT_FAKE_HPC_CONFIG", str(fake_config))
+    # gateway-local stage reads resolve into the fixture stage dir
+    monkeypatch.setenv("VASPILOT_GATEWAY_STAGE_DIR", str(stage))
 
     def run(*args, check=False):
         result = subprocess.run(
