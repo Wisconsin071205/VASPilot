@@ -104,20 +104,32 @@ function codexVersion(spec) {
   return probe.status === 0 ? probe.stdout.trim() : "unknown";
 }
 
-/** Run one `codex exec --json` turn; onDelta receives incremental item text. */
+/** Windows CLIs print system errors in the console code page (GBK on zh-CN);
+ *  UTF-8 decoding then litters the text with U+FFFD. Re-decode when seen. */
+function decodeMaybeGbk(buf) {
+  const s = buf.toString("utf8");
+  if (!s.includes("\uFFFD")) return s;
+  try { return new TextDecoder("gbk").decode(buf); } catch { return s; }
+}
+
+/** Run one `codex exec --json` turn; onDelta receives incremental text.
+ *  The prompt goes over STDIN ("-"): chat payloads carry the whole system
+ *  prompt + history and blow far past the ~32 KiB Windows argv limit when
+ *  passed as an argument (rc=1 命令行太长 / ENAMETOOLONG). */
 async function codexExecTurn(prompt, { onDelta, timeoutS, model }) {
   const spec = codexSpec();
   if (!spec) throw new Error("codex CLI binary was not found");
   const rest = ["exec", "--json", "--sandbox", "read-only",
-                "--skip-git-repo-check"];
+                "--skip-git-repo-check", "-"];
   if (model) rest.push("--model", model);
-  rest.push(prompt);
   let args = [...spec.preArgs, ...rest];
   if (spec.shell && spec.quote) args = args.map(quoteWin);
   const child = spawn(spec.file, args, {
     shell: spec.shell,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
+  child.stdin.on("error", () => {});       // EPIPE if codex exits early
+  child.stdin.end(prompt, "utf8");
   let buffer = "";
   let full = "";
   let usage = {};
@@ -144,15 +156,17 @@ async function codexExecTurn(prompt, { onDelta, timeoutS, model }) {
       }
     }
   });
-  let stderr = "";
-  child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+  let stderrBuf = [];
+  child.stderr.on("data", (chunk) => { stderrBuf.push(chunk); });
   const code = await new Promise((resolve) => {
     child.on("close", (c) => resolve(c));
     child.on("error", () => resolve(-1));
   });
   clearTimeout(timer);
-  if (code !== 0 && !full)
+  if (code !== 0 && !full) {
+    const stderr = decodeMaybeGbk(Buffer.concat(stderrBuf));
     throw new Error(`codex exec failed (rc=${code}): ${stderr.slice(0, 300)}`);
+  }
   return { text: full, usage };
 }
 
