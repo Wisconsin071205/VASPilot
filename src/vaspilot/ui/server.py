@@ -121,7 +121,20 @@ class UiHandler(BaseHTTPRequestHandler):
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
-        if length <= 0 or length > MAX_BODY:
+        if length <= 0:
+            return {}
+        if length > MAX_BODY:
+            # drain so keep-alive reuse cannot parse leftover bytes as a
+            # new request line (the 501 '{"json"}GET' failure mode)
+            remaining = min(length, 16 * 1024 * 1024)
+            try:
+                while remaining > 0:
+                    chunk = self.rfile.read(min(remaining, 65536))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+            except OSError:
+                self.close_connection = True
             return {}
         try:
             data = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -784,6 +797,10 @@ class UiHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
+        # an SSE response has no framing the keep-alive parser can trust:
+        # end the connection when the stream ends (see 501 desync fix)
+        self.send_header("Connection", "close")
+        self.close_connection = True
         self.end_headers()
         guards = {"sentinel": False}
 
