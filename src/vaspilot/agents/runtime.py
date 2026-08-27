@@ -90,7 +90,7 @@ def _bounded(outcome: dict[str, Any], limit: int = 4000) -> dict[str, Any]:
 class AgentRuntime:
     def __init__(self, *, provider: BaseProvider, registry: ToolRegistry,
                  mode: str, audit: AuditLog | None = None,
-                 max_turns: int = 12,
+                 max_turns: int = 32,
                  stream_cb: Callable[[str], None] | None = None,
                  event_cb: Callable[[str, dict[str, Any]], None] | None = None,
                  system_extra: str = "") -> None:
@@ -98,7 +98,7 @@ class AgentRuntime:
         self.registry = registry
         self.mode = mode  # "full" | "analysis_only"
         self.audit = audit
-        self.max_turns = max_turns
+        self.max_turns = max(4, min(int(max_turns or 32), 200))
         self.stream_cb = stream_cb
         # event_cb(kind, payload) lets hosts (local web UI) observe the loop:
         # kinds: "tool" (name, ok), "final" (result), "error" (message)
@@ -124,9 +124,16 @@ class AgentRuntime:
         ]
         tools = [t.to_openai() for t in self.registry.list_tools()]
         trace: list[dict[str, Any]] = []
-        for turn in range(1, self.max_turns + 1):
+        nudged = False
+        hard_cap = self.max_turns * 2      # one continuation grant at the cap
+        turn = 0
+        while turn < hard_cap:
+            turn += 1
             reply = self.provider.chat(messages, tools,
                                        stream_cb=self.stream_cb)
+            if not reply.tool_calls and turn > self.max_turns \
+                    and not trace:
+                break                      # nothing achieved, stop early
             if reply.tool_calls:
                 messages.append({
                     "role": "assistant",
@@ -152,6 +159,17 @@ class AgentRuntime:
                         "content": json.dumps(outcome, ensure_ascii=False,
                                               default=str)[:20000],
                     })
+                if turn == self.max_turns and not nudged:
+                    # soft budget reached: tell the model to wrap up or keep
+                    # going explicitly instead of dying mid-sentence
+                    nudged = True
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "已达到本任务的工具轮次上限。请继续：直接调用完成"
+                            "任务还需要的工具；若任务确已完成，给出简短结论。"
+                            "不要停在计划句上。"),
+                    })
                 continue
             result = {
                 "ok": True,
@@ -165,8 +183,9 @@ class AgentRuntime:
             return result
         result = {
             "ok": False,
-            "error": f"agent exceeded {self.max_turns} turns without finishing",
-            "turns": self.max_turns,
+            "error": (f"agent exceeded the hard cap of {self.max_turns * 2} "
+                      f"tool turns even after a continuation nudge"),
+            "turns": turn,
             "tool_calls": [row["tool"] for row in trace],
             "trace": trace,
             "mode": self.mode,

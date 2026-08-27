@@ -94,6 +94,24 @@ class TestAgentRuntime:
         assert result["ok"] is False
         assert "exceeded" in result["error"]
 
+    def test_turn_cap_nudge_grants_continuation(self, app_with_fake):
+        """At the soft cap the runtime injects a continuation nudge and runs
+        on, instead of ending mid-sentence like the 13-tool-call Bader run."""
+        app, registry = _registry_of(app_with_fake)
+        scripted = [
+            {"tool_calls": [ToolCall(call_id="1", name="remote_pwd",
+                                     arguments={})]},
+            {"tool_calls": [ToolCall(call_id="2", name="remote_pwd",
+                                     arguments={})]},
+            {"text": "任务完成：一切就绪"},
+        ]
+        runtime = AgentRuntime(provider=ScriptedProvider(scripted),
+                               registry=registry, mode=FULL, max_turns=2)
+        result = runtime.run("do it")
+        # max_turns=2：第 2 回合触顶注入「继续」，第 3 回合给出结论
+        assert result["ok"] is True and result["turns"] == 3
+        assert "完成" in result["answer"]
+
 
 def _registry_of(app_with_fake):
     app, _ = app_with_fake

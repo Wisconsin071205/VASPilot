@@ -271,6 +271,26 @@ class Config:
         self.update_settings(temperature_alert_c=number)
         return number
 
+    def agent_max_turns(self) -> int:
+        """Tool-round budget for one agent task (a continuation nudge at the
+        cap grants one extra full budget before the hard stop)."""
+        value = self.load_settings().get("agent_max_turns")
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 32
+        return max(4, min(number, 200))
+
+    def set_agent_max_turns(self, value) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            raise ValidationError("max turns must be an integer")
+        if not 4 <= number <= 200:
+            raise ValidationError("max turns must be between 4 and 200")
+        self.update_settings(agent_max_turns=number)
+        return number
+
     # -- web search configuration -------------------------------------------------
     WEBSEARCH_PROVIDERS = ("zhipu", "bocha")
 

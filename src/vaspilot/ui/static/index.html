@@ -631,6 +631,17 @@ textarea:focus{outline:none;border-color:var(--acc)}
             <button class="btn ghost" id="mode-auto" onclick="setSubmitMode('auto')">全自动（仅审计）</button>
           </div>
         </div></div>
+        <div class="card"><div class="row" style="justify-content:space-between">
+          <div>
+            <b>单任务工具轮次上限</b>
+            <div style="font-size:12px;color:var(--fg2)">智能体一次任务最多执行多少轮工具调用；
+              到顶会先注入「继续」指令再续跑一倍轮次，仍完不成才停止。</div>
+          </div>
+          <div class="row" style="gap:8px">
+            <input id="maxturns" type="number" min="4" max="200" style="width:90px">
+            <button class="btn" onclick="saveAgentTurns()">保存</button>
+          </div>
+        </div></div>
       </div>
 
       <!-- ---- 联网搜索 ---- -->
@@ -1447,6 +1458,8 @@ async function loadSettings() {
   // agent / web / monitor tabs
   renderAgentMode(r.agent_submit_mode || "confirm");
   renderWebsearch(r.websearch);
+  const mt = document.getElementById("maxturns");
+  if (mt) mt.value = r.agent_max_turns ?? 32;
   const th = document.getElementById("tempth");
   if (th) th.value = r.temperature_alert_c ?? 85;
 }
@@ -2328,6 +2341,12 @@ async function setSubmitMode(mode) {
   const r = await api("agent.submit_mode", {mode});
   if (r.ok) { toast(mode === "confirm" ? "已切换：提交需聊天确认" : "已切换：全自动提交（仅审计）", "ok");
     renderAgentMode(r.agent_submit_mode); }
+}
+async function saveAgentTurns() {
+  const r = await api("agent.max_turns",
+                      {agent_max_turns: parseInt(
+                        document.getElementById("maxturns").value, 10)});
+  if (r.ok) toast(`已保存：单任务工具轮次上限 ${r.agent_max_turns}`, "ok");
 }
 function renderAgentMode(mode) {
   const confirm = mode !== "auto";

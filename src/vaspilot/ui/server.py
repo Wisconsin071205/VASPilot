@@ -310,6 +310,10 @@ class UiHandler(BaseHTTPRequestHandler):
                 mode = app.config.set_agent_submit_mode(
                     str(body.get("mode") or "confirm"))
                 self._send_json({"agent_submit_mode": mode})
+            elif action == "agent.max_turns":
+                turns = app.config.set_agent_max_turns(
+                    body.get("agent_max_turns"))
+                self._send_json({"agent_max_turns": turns})
             elif action == "websearch.save":
                 api_key = str(body.get("api_key") or "")
                 if api_key.strip():
@@ -472,7 +476,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 "vlab": {**vlab, "identity_file_exists": identity_ok},
                 "agent_submit_mode": app.config.agent_submit_mode(),
                 "websearch": app.config.websearch(),
-                "temperature_alert_c": app.config.temperature_alert_c()}
+                "temperature_alert_c": app.config.temperature_alert_c(),
+                "agent_max_turns": app.config.agent_max_turns()}
 
     def _save_provider(self, body: dict) -> None:
         from ..core.config import ProviderEntry
@@ -946,6 +951,7 @@ class UiHandler(BaseHTTPRequestHandler):
                     project_root=project_dir or body.get("project_root"),
                     session_id=session_id),
                 mode=mode, audit=app.audit,
+                max_turns=app.config.agent_max_turns(),
                 system_extra="\n\n".join(system_extra_parts),
                 stream_cb=lambda fragment: on_delta(fragment),
                 event_cb=lambda kind, payload: frame({"type": kind, **payload}))
