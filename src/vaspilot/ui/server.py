@@ -893,7 +893,13 @@ class UiHandler(BaseHTTPRequestHandler):
         def frame(payload: dict) -> None:
             if guards["sentinel"]:
                 return
-            self._sse_frame(payload)
+            try:
+                self._sse_frame(payload)
+            except (OSError, ValueError):
+                # the client refreshed/walked away: stop writing, but keep
+                # the agent loop running so the turn still completes and
+                # lands in the session file
+                guards["sentinel"] = True
 
         try:
             from ..agents.runtime import AgentRuntime
@@ -941,16 +947,41 @@ class UiHandler(BaseHTTPRequestHandler):
                     session_id=session_id),
                 mode=mode, audit=app.audit,
                 system_extra="\n\n".join(system_extra_parts),
-                stream_cb=lambda fragment: frame({"type": "delta",
-                                                  "text": fragment}),
+                stream_cb=lambda fragment: on_delta(fragment),
                 event_cb=lambda kind, payload: frame({"type": kind, **payload}))
+            # durability: the question is on disk before any model call, and
+            # the growing answer is flushed every ~1.5 s so a refresh
+            # mid-stream only ever loses the last second of text
+            if memory is not None and session_id:
+                try:
+                    memory.append(session_id, "user", message)
+                except Exception:
+                    pass
+            import time as _time
+            acc_parts: list[str] = []
+            last_flush = {"t": 0.0}
+
+            def on_delta(fragment: str) -> None:
+                acc_parts.append(fragment)
+                frame({"type": "delta", "text": fragment})
+                now = _time.monotonic()
+                # flush the first frame immediately and then throttle; keep
+                # flushing AFTER the client disappears (that is the point)
+                if memory is not None and session_id and \
+                        (last_flush["t"] == 0.0 or
+                         now - last_flush["t"] > 1.5):
+                    last_flush["t"] = now
+                    try:
+                        memory.patch_last_assistant(
+                            session_id, "".join(acc_parts))
+                    except Exception:
+                        pass
             result = runtime.run(message, history=history)
             frame({"type": "final", "result": result})
             if memory is not None and session_id and result.get("ok"):
                 try:
-                    memory.append(session_id, "user", message)
-                    memory.append(session_id, "assistant",
-                                  str(result.get("answer", "")))
+                    memory.patch_last_assistant(
+                        session_id, str(result.get("answer", "")))
                 except Exception:
                     pass
             if session_id:

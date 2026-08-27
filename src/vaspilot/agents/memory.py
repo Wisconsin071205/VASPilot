@@ -104,6 +104,23 @@ class ConversationStore:
             payload["title"] = snippet
         return self.save(payload)
 
+    def patch_last_assistant(self, session_id: str, content: str) -> dict[str, Any]:
+        """Upsert the in-flight assistant turn so a page refresh mid-stream
+        loses nothing: the growing answer is flushed periodically and the
+        final call replaces it with the complete text."""
+        payload = self.load(session_id)
+        if payload is None:
+            raise ValidationError(f"session {session_id!r} not found")
+        messages: list[dict[str, Any]] = payload["messages"]
+        if messages and messages[-1].get("role") == "assistant":
+            messages[-1]["content"] = str(content)
+        else:
+            messages.append({"role": "assistant", "content": str(content),
+                             "at": _now()})
+            if len(messages) > MAX_MESSAGES:
+                payload["messages"] = messages[-MAX_MESSAGES:]
+        return self.save(payload)
+
     def set_project(self, session_id: str, project: str) -> dict[str, Any]:
         payload = self.load(session_id)
         if payload is None:
