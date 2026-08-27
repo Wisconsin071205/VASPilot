@@ -651,7 +651,7 @@ class UiHandler(BaseHTTPRequestHandler):
                "mem_pct": (document.get("mem") or {}).get("used_pct"),
                "load_one": (document.get("load") or {}).get("one"),
                "gpu_pct": max([g.get("util_pct") or 0
-                               for g in document.get("gpus") or [0]] or [0])}
+                               for g in document.get("gpus") or ()] or [0])}
         try:
             with open(history_path, "a", encoding="utf-8", newline="\n") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")

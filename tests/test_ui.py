@@ -650,6 +650,27 @@ class TestServerMetricsApi:
         assert len(second["history"]) >= 2  # trend rows accumulate
         assert (ui["app"].config.metrics_dir / "cl9.jsonl").is_file()
 
+    def test_metrics_without_gpu(self, ui):
+        """GPU-less nodes (like cl9) must render fine, not crash the card."""
+        client = ui["app"].client()
+
+        def no_gpu(server=None):
+            return {"ok": True, "server": "cl9",
+                    "collected_at": "2026-01-01T00:00:00+00:00",
+                    "cpu": {"usage_pct": 1.5, "cores": 8},
+                    "mem": {"used_pct": 20.0}, "load": {"one": 0.1},
+                    "disks": [], "gpus": [], "gpu_status": "missing",
+                    "gpu_procs": [], "queue": {}}
+
+        client.metrics = no_gpu  # instance attribute shadows the method
+        try:
+            result = call(ui, "server.metrics", {"server": "cl9"})
+        finally:
+            del client.metrics
+        assert result["ok"] is True
+        assert result["history"][-1]["gpu_pct"] == 0
+        assert result["cpu"]["usage_pct"] == 1.5
+
 
 class TestWebsearchSettingsApi:
     def test_save_and_toggle(self, ui, monkeypatch):
