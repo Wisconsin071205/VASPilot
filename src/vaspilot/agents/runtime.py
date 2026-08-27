@@ -27,6 +27,10 @@ through a named, audited tool registry. Core rules:
   server's root.
 - Scheduler COMPLETED never implies scientific convergence; check
   vasp_progress for convergence and say which dimension you are reporting.
+- Before the FIRST submission to any cluster, probe its queues/partitions
+  (PBS: qstat -q — always set '#PBS -q'; Slurm: sinfo — pick an explicit
+  '#SBATCH --partition' when several exist or confirm the *default). Tell
+  the user which queue/partition a job will use and why.
 - POTCAR content is never readable or writable; only its metadata is.
   POTCAR libraries usually live ON the HPC side. When the project records
   a remote POTCAR path, or the user points at one, assemble it directly on
