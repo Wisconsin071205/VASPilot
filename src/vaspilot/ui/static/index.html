@@ -833,10 +833,13 @@ async function refreshServers() {
     box.appendChild(div);
   }
   connFlips();
-  // providers
+  // providers —— 优先保持用户手动选的模型（本地记忆），否则跟随默认服务；
+  // 否则任何一次重绘都会把下拉框顶回「设为默认」的那个
   const sel = document.getElementById("provsel");
+  const wantProv = sel.value || localStorage.getItem("vp_provider") || "";
+  const haveWant = st.providers.some(p => p.id === wantProv);
   sel.innerHTML = st.providers.map(p =>
-    `<option value="${esc(p.id)}" ${p.is_default ? "selected" : ""}>${esc(p.name)} · ${esc(p.model)}</option>`).join("")
+    `<option value="${esc(p.id)}" ${(haveWant ? p.id === wantProv : p.is_default) ? "selected" : ""}>${esc(p.name)} · ${esc(p.model)}</option>`).join("")
     || "<option>未注册服务</option>";
   renderProviderMode();
   // server pickers
@@ -856,7 +859,10 @@ function renderProviderMode() {
   el.textContent = p.mode ? "模式：" + (p.mode === "full" ? "完全（可写）" : "仅分析（只读）") : "未探测（首次对话时自动探测）";
   el.className = "mode " + (p.mode === "full" ? "full" : p.mode ? "degraded" : "");
 }
-document.getElementById("provsel").onchange = renderProviderMode;
+document.getElementById("provsel").onchange = () => {
+  localStorage.setItem("vp_provider", document.getElementById("provsel").value);
+  renderProviderMode();
+};
 async function probeProvider() {
   toast("正在探测（会发起真实模型调用）…");
   const r = await api("provider.probe", {id: currentProvider()});
@@ -1367,7 +1373,11 @@ async function saveProviders() {
     if (!r.ok) return;
     if (body.id && ids.has(body.id)) { toast("服务商 ID 重复，已跳过", "err"); break; }
     ids.add(r.saved);
-    if (r.default) madeDefault = r.saved;
+    if (r.default) {
+      madeDefault = r.saved;
+      // 默认服务变了，本地记忆随之对齐，避免重绘时又弹回旧选择
+      localStorage.setItem("vp_provider", r.saved);
+    }
     note(card, r.auth_ready ? "已保存 ✓ 密钥就绪" : "已保存 ✓ 但密钥未配置——对话前请在 API Key 栏填入并重新保存",
          r.auth_ready ? "ok" : "warn");
     card.dataset.id = r.saved;
