@@ -67,8 +67,11 @@ class TestMcpProtocol:
                 "job_state", "open_remote_login", "open_approval_terminal",
                 "vaspilot_self_check", "fleet_snapshot",
                 "render_fleet_dashboard"} <= names
-        for name in names:
-            assert not any(word in name for word in ("shell", "exec", "bash"))
+        # operator policy (since 1.1): audit-only shell tools are exposed,
+        # alongside the project/skill/web/metrics surfaces
+        assert {"shell_run", "remote_run", "server_metrics",
+                "project_create", "project_write", "skill_write",
+                "web_search", "web_fetch"} <= names
 
     def test_tools_call_read(self, mcp_session):
         server, app, registry = mcp_session

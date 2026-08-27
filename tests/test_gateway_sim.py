@@ -266,5 +266,37 @@ class TestCatalogAndSessions:
 
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
-        assert result["protocol"] == "1"
-        assert result["gateway_version"] == "1.0.0"
+        assert result["protocol"] == "2"
+        assert result["gateway_version"] == "1.1.0"
+
+    def test_exec_passthrough(self, gateway_env):
+        result = gateway_env["run"]("exec", "--server", "cl9",
+                                    "--timeout", "10", "--",
+                                    "echo gateway-exec-ok")
+        assert result["ok"] is True
+        assert result["rc"] == 0
+        assert "gateway-exec-ok" in result["stdout"]
+
+    def test_exec_failure_reported(self, gateway_env):
+        result = gateway_env["run"]("exec", "--server", "cl9", "--",
+                                    "sh", "-c", "exit 3")
+        assert result["ok"] is True          # the op ran; the command failed
+        assert result["rc"] == 3
+
+    def test_exec_empty_command_rejected(self, gateway_env):
+        result = gateway_env["run"]("exec", "--server", "cl9", "--timeout", "5")
+        assert result is None or not result.get("ok")
+
+    def test_metrics_sections(self, gateway_env):
+        result = gateway_env["run"]("metrics", "--server", "cl9")
+        assert result["ok"] is True
+        sections = result["sections"]
+        assert "cpu  " in sections["cpu1"]
+        assert "MemTotal" in sections["mem"]
+        assert sections["gpu"].startswith("0, NVIDIA A100")
+        assert sections["sched"].startswith("slurm")
+
+    def test_metrics_offline_rejected(self, gateway_env):
+        gateway_env["run"]("disconnect", "--server", "cl9", check=True)
+        result = gateway_env["run"]("metrics", "--server", "cl9")
+        assert result is None or not result.get("ok")

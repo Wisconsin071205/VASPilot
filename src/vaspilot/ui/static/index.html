@@ -91,6 +91,53 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 .toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
 
+/* ---------- sidebar projects & sessions ---------- */
+#projects{max-height:42vh;overflow-y:auto;padding:0 8px 8px;border-bottom:1px solid var(--line)}
+.proj{padding:6px 8px;border-radius:8px;margin-bottom:2px}
+.proj:hover{background:var(--bg3)}
+.proj .p-row{display:flex;align-items:center;gap:6px;cursor:pointer}
+.proj .p-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.proj .p-row small{color:var(--fg2);font-size:10px;margin-left:4px}
+.proj .p-row button{background:none;border:none;color:var(--fg2);cursor:pointer;font-size:12px;padding:0 2px;border-radius:4px}
+.proj .p-row button:hover{color:var(--acc)}
+.sess{display:flex;align-items:center;gap:6px;padding:4px 8px 4px 20px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--fg2)}
+.sess:hover{background:var(--bg3)}
+.sess.on{background:var(--bg3);color:var(--fg)}
+.sess .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess .wait{background:#12351f;color:var(--ok);border-radius:9px;font-size:10px;padding:0 7px;flex-shrink:0}
+textarea{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--mono);width:100%}
+textarea:focus{outline:none;border-color:var(--acc)}
+.modal textarea{min-height:110px}
+.modalwrap{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:none;
+  align-items:center;justify-content:center}
+.modalwrap.on{display:flex}
+.modalwrap .modal{width:min(640px,92vw);background:var(--bg2);border:1px solid var(--line);
+  border-radius:12px;padding:22px 26px;max-height:88vh;overflow-y:auto}
+.modalwrap .modal h2{font-size:18px;margin-bottom:14px}
+.modalwrap label{display:block;font-size:12px;color:var(--fg2);margin:10px 0 4px}
+.modalwrap input,.modalwrap select{width:100%}
+
+/* ---------- chat session bar & confirm cards ---------- */
+#sessbar{display:flex;gap:8px;align-items:center;padding:8px 22px;border-bottom:1px solid var(--line);background:var(--bg2)}
+#sessbar select{flex:1;min-width:0}
+#sessbar button{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
+#sessbar button:hover{border-color:var(--acc)}
+.confirmcard{background:#16202c;border:1px solid var(--warn);border-radius:10px;margin:10px auto;max-width:860px;padding:12px 14px}
+.confirmcard h4{font-size:13px;color:var(--warn);margin-bottom:8px}
+.confirmcard .cmeta{font-size:12px;color:var(--fg2);margin-bottom:6px}
+.confirmcard pre{max-height:200px;font-size:11px}
+.confirmcard .cbtns{display:flex;gap:10px;margin-top:8px}
+
+/* ---------- server resource cards ---------- */
+.resgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-bottom:16px}
+.rescard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.rescard h3{margin:0 0 8px;font-size:13px}
+.bar{height:7px;border-radius:4px;background:var(--bg3);overflow:hidden;margin:3px 0 7px}
+.bar i{display:block;height:100%;border-radius:4px}
+.resline{display:flex;justify-content:space-between;font-size:11px;color:var(--fg2)}
+.trend{display:flex;gap:2px;align-items:flex-end;height:22px;margin-top:6px}
+.trend i{flex:1;min-width:2px;max-width:8px;border-radius:2px;background:var(--acc);opacity:.75}
+
 /* ---------- overview ---------- */
 .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px}
 .kpi{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
@@ -157,12 +204,15 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 
 <aside id="side">
   <div id="brand"><h1><span class="logo"></span>VASPilot <span class="v" id="ver"></span></h1></div>
+  <div class="side-h">项目
+    <button title="新建项目" onclick="openProjectModal()">＋ 新建</button></div>
+  <div id="projects"><div class="empty" style="padding:10px">暂无项目</div></div>
   <div class="side-h">服务器
     <span>
       <button title="添加服务器" onclick="openServerModal(null)">＋</button>
       <button onclick="refreshServers()">刷新</button>
     </span></div>
-  <div id="servers"><div class="empty">加载中…</div></div>
+  <div id="servers" style="flex:1"><div class="empty">加载中…</div></div>
   <div id="prov">
     <div class="side-h" style="padding:0 0 4px">模型服务</div>
     <select id="provsel"></select>
@@ -183,24 +233,36 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 
   <!-- ============ 对话 ============ -->
   <section class="view noscroll on" id="v-chat">
+    <div id="sessbar">
+      <select id="sesssel" title="会话（记忆按会话保存）"></select>
+      <button onclick="newSession()">＋ 新会话</button>
+      <button onclick="clearSession()">清空记忆</button>
+      <button onclick="loadSessions()" title="刷新会话列表">⟳</button>
+    </div>
     <div id="chatlog">
       <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">VASPilot</div>
-        <div class="bubble">你好。我可以查询服务器、浏览远端目录、跟踪 VASP 计算的科学收敛，并帮你预览工作流计划。
- destructive 操作需要你在本地确认审批，我不会接触你的密码或密钥。
-试试：「查看 cl9 的作业」「/public/home/wuhong/runs 下有哪些计算目录」。</div></div></div>
+        <div class="bubble">你好。我可以管理本地项目（写 INCAR/KPOINTS/POSCAR）、上传到服务器、跟踪 VASP 计算的科学收敛，也能执行本地/远端命令（全程审计）。
+提交作业默认需要你在聊天里点「批准」确认。试试：「新建项目 Fe-relax 并帮我写好参数」「查看 cl9 的作业」「cl9 服务器现在负载怎么样」。</div></div></div>
     </div>
     <div id="chatbar">
       <div id="chatbox">
         <textarea id="chatinput" placeholder="向 VASPilot 提问（Enter 发送，Shift+Enter 换行）"></textarea>
         <button class="btn" id="sendbtn" onclick="sendChat()">发送</button>
       </div>
-      <div id="chathint">受命名工具约束 · 无任意 shell · 调度器完成 ≠ 科学收敛</div>
+      <div id="chathint">对话有记忆（按会话保存） · 提交作业默认需确认 · 调度器完成 ≠ 科学收敛 · 全部操作留审计</div>
     </div>
   </section>
 
   <!-- ============ 总览 ============ -->
   <section class="view" id="v-overview">
     <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2 style="margin:0">服务器资源（CPU · 内存 · 磁盘 · GPU · 队列）</h2>
+        <button class="btn ghost" onclick="loadAllMetrics()">刷新资源</button>
+      </div>
+      <div class="resgrid" id="resgrid" style="margin-top:10px"></div>
+    </div>
     <div class="card">
       <div class="row" style="justify-content:space-between">
         <h2 style="margin:0">集群快照</h2>
@@ -221,6 +283,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
         <div class="fg"><label>服务器</label><select id="fsrv"></select></div>
         <div class="fg" style="flex:1"><label>远端路径（须在服务器根内）</label>
           <input id="fpath" style="width:420px" placeholder="/public/home/…"></div>
+        <button class="btn ghost" id="fup" onclick="goUp()" disabled title="已在服务器根目录">上一级</button>
         <button class="btn" onclick="browse()">浏览</button>
       </div>
     </div>
@@ -260,9 +323,17 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
   <!-- ============ 工作流 ============ -->
   <section class="view" id="v-flow">
     <div class="card">
-      <h2>1 · 准备计划（本地输入目录 → 远端运行）</h2>
+      <h2>1 · 准备计划（本地项目/输入目录 → 远端运行）</h2>
       <div class="row">
-        <div class="fg"><label>本地输入目录</label><input id="wfrom" style="width:230px" placeholder="C:\...\case-01"></div>
+        <div class="fg"><label>本地项目</label>
+          <div class="row" style="gap:6px">
+            <select id="wproj" style="min-width:150px" onchange="pickProject()"></select>
+            <button class="btn ghost" onclick="openProjectModal()" style="padding:5px 10px">＋新建</button>
+            <button class="btn ghost" onclick="openEditFileModal()" style="padding:5px 10px">编辑文件</button>
+            <button class="btn ghost" onclick="validateProject()" style="padding:5px 10px">校验</button>
+          </div>
+        </div>
+        <div class="fg"><label>或本地输入目录</label><input id="wfrom" style="width:230px" placeholder="C:\...\case-01"></div>
         <div class="fg"><label>服务器</label><select id="wsrv"></select></div>
         <div class="fg"><label>远端目录</label><input id="wremote" style="width:260px" placeholder="/public/home/…/runs/case-01"></div>
       </div>
@@ -271,8 +342,12 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
         <div class="fg"><label>分区</label><input id="wpart" placeholder="可空"></div>
         <div class="fg"><label>核数</label><input id="wntasks" type="number" value="8" style="width:80px"></div>
         <div class="fg"><label>时限</label><input id="wwall" value="24:00:00" style="width:110px"></div>
+        <label style="font-size:12px;color:var(--fg2);align-self:center">
+          <input type="checkbox" id="wskip" style="width:auto"> 跳过 POTCAR（项目缺 POTCAR 时必选）
+        </label>
         <button class="btn" onclick="preparePlan()">生成预览</button>
       </div>
+      <div id="wprojinfo" style="font-size:12px;color:var(--fg2);margin-top:6px"></div>
     </div>
     <div class="card" id="plancard" style="display:none">
       <h2>2 · 计划预览 <span class="mono" id="planid" style="color:var(--acc)"></span></h2>
@@ -308,6 +383,9 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
     <aside id="cfgnav">
       <div class="cfgitem on" data-c="providers">模型服务</div>
       <div class="cfgitem" data-c="conn">连接设置</div>
+      <div class="cfgitem" data-c="agent">智能体</div>
+      <div class="cfgitem" data-c="web">联网搜索</div>
+      <div class="cfgitem" data-c="skills">技能</div>
       <div class="cfgitem" data-c="about">关于</div>
     </aside>
     <div id="cfgbody">
@@ -351,6 +429,58 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
         </div></div>
       </div>
 
+      <!-- ---- 智能体 ---- -->
+      <div class="cfghan" id="c-agent" style="display:none">
+        <h2>智能体执行策略</h2>
+        <p class="desc">控制智能体（大模型）提交作业前是否需要人工确认。本地与远端 shell 命令始终开放且仅全量审计（命令、退出码、输出全部留痕）。</p>
+        <div class="card"><div class="row" style="justify-content:space-between">
+          <div>
+            <b>提交作业确认</b>
+            <div style="font-size:12px;color:var(--fg2)" id="agentmodedesc"></div>
+          </div>
+          <div class="row" style="gap:8px">
+            <button class="btn ghost" id="mode-confirm" onclick="setSubmitMode('confirm')">默认：聊天卡片确认</button>
+            <button class="btn ghost" id="mode-auto" onclick="setSubmitMode('auto')">全自动（仅审计）</button>
+          </div>
+        </div></div>
+      </div>
+
+      <!-- ---- 联网搜索 ---- -->
+      <div class="cfghan" id="c-web" style="display:none">
+        <h2>联网搜索</h2>
+        <p class="desc">允许智能体搜索文献值、数据库参考与报错解法。API Key 用 Windows 凭据加密保存（界面不回显）。关闭后 web_search 工具不可用。</p>
+        <div class="card">
+          <div class="row">
+            <div class="fg"><label>搜索服务商</label>
+              <select id="webprovider">
+                <option value="zhipu">智谱 web-search-pro</option>
+                <option value="bocha">博查 Bocha</option>
+              </select></div>
+            <div class="fg" style="flex:1"><label>API Key（留空保持不变）</label>
+              <input id="webkey" type="password" placeholder="sk-…" autocomplete="off"></div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <label style="font-size:13px">
+              <input type="checkbox" id="webenabled" style="width:auto"> 启用联网搜索
+            </label>
+            <span id="webbadge"></span>
+            <button class="btn" onclick="saveWebsearch()">保存</button>
+            <button class="btn ghost" onclick="removeWebKey()">删除已存 Key</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ---- 技能 ---- -->
+      <div class="cfghan" id="c-skills" style="display:none">
+        <h2>技能（智能体的可进化知识）</h2>
+        <p class="desc">技能是一段可复用的操作指南，会注入到智能体的系统提示中。智能体可用 skill_write 自建技能（自进化）；删除与重写由你在本页管理。</p>
+        <div id="skilllist"></div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn ghost" onclick="editSkill(null)">＋ 新建技能</button>
+          <button class="btn ghost" onclick="loadSkills()">⟳ 刷新</button>
+        </div>
+      </div>
+
       <!-- ---- 关于 ---- -->
       <div class="cfghan" id="c-about" style="display:none">
         <h2>关于 VASPilot</h2>
@@ -359,10 +489,11 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
             <span class="logo"></span><b>VASPilot <span class="mono" id="aboutver"></span></b>
           </div>
           <table><tbody>
-            <tr><th>安全边界</th><td>无任意 shell · 命名工具注册表 · 远端路径受服务器根限制</td></tr>
+            <tr><th>工具面</th><td>命名工具注册表 + 本地/远端 shell（仅全量审计，无拦截）</td></tr>
             <tr><th>调度器状态 ≠ 科学收敛</th><td>两者的判定与展示始终分离</td></tr>
-            <tr><th>密钥存储</th><td>Windows 凭据加密（DPAPI）或环境变量，绝不明文落盘</td></tr>
-            <tr><th>审计日志</th><td class="mono">~/.vaspilot/audit/（追加式、自动脱敏）</td></tr>
+            <tr><th>提交作业</th><td>默认聊天卡片人工确认；可在「智能体」页切换全自动</td></tr>
+            <tr><th>POTCAR / 密钥</th><td>正文与密钥绝不明文落盘；POTCAR 只以元数据示人</td></tr>
+            <tr><th>审计日志</th><td class="mono">~/.vaspilot/audit/（追加式、自动脱敏；shell 命令全量留痕）</td></tr>
             <tr><th>命令行</th><td class="mono">vaspilot --help</td></tr>
           </tbody></table>
         </div>
@@ -393,6 +524,64 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
     <div class="mbtns">
       <button class="btn ghost" onclick="document.getElementById('modalback').classList.remove('on')">取消</button>
       <button class="btn" onclick="saveServerModal()">保存修改</button>
+    </div>
+  </div>
+</div>
+
+<div id="projmodalback" class="modalwrap" onclick="if(event.target===this)this.classList.remove('on')">
+  <div class="modal" style="width:min(680px,94vw)">
+    <h2 id="pmtitle">新建本地项目</h2>
+    <div class="mrow">
+      <div><label>项目名称</label><input id="pmname" placeholder="如 Fe-relax"></div>
+      <div><label>模板</label><select id="pmtemplate"></select></div>
+    </div>
+    <label>INCAR</label><textarea id="pmincar"></textarea>
+    <label>KPOINTS</label><textarea id="pmkpoints" style="min-height:80px"></textarea>
+    <label>POSCAR（粘贴你的结构）</label><textarea id="pmposcar"></textarea>
+    <div class="mrow">
+      <div><label>本地 POTCAR 路径（可选；仅逐字节复制，内容不读取）</label>
+        <input id="pmpotcar" placeholder="C:\potcar-lib\POTCAR.Fe"></div>
+      <div><label>同时创建会话（在项目下开始对话）</label>
+        <select id="pmsession"><option value="yes">是</option><option value="no">否</option></select></div>
+    </div>
+    <div class="mbtns">
+      <button class="btn ghost" onclick="document.getElementById('projmodalback').classList.remove('on')">取消</button>
+      <button class="btn" onclick="saveProjectModal()">创建项目</button>
+    </div>
+  </div>
+</div>
+
+<div id="editmodalback" class="modalwrap" onclick="if(event.target===this)this.classList.remove('on')">
+  <div class="modal" style="width:min(680px,94vw)">
+    <h2 id="emtitle">编辑项目文件</h2>
+    <div class="mrow">
+      <div><label>项目</label><select id="emproj"></select></div>
+      <div><label>文件</label>
+        <select id="emfile" onchange="loadEditFile()">
+          <option>INCAR</option><option>KPOINTS</option><option>POSCAR</option>
+          <option>run.job.sh</option><option>POTCAR</option>
+        </select></div>
+    </div>
+    <textarea id="embody" style="min-height:260px"></textarea>
+    <div id="emmeta" style="font-size:12px;color:var(--fg2);margin-top:8px"></div>
+    <div class="mbtns">
+      <button class="btn ghost" onclick="document.getElementById('editmodalback').classList.remove('on')">关闭</button>
+      <button class="btn" id="emsave" onclick="saveEditFile()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="skillmodalback" class="modalwrap" onclick="if(event.target===this)this.classList.remove('on')">
+  <div class="modal" style="width:min(640px,94vw)">
+    <h2 id="sktitle">新建技能</h2>
+    <div class="mrow">
+      <div><label>技能名（小写字母数字连字符）</label><input id="skname" placeholder="neb-setup"></div>
+      <div><label>描述（显示在技能索引里）</label><input id="skdesc" placeholder="CI-NEB 建模与监控流程"></div>
+    </div>
+    <label>正文（Markdown，≤16KB）</label><textarea id="skbody" style="min-height:220px"></textarea>
+    <div class="mbtns">
+      <button class="btn ghost" onclick="document.getElementById('skillmodalback').classList.remove('on')">取消</button>
+      <button class="btn" onclick="saveSkillModal()">保存技能</button>
     </div>
   </div>
 </div>
@@ -429,8 +618,9 @@ const badge = (t, cls) => `<span class="badge b-${cls}">${esc(t)}</span>`;
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t.dataset.v));
-  if (t.dataset.v === "overview") loadSnapshot();
+  if (t.dataset.v === "overview") { loadSnapshot(); loadAllMetrics(); }
   if (t.dataset.v === "cfg") loadSettings();
+  if (t.dataset.v === "flow") refreshProjects();
 });
 document.getElementById("ver").textContent = "v" + (location.search.includes("debug") ? "?" : "");
 document.getElementById("chatinput").addEventListener("keydown", e => {
@@ -526,16 +716,41 @@ setInterval(() => {
 }, 60000);
 
 /* ===================== 文件 ===================== */
+function remoteRootOf(server) {
+  const s = (STATE.servers || []).find(x => x.name === server);
+  return (s && s.remote_root) || "";
+}
+function parentDir(path) {
+  // parent from the server-normalized absolute path; never emits ".."
+  const trimmed = String(path || "").replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  if (idx < 1) return "";
+  return trimmed.slice(0, idx) || "";
+}
 async function browse() {
   const server = document.getElementById("fsrv").value;
   const path = document.getElementById("fpath").value.trim();
   const r = await api("remote.list", {server, path});
   if (!r.ok) return;
-  document.querySelector("#filetable tbody").innerHTML = (r.entries || []).map(e => `
+  document.getElementById("fpath").value = r.path;
+  const root = remoteRootOf(server);
+  const parent = parentDir(r.path);
+  const upAllowed = !!parent && (!root || parent.length >= root.length);
+  document.getElementById("fup").disabled = !upAllowed;
+  document.getElementById("fup").title = upAllowed
+    ? `返回 ${parent}` : "已在服务器根目录";
+  let rows = "";
+  if (upAllowed) {
+    rows += `<tr><td class="mono" style="cursor:pointer;color:var(--acc)"
+      onclick="document.getElementById('fpath').value='${esc(parent)}';browse()">..（上一级）</td>
+      <td>目录</td><td class="mono">—</td><td class="mono">—</td></tr>`;
+  }
+  rows += (r.entries || []).map(e => `
     <tr><td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
       ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
-    <td class="mono">${e.size}</td><td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("")
+    <td class="mono">${e.size}</td><td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
+  document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
 }
 async function readFile(server, path) {
@@ -544,6 +759,16 @@ async function readFile(server, path) {
   document.getElementById("reader").style.display = "";
   document.getElementById("readerpath").textContent = path + `  (${r.size} B)`;
   document.getElementById("readerbody").textContent = r.content || "(空文件)";
+}
+function goUp() {
+  const server = document.getElementById("fsrv").value;
+  const parent = parentDir(document.getElementById("fpath").value);
+  if (!parent) return;
+  const root = remoteRootOf(server);
+  if (root && parent.length < root.length)
+    return toast("已在服务器根目录边界内", "err");
+  document.getElementById("fpath").value = parent;
+  browse();
 }
 
 /* ===================== 作业 ===================== */
@@ -591,6 +816,7 @@ async function preparePlan() {
     partition: document.getElementById("wpart").value.trim(),
     ntasks: parseInt(document.getElementById("wntasks").value || "8"),
     walltime: document.getElementById("wwall").value.trim() || "24:00:00",
+    skip_potcar: document.getElementById("wskip").checked,
   };
   const r = await api("workflow.prepare", {spec});
   if (!r.ok) return;
@@ -678,6 +904,7 @@ const statusLabel = s => ({"running":"执行中","completed":"完成（科学收
 const statusClass = s => ({"running":"info","completed":"ok","needs_review":"warn","failed":"err"}[s] || "info");
 
 /* ===================== 对话（SSE 流式） ===================== */
+let CURRENT_SESSION = "";
 async function sendChat() {
   const input = document.getElementById("chatinput");
   const text = input.value.trim();
@@ -694,7 +921,8 @@ async function sendChat() {
     const res = await fetch("/api/agent/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json", "X-Vaspilot-Token": TOKEN},
-      body: JSON.stringify({provider: currentProvider(), message: text}),
+      body: JSON.stringify({provider: currentProvider(), message: text,
+                             session_id: CURRENT_SESSION}),
     });
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -719,12 +947,13 @@ async function sendChat() {
     document.getElementById("sendbtn").disabled = false;
     input.focus();
   }
-  await refreshServers();
+  await Promise.all([refreshServers(), loadSessions(), refreshProjects()]);
 }
 function handleChatEvent(ev, bubble, log, setAcc) {
   if (ev.type === "meta") {
     const mode = ev.mode === "full" ? "完全" : "仅分析";
     bubble.dataset.meta = `${ev.provider} · ${mode}`;
+    if (ev.session_id) CURRENT_SESSION = ev.session_id;
   } else if (ev.type === "delta") {
     const cur = bubble.dataset.acc || "";
     const next = cur + ev.text;
@@ -741,6 +970,8 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     const r = ev.result || {};
     bubble.innerHTML = esc(r.answer || acc || "（完成）");
     if (!r.ok && r.error) toast(r.error, "err");
+  } else if (ev.type === "pending") {
+    for (const entry of ev.pending || []) addConfirmCard(log, entry);
   } else if (ev.type === "error") {
     bubble.innerHTML = `<span style="color:var(--err)">${esc((ev.error || {}).message || "错误")}</span>`;
   }
@@ -750,18 +981,63 @@ function addToolCard(log, ev) {
   const card = document.createElement("div");
   card.className = "toolcard";
   const ok = ev.ok !== false;
+  const outcome = ev.outcome || {};
+  const pending = outcome.status === "pending_confirmation";
   card.innerHTML = `
     <div class="tc-h" onclick="this.parentElement.classList.toggle('open')">
       <span class="st ${ok ? "ok" : "fail"}"></span>
       <span class="nm">${esc(ev.tool)}</span>
-      <span style="color:var(--fg2);flex:1"></span>
+      <span style="color:var(--fg2);flex:1">${pending ? badge("等待确认", "warn") : ""}</span>
       <span style="color:var(--fg2)">${ok ? "成功" : "失败"} · 点击展开</span>
     </div>
     <div class="tc-b"><div style="color:var(--fg2);margin-bottom:4px">参数</div>
       <pre>${esc(JSON.stringify(ev.arguments ?? {}, null, 2))}</pre>
       <div style="color:var(--fg2);margin:6px 0 4px">结果</div>
-      <pre>${esc(JSON.stringify(ev.outcome ?? {}, null, 2).slice(0, 4000))}</pre></div>`;
+      <pre>${esc(JSON.stringify(outcome, null, 2).slice(0, 4000))}</pre></div>`;
   log.appendChild(card);
+}
+function addConfirmCard(log, entry) {
+  if (document.getElementById("cf-" + entry.id)) return;
+  const card = document.createElement("div");
+  card.className = "confirmcard";
+  card.id = "cf-" + entry.id;
+  card.innerHTML = `
+    <h4>🚀 作业提交确认（智能体发起）</h4>
+    <div class="cmeta">服务器 <b class="mono">${esc(entry.server)}</b> ·
+      目录 <span class="mono">${esc(entry.directory)}</span> ·
+      脚本 <span class="mono">${esc(entry.script)}</span><br>
+      ${entry.expires_at ? `有效期至 ${esc(entry.expires_at)}` : ""}</div>
+    <pre>${esc(entry.script_content || "（脚本内容不可用——提交前服务端会再次校验）")}</pre>
+    <div class="cbtns">
+      <button class="btn" onclick="confirmSubmit('${esc(entry.id)}', true)">批准提交</button>
+      <button class="btn danger" onclick="confirmSubmit('${esc(entry.id)}', false)">拒绝</button>
+      <span style="font-size:11px;color:var(--fg2);align-self:center">批准后按卡片参数执行，脚本若被改动将自动中止</span>
+    </div>`;
+  log.appendChild(card);
+  log.scrollTop = log.scrollHeight;
+}
+async function confirmSubmit(id, approve) {
+  const r = await api("submit.confirm", {id, approve});
+  if (!r.ok) return;
+  const card = document.getElementById("cf-" + id);
+  if (card) {
+    card.style.borderColor = r.settled === "approved" ? "var(--ok)" : "var(--err)";
+    const btns = card.querySelector(".cbtns");
+    if (btns) btns.innerHTML = `<span style="font-size:12px">${
+      r.settled === "approved" ? "✅ 已批准并提交（结果已写入会话记忆，智能体下一轮可见）"
+                               : "已拒绝（已通知会话记忆）"}</span>`;
+  }
+  toast(r.settled === "approved" ? "已提交作业" : "已拒绝提交",
+        r.settled === "approved" ? "ok" : "");
+  await loadSessions();
+}
+async function pollPendingCards() {
+  if (!CURRENT_SESSION) return;
+  const r = await api("submit.pending", {session_id: CURRENT_SESSION});
+  if (r.ok && r.pending) {
+    const log = document.getElementById("chatlog");
+    for (const entry of r.pending) addConfirmCard(log, entry);
+  }
 }
 function addMsg(role, text) {
   const log = document.getElementById("chatlog");
@@ -780,9 +1056,10 @@ function addMsg(role, text) {
 let CFG = {providers: [], vlab: {}};
 document.querySelectorAll(".cfgitem").forEach(t => t.onclick = () => {
   document.querySelectorAll(".cfgitem").forEach(x => x.classList.toggle("on", x === t));
-  for (const id of ["providers", "conn", "about"])
+  for (const id of ["providers", "conn", "agent", "web", "skills", "about"])
     document.getElementById("c-" + id).style.display =
       t.dataset.c === id ? "" : "none";
+  if (t.dataset.c === "skills") loadSkills();
 });
 async function loadSettings() {
   const r = await api("settings");
@@ -799,6 +1076,9 @@ async function loadSettings() {
   document.getElementById("identbadge").innerHTML =
     v.identity_file_exists ? badge("密钥文件存在", "ok")
                            : badge("密钥文件缺失", "err");
+  // agent / web tabs
+  renderAgentMode(r.agent_submit_mode || "confirm");
+  renderWebsearch(r.websearch);
 }
 function renderProviderCards() {
   const box = document.getElementById("provcards");
@@ -970,8 +1250,407 @@ async function saveServerModal() {
   await Promise.all([refreshServers(), loadSettings()]);
 }
 
+/* ===================== 会话（记忆） ===================== */
+async function loadSessions(pickLatest = false) {
+  const r = await api("chat.sessions");
+  if (!r.ok) return;
+  const sessions = r.sessions || [];
+  lastSessions = sessions;
+  const sel = document.getElementById("sesssel");
+  sel.innerHTML = sessions.map(s =>
+    `<option value="${esc(s.session_id)}">${esc((s.project ? "[" + s.project + "] " : "")
+      + (s.title || s.session_id))}${s.pending ? "  ⏳待确认" : ""}</option>`).join("")
+    || "<option value=''>（无会话）</option>";
+  if (pickLatest && sessions.length) CURRENT_SESSION = sessions[0].session_id;
+  if (sessions.length && !sessions.some(s => s.session_id === CURRENT_SESSION))
+    CURRENT_SESSION = sessions[0].session_id;
+  sel.value = CURRENT_SESSION || "";
+  renderProjectSidebar(sessions);
+}
+document.getElementById("sesssel").onchange = () => openSession(document.getElementById("sesssel").value);
+async function openSession(id) {
+  if (!id) return;
+  CURRENT_SESSION = id;
+  const r = await api("chat.load", {session_id: id});
+  if (!r.ok) return;
+  const log = document.getElementById("chatlog");
+  log.innerHTML = "";
+  for (const m of r.messages || []) addMsg(m.role === "user" ? "user" : "bot", m.content);
+  if (!(r.messages || []).length) addMsg("bot", "（新会话，还没有对话）");
+  pollPendingCards();
+}
+async function newSession(project = "") {
+  const r = await api("chat.new", {project});
+  if (!r.ok) return;
+  CURRENT_SESSION = r.session_id;
+  await loadSessions();
+  document.getElementById("chatlog").innerHTML = "";
+  addMsg("bot", project ? `新会话（项目：${project}）。有什么要计算的？`
+                         : "新会话已创建（记忆从现在开始）。有什么要计算的？");
+  document.getElementById("chatinput").focus();
+}
+async function clearSession() {
+  if (!CURRENT_SESSION) return toast("当前没有会话", "err");
+  if (!confirm("清空该会话的记忆？聊天记录将删除且不可恢复。")) return;
+  await api("chat.clear", {session_id: CURRENT_SESSION});
+  CURRENT_SESSION = "";
+  document.getElementById("chatlog").innerHTML = "";
+  addMsg("bot", "记忆已清空。");
+  await loadSessions(true);
+}
+
+/* ===================== 项目（侧边栏 + 工作流） ===================== */
+let PROJECTS = [];
+function renderProjectSidebar(sessions) {
+  const box = document.getElementById("projects");
+  if (!PROJECTS.length) {
+    box.innerHTML = `<div class="empty" style="padding:10px">暂无项目<br>
+      <span style="font-size:11px">点上方「＋ 新建」创建</span></div>`;
+    return;
+  }
+  box.innerHTML = "";
+  for (const p of PROJECTS) {
+    const div = document.createElement("div");
+    div.className = "proj";
+    const mine = (sessions || []).filter(s => s.project === p.name);
+    div.innerHTML = `
+      <div class="p-row" onclick="toggleProjSess(this)" title="${esc(p.path)}">
+        <span>📁</span>
+        <span class="nm">${esc(p.name)}${p.pinned ? " 📌" : ""}
+          <small>${p.complete ? "齐全" : "缺 " + esc((p.missing || []).join("/"))}</small></span>
+        <button title="${p.pinned ? "取消置顶" : "置顶"}" data-act="pin">${p.pinned ? "★" : "☆"}</button>
+        <button title="新建会话" data-act="new">＋</button>
+        <button title="删除项目（目录进回收站）" data-act="del">🗑</button>
+      </div>
+      <div class="psess" style="display:none"></div>`;
+    div.querySelector('[data-act="pin"]').onclick = async e => {
+      e.stopPropagation();
+      await api("project.pin", {name: p.name, pinned: !p.pinned});
+      await refreshProjects();
+    };
+    div.querySelector('[data-act="new"]').onclick = e => {
+      e.stopPropagation(); newSession(p.name);
+    };
+    div.querySelector('[data-act="del"]').onclick = async e => {
+      e.stopPropagation();
+      if (!confirm(`删除项目「${p.name}」？目录会移入回收站（projects/.trash/），可手动找回。`)) return;
+      const r = await api("project.delete", {name: p.name});
+      if (r.ok) { toast("已删除（目录在 .trash 内）", "ok"); await refreshProjects(); }
+    };
+    const sessBox = div.querySelector(".psess");
+    for (const s of mine) {
+      const row = document.createElement("div");
+      row.className = "sess" + (s.session_id === CURRENT_SESSION ? " on" : "");
+      row.innerHTML = `<span class="nm">${esc(s.title || s.session_id)}</span>
+        ${s.pending ? `<span class="wait">等待确认 ${s.pending}</span>` : ""}`;
+      row.onclick = () => { openSession(s.session_id);
+        document.querySelector('.tab[data-v="chat"]').click(); };
+      sessBox.appendChild(row);
+    }
+    if (!mine.length) sessBox.innerHTML =
+      `<div class="sess" style="cursor:default;color:var(--fg2)" onclick="event.stopPropagation()">（无会话，点 ＋ 新建）</div>`;
+    box.appendChild(div);
+  }
+}
+function toggleProjSess(row) {
+  const box = row.parentElement.querySelector(".psess");
+  box.style.display = box.style.display === "none" ? "" : "none";
+}
+let lastSessions = [];
+async function refreshProjects() {
+  const r = await api("project.list");
+  if (!r.ok) return;
+  PROJECTS = r.projects || [];
+  renderProjectSidebar(lastSessions);
+  // workflow project picker
+  const sel = document.getElementById("wproj");
+  const prev = sel.value;
+  sel.innerHTML = `<option value="">（选择项目…）</option>` + PROJECTS.map(p =>
+    `<option value="${esc(p.name)}">${esc(p.name)}${p.complete ? "" : "（缺文件）"}</option>`).join("");
+  if (prev && PROJECTS.some(p => p.name === prev)) sel.value = prev;
+  // edit-file modal picker
+  const em = document.getElementById("emproj");
+  const eprev = em.value;
+  em.innerHTML = PROJECTS.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+  if (eprev && PROJECTS.some(p => p.name === eprev)) em.value = eprev;
+}
+function pickProject() {
+  const name = document.getElementById("wproj").value;
+  const p = PROJECTS.find(x => x.name === name);
+  const info = document.getElementById("wprojinfo");
+  if (!p) { info.textContent = ""; return; }
+  document.getElementById("wfrom").value = p.path;
+  info.innerHTML = `项目目录已填入：<span class="mono">${esc(p.path)}</span> ·
+    ${p.complete ? badge("输入齐全", "ok") : badge("缺 " + esc((p.missing || []).join(" ")), "warn")}
+    ${p.files && p.files.POTCAR ? "" : " · 建议勾选「跳过 POTCAR」或先补充 POTCAR"}`;
+  if (!document.getElementById("wremote").value.trim()) {
+    const root = remoteRootOf(document.getElementById("wsrv").value);
+    if (root) document.getElementById("wremote").value = `${root}/runs/${name}`;
+  }
+}
+async function validateProject() {
+  const name = document.getElementById("wproj").value;
+  if (!name) return toast("请先选择项目", "err");
+  const r = await api("project.validate", {name});
+  if (!r.ok) return;
+  const info = document.getElementById("wprojinfo");
+  info.innerHTML = `${r.ok && !(r.errors || []).length ? badge("校验通过", "ok") : badge("有错误", "err")}
+    ${(r.errors || []).map(e => badge(e, "err")).join(" ")}
+    ${(r.warnings || []).map(w => badge(w, "warn")).join(" ") || ""}`;
+  if (!(r.errors || []).length && !(r.warnings || []).length)
+    toast("项目输入校验通过", "ok");
+}
+
+/* ===================== 新建项目模态 ===================== */
+async function openProjectModal() {
+  const back = document.getElementById("projmodalback");
+  const tsel = document.getElementById("pmtemplate");
+  const r = await api("project.templates");
+  if (r.ok) {
+    tsel.innerHTML = (r.templates || []).map(t =>
+      `<option value="${esc(t.name)}">${esc(t.name)} — ${esc(t.description)}</option>`).join("");
+    tsel.onchange = () => fillTemplate();
+    fillTemplate();
+  }
+  document.getElementById("pmname").value = "";
+  document.getElementById("pmpotcar").value = "";
+  back.classList.add("on");
+  setTimeout(() => document.getElementById("pmname").focus(), 60);
+}
+let TEMPLATES_CACHE = [];
+async function fillTemplate() {
+  if (!TEMPLATES_CACHE.length) {
+    const r = await api("project.templates");
+    TEMPLATES_CACHE = r.ok ? (r.templates || []) : [];
+  }
+  const key = document.getElementById("pmtemplate").value;
+  const t = TEMPLATES_CACHE.find(x => x.name === key) || {files: {}};
+  document.getElementById("pmincar").value = t.files.INCAR || "";
+  document.getElementById("pmkpoints").value = t.files.KPOINTS || "";
+  document.getElementById("pmposcar").value = t.files.POSCAR || "";
+}
+async function saveProjectModal() {
+  const name = document.getElementById("pmname").value.trim();
+  if (!name) return toast("项目名称必填", "err");
+  const r = await api("project.create", {
+    name,
+    files: {
+      INCAR: document.getElementById("pmincar").value,
+      KPOINTS: document.getElementById("pmkpoints").value,
+      POSCAR: document.getElementById("pmposcar").value,
+    },
+    potcar_path: document.getElementById("pmpotcar").value.trim() || null,
+  });
+  if (!r.ok) return;
+  toast(`项目 ${name} 已创建：${r.path}`, "ok");
+  document.getElementById("projmodalback").classList.remove("on");
+  await refreshProjects();
+  document.getElementById("wproj").value = name;
+  pickProject();
+  if (document.getElementById("pmsession").value === "yes") await newSession(name);
+}
+
+/* ===================== 编辑项目文件模态 ===================== */
+function openEditFileModal() {
+  if (!PROJECTS.length) return toast("请先创建或刷新项目", "err");
+  document.getElementById("editmodalback").classList.add("on");
+  loadEditFile();
+}
+async function loadEditFile() {
+  const name = document.getElementById("emproj").value;
+  const file = document.getElementById("emfile").value;
+  if (!name) return;
+  const r = await api("project.read", {name, file});
+  const body = document.getElementById("embody");
+  const meta = document.getElementById("emmeta");
+  const save = document.getElementById("emsave");
+  if (!r.ok) { body.value = ""; meta.textContent = ""; return; }
+  if (file === "POTCAR") {
+    body.value = "";
+    save.disabled = true;
+    meta.innerHTML = `POTCAR 只显示元数据：${esc(r.titel || "?")} · ENMAX ${r.enmax_ev ?? "?"} eV ·
+      ${r.size} B · sha256 <span class="mono">${esc((r.sha256 || "").slice(0, 16))}…</span>`;
+    return;
+  }
+  save.disabled = false;
+  body.value = r.content || "";
+  meta.textContent = `${r.size} B`;
+}
+async function saveEditFile() {
+  const name = document.getElementById("emproj").value;
+  const file = document.getElementById("emfile").value;
+  if (!name || file === "POTCAR") return;
+  const r = await api("project.write", {name, file, content: document.getElementById("embody").value});
+  if (r.ok) {
+    toast(`${file} 已保存（${r.size} B）`, "ok");
+    await refreshProjects();
+  }
+}
+
+/* ===================== 服务器资源（总览） ===================== */
+function resBar(label, pct, detail) {
+  const p = Math.max(0, Math.min(100, pct ?? 0));
+  const color = p >= 90 ? "var(--err)" : p >= 70 ? "var(--warn)" : "var(--acc)";
+  return `<div class="resline"><span>${label}</span><span>${detail}</span></div>
+    <div class="bar"><i style="width:${p}%;background:${color}"></i></div>`;
+}
+function trendStrip(history, key) {
+  const vals = (history || []).map(h => h[key]).filter(v => v !== null && v !== undefined);
+  if (vals.length < 2) return "";
+  return `<div class="trend" title="最近趋势（${key}）">` + vals.slice(-40).map(v =>
+    `<i style="height:${Math.max(6, Math.min(100, v))}%;opacity:${0.35 + 0.65 * Math.min(1, v / 100)}"></i>`).join("") + "</div>";
+}
+async function loadAllMetrics() {
+  const grid = document.getElementById("resgrid");
+  const connected = STATE.servers.filter(s => s.connected);
+  if (!connected.length) {
+    grid.innerHTML = `<div class="empty">没有已连接的服务器——连接后才能读取资源</div>`;
+    return;
+  }
+  grid.innerHTML = `<div class="empty">读取中…</div>`;
+  const parts = [];
+  for (const s of connected) {
+    const r = await api("server.metrics", {server: s.name});
+    if (!r.ok) {
+      parts.push(`<div class="rescard"><h3>${esc(s.name)}</h3>
+        <div style="font-size:12px;color:var(--err)">${esc((r.error || {}).message || "读取失败")}</div></div>`);
+      continue;
+    }
+    const cpu = r.cpu || {}, mem = r.mem || {}, load = r.load || {};
+    const gpus = r.gpus || [];
+    const queue = r.queue || {};
+    let inner = "";
+    if (cpu.usage_pct !== null && cpu.usage_pct !== undefined)
+      inner += resBar("CPU", cpu.usage_pct, `${cpu.usage_pct}%${cpu.cores ? ` · ${cpu.cores} 核` : ""}`);
+    if (load.one !== undefined)
+      inner += `<div class="resline"><span>负载 1/5/15min</span><span class="mono">${load.one} / ${load.five} / ${load.fifteen}</span></div>`;
+    if (mem.total_gb)
+      inner += resBar("内存", mem.used_pct, `${(mem.total_gb - mem.available_gb).toFixed(1)} / ${mem.total_gb} GB`);
+    for (const d of (r.disks || []).slice(0, 3))
+      inner += resBar("磁盘 " + d.mount, d.used_pct, `${d.used_gb} / ${d.total_gb} GB`);
+    if (r.gpu_status === "available" && gpus.length) {
+      for (const g of gpus.slice(0, 4))
+        inner += resBar(`GPU${g.index} ${g.name}`, g.util_pct,
+          `${g.util_pct}% · ${g.mem_used_gb}/${g.mem_total_gb}GB · ${g.temp_c}°C · ${g.power_w}W`);
+    } else if (r.gpu_status === "missing") {
+      inner += `<div class="resline"><span>GPU</span><span>（该节点无 nvidia-smi）</span></div>`;
+    }
+    const q = (queue.partitions || []).slice(0, 4).map(p =>
+      p.partition !== undefined
+        ? `${p.partition}: ${p.cpus_idle ?? "?"}/${p.cpus_total ?? "?"} CPU 空闲`
+        : `${p.queue ?? "?"} 运行 ${p.run ?? "?"}`).join(" · ");
+    if (q) inner += `<div class="resline"><span>队列（${queue.kind || "?"}）</span><span>${esc(q)}</span></div>`;
+    inner += trendStrip(r.history, "cpu_pct");
+    parts.push(`<div class="rescard"><h3>${esc(s.name)}</h3>${inner}</div>`);
+  }
+  grid.innerHTML = parts.join("");
+}
+setInterval(() => {
+  if (document.getElementById("autoref").checked &&
+      document.getElementById("v-overview").classList.contains("on")) {
+    loadSnapshot(); loadAllMetrics();
+  }
+}, 60000);
+
+/* ===================== 设置：智能体/联网/技能 ===================== */
+async function setSubmitMode(mode) {
+  const r = await api("agent.submit_mode", {mode});
+  if (r.ok) { toast(mode === "confirm" ? "已切换：提交需聊天确认" : "已切换：全自动提交（仅审计）", "ok");
+    renderAgentMode(r.agent_submit_mode); }
+}
+function renderAgentMode(mode) {
+  const confirm = mode !== "auto";
+  document.getElementById("mode-confirm").style.outline = confirm ? "2px solid var(--acc)" : "none";
+  document.getElementById("mode-auto").style.outline = confirm ? "none" : "2px solid var(--acc)";
+  document.getElementById("agentmodedesc").textContent = confirm
+    ? "当前：提交作业前弹出聊天确认卡片，你点「批准」才执行（推荐）"
+    : "当前：智能体直接提交作业，不弹确认（仅审计留痕）";
+}
+async function saveWebsearch() {
+  const body = {
+    provider: document.getElementById("webprovider").value,
+    enabled: document.getElementById("webenabled").checked,
+    api_key: document.getElementById("webkey").value,
+  };
+  const r = await api("websearch.save", body);
+  if (r.ok) {
+    document.getElementById("webkey").value = "";
+    renderWebsearch(r.websearch);
+    toast("联网搜索设置已保存", "ok");
+  }
+}
+async function removeWebKey() {
+  if (!confirm("删除已保存的搜索 API Key？")) return;
+  const r = await api("websearch.save", {remove_key: true,
+    provider: document.getElementById("webprovider").value,
+    enabled: document.getElementById("webenabled").checked});
+  if (r.ok) { renderWebsearch(r.websearch); toast("已删除 Key", "ok"); }
+}
+function renderWebsearch(w) {
+  if (!w) return;
+  document.getElementById("webprovider").value = w.provider || "zhipu";
+  document.getElementById("webenabled").checked = !!w.enabled;
+  document.getElementById("webbadge").innerHTML =
+    (w.key_saved ? badge("Key 已保存（加密）", "ok") : badge("未存 Key", "warn")) + " " +
+    (w.enabled ? badge("已启用", "ok") : badge("未启用", "info"));
+}
+async function loadSkills() {
+  const r = await api("skill.list");
+  if (!r.ok) return;
+  const box = document.getElementById("skilllist");
+  box.innerHTML = (r.skills || []).map(s => `
+    <div class="pcard"><div class="pc-h">
+      <b>${esc(s.name)}</b>
+      <span style="font-size:12px;color:var(--fg2)">${esc(s.description)}</span>
+      <span class="x" title="编辑" data-edit="${esc(s.name)}" style="cursor:pointer">✎</span>
+      <span class="x" title="删除" data-del="${esc(s.name)}" style="cursor:pointer">×</span>
+    </div></div>`).join("") || `<div class="empty">还没有技能——智能体可用 skill_write 自建，或点下方新建</div>`;
+  box.querySelectorAll("[data-edit]").forEach(el => el.onclick = () => editSkill(el.dataset.edit));
+  box.querySelectorAll("[data-del]").forEach(el => el.onclick = async () => {
+    if (!confirm(`删除技能「${el.dataset.del}」？`)) return;
+    const rr = await api("skill.delete", {name: el.dataset.del});
+    if (rr.ok) { toast("已删除", "ok"); await loadSkills(); }
+  });
+}
+async function editSkill(name) {
+  if (name) {
+    const r = await api("skill.read", {name});
+    if (!r.ok) return;
+    document.getElementById("sktitle").textContent = "编辑技能：" + name;
+    document.getElementById("skname").value = name;
+    document.getElementById("skname").disabled = true;
+    document.getElementById("skdesc").value = r.description || "";
+    document.getElementById("skbody").value = r.content || "";
+  } else {
+    document.getElementById("sktitle").textContent = "新建技能";
+    document.getElementById("skname").value = "";
+    document.getElementById("skname").disabled = false;
+    document.getElementById("skdesc").value = "";
+    document.getElementById("skbody").value = "";
+  }
+  document.getElementById("skillmodalback").classList.add("on");
+}
+async function saveSkillModal() {
+  const name = document.getElementById("skname").value.trim();
+  const desc = document.getElementById("skdesc").value.trim();
+  const body = document.getElementById("skbody").value;
+  if (!name || !desc) return toast("技能名与描述必填", "err");
+  const r = await api("skill.save", {name, description: desc, body});
+  if (r.ok) {
+    toast("技能已保存（新会话生效）", "ok");
+    document.getElementById("skillmodalback").classList.remove("on");
+    await loadSkills();
+  }
+}
+
 /* ===================== 启动 ===================== */
-refreshServers().then(loadSnapshot).then(loadSettings);
+refreshServers().then(() => Promise.all([
+  loadSnapshot(), loadSettings(), loadSessions(true), refreshProjects(),
+])).then(() => {
+  // 恢复最近会话的历史气泡
+  if (CURRENT_SESSION) openSession(CURRENT_SESSION);
+});
+setInterval(pollPendingCards, 30000);
 </script>
 </body>
 </html>

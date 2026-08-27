@@ -269,6 +269,35 @@ class UiHandler(BaseHTTPRequestHandler):
                     host=str(body.get("host") or "").strip() or None,
                     user=str(body.get("user") or "").strip() or None)
                 self._send_json({"saved": {k: v for k, v in saved.items()}})
+            elif action == "agent.submit_mode":
+                mode = app.config.set_agent_submit_mode(
+                    str(body.get("mode") or "confirm"))
+                self._send_json({"agent_submit_mode": mode})
+            elif action == "websearch.save":
+                api_key = str(body.get("api_key") or "")
+                if api_key.strip():
+                    app.config.set_provider_key("websearch", api_key)
+                if body.get("remove_key"):
+                    app.config.remove_provider_key("websearch")
+                saved = app.config.set_websearch(
+                    provider=str(body.get("provider") or "zhipu"),
+                    enabled=bool(body.get("enabled")))
+                self._send_json({"websearch": saved})
+            elif action == "server.metrics":
+                self._server_metrics(str(body.get("server") or ""))
+            elif action.startswith("project."):
+                self._project_action(action, body)
+            elif action.startswith("chat."):
+                self._chat_action(action, body)
+            elif action.startswith("skill."):
+                self._skill_action(action, body)
+            elif action == "submit.pending":
+                from ..workflow.pending import PendingSubmitStore
+                store = PendingSubmitStore(app.config.pending_submits_path)
+                self._send_json({"pending": store.pending(
+                    str(body.get("session_id") or ""))})
+            elif action == "submit.confirm":
+                self._confirm_submit(body)
             else:
                 self._send_json({"ok": False, "error": {
                     "code": "unknown_action", "message": action}}, status=404)
@@ -284,7 +313,12 @@ class UiHandler(BaseHTTPRequestHandler):
         app = self.state.app
         servers = []
         for entry in app.config.load_servers():
+            try:
+                connected = bool(app.client().status(entry.name).get("connected"))
+            except Exception:
+                connected = False
             servers.append({**entry.to_dict(),
+                            "connected": connected,
                             "is_default": entry.name == app.config.default_server()})
         cached = app.config.load_settings().get("provider_probes") or {}
         providers = []
@@ -297,7 +331,9 @@ class UiHandler(BaseHTTPRequestHandler):
                               "key_saved": app.config.provider_key_saved(p.id)})
         return {"ok": True, "version": __version__, "servers": servers,
                 "providers": providers,
-                "default_provider": app.config.default_provider()}
+                "default_provider": app.config.default_provider(),
+                "agent_submit_mode": app.config.agent_submit_mode(),
+                "websearch": app.config.websearch()}
 
     def _add_server(self, body: dict) -> None:
         from ..core.errors import ValidationError
@@ -390,7 +426,9 @@ class UiHandler(BaseHTTPRequestHandler):
         return {"ok": True,
                 "providers": providers,
                 "default_provider": app.config.default_provider(),
-                "vlab": {**vlab, "identity_file_exists": identity_ok}}
+                "vlab": {**vlab, "identity_file_exists": identity_ok},
+                "agent_submit_mode": app.config.agent_submit_mode(),
+                "websearch": app.config.websearch()}
 
     def _save_provider(self, body: dict) -> None:
         from ..core.config import ProviderEntry
@@ -437,6 +475,205 @@ class UiHandler(BaseHTTPRequestHandler):
                          "default": app.config.default_provider() == pid,
                          "key_saved": app.config.provider_key_saved(pid),
                          "auth_ready": auth_ready})
+
+    # ---------------------------------------------------- projects / chat / skills
+    def _project_action(self, action: str, body: dict) -> None:
+        from ..workflow.projects import TEMPLATES, ProjectStore
+        app = self.state.app
+        store = ProjectStore(projects_dir=app.config.projects_dir,
+                             index_path=app.config.projects_index_path,
+                             audit=app.audit)
+        name = str(body.get("name") or "").strip()
+        if action == "project.templates":
+            self._send_json({"templates": [
+                {"name": key, "description": value["description"],
+                 "files": {k: v for k, v in value.items()
+                           if k != "description"}}
+                for key, value in TEMPLATES.items()]})
+        elif action == "project.create":
+            files = body.get("files") or {}
+            self._send_json(store.create(
+                name, {str(k): str(v) for k, v in files.items()
+                       if isinstance(v, str)},
+                potcar_path=str(body.get("potcar_path") or "").strip()
+                or None))
+        elif action == "project.list":
+            self._send_json({"projects": store.list()})
+        elif action == "project.read":
+            self._send_json(store.read_file(
+                name, str(body.get("file") or "")))
+        elif action == "project.write":
+            self._send_json(store.write_file(
+                name, str(body.get("file") or ""),
+                str(body.get("content") or "")))
+        elif action == "project.potcar":
+            self._send_json(store.copy_potcar(
+                name, str(body.get("potcar_path") or "")))
+        elif action == "project.validate":
+            self._send_json(store.validate(name))
+        elif action == "project.pin":
+            self._send_json(store.pin(name, bool(body.get("pinned", True))))
+        elif action == "project.delete":
+            self._send_json(store.delete(name))
+        else:
+            self._send_json({"ok": False, "error": {
+                "code": "unknown_action", "message": action}}, status=404)
+
+    def _chat_action(self, action: str, body: dict) -> None:
+        from ..agents.memory import ConversationStore
+        from ..workflow.pending import PendingSubmitStore
+        app = self.state.app
+        memory = ConversationStore(app.config.chat_dir)
+        pending = PendingSubmitStore(app.config.pending_submits_path)
+        session_id = str(body.get("session_id") or "").strip()
+        if action == "chat.sessions":
+            sessions = memory.list_sessions()
+            pending_rows = pending.pending()
+            for row in sessions:
+                row["pending"] = sum(
+                    1 for e in pending_rows
+                    if e.get("session_id") == row["session_id"])
+            self._send_json({"sessions": sessions,
+                             "pending": pending_rows})
+        elif action == "chat.new":
+            self._send_json(memory.create_session(
+                project=str(body.get("project") or ""),
+                title=str(body.get("title") or "")))
+        elif action == "chat.load":
+            payload = memory.load(session_id)
+            if payload is None:
+                from ..core.errors import ValidationError
+                raise ValidationError(f"session {session_id!r} not found")
+            self._send_json(payload)
+        elif action == "chat.rename":
+            self._send_json(memory.rename(
+                session_id, str(body.get("title") or "")))
+        elif action == "chat.setproject":
+            self._send_json(memory.set_project(
+                session_id, str(body.get("project") or "")))
+        elif action == "chat.clear":
+            self._send_json(memory.clear(session_id))
+        else:
+            self._send_json({"ok": False, "error": {
+                "code": "unknown_action", "message": action}}, status=404)
+
+    def _skill_action(self, action: str, body: dict) -> None:
+        from ..agents.skills import SkillStore
+        app = self.state.app
+        store = SkillStore(app.config.skills_dir, audit=app.audit)
+        name = str(body.get("name") or "").strip()
+        if action == "skill.list":
+            self._send_json({"skills": store.list()})
+        elif action == "skill.read":
+            self._send_json(store.read(name))
+        elif action == "skill.save":
+            self._send_json(store.write(
+                name, str(body.get("description") or ""),
+                str(body.get("body") or "")))
+        elif action == "skill.delete":
+            self._send_json(store.delete(name))
+        else:
+            self._send_json({"ok": False, "error": {
+                "code": "unknown_action", "message": action}}, status=404)
+
+    # ---------------------------------------------------- submit confirmation
+    def _confirm_submit(self, body: dict) -> None:
+        from ..core.errors import ValidationError
+        from ..core.hashing import text_sha256
+        from ..agents.memory import ConversationStore
+        from ..workflow.pending import PendingSubmitStore
+        app = self.state.app
+        client = app.client()
+        store = PendingSubmitStore(app.config.pending_submits_path)
+        entry_id = str(body.get("id") or "").strip()
+        entry = store.get(entry_id)  # raises on unknown/expired
+        approve = bool(body.get("approve"))
+        if not approve:
+            settled = store.settle(entry_id, "rejected")
+            self._note_session(app, entry, "[提交确认已拒绝] "
+                               f"{entry['server']}:{entry['directory']}")
+            self._send_json({"ok": True, "settled": "rejected",
+                             "entry": self._pending_view(settled)})
+            return
+        # approved: submit exactly the frozen parameters; abort if the remote
+        # script changed since the card was created
+        if entry.get("script_sha256"):
+            remote = f"{entry['directory'].rstrip('/')}/{entry['script']}"
+            document = client.read(remote, server=entry["server"])
+            if text_sha256(str(document.get("content", ""))) != \
+                    entry["script_sha256"]:
+                raise ValidationError(
+                    "远端作业脚本在确认卡片生成之后被修改，已中止提交；"
+                    "请让智能体重新发起 job_submit")
+        result = client.submit(str(entry["directory"]), str(entry["script"]),
+                               server=entry["server"] or None)
+        settled = store.settle(entry_id, "approved", result)
+        self._note_session(app, entry, "[提交确认已批准并执行] "
+                           f"{entry['server']}:{entry['directory']}/"
+                           f"{entry['script']} -> "
+                           f"{json.dumps(result, ensure_ascii=False)[:300]}")
+        self._send_json({"ok": True, "settled": "approved",
+                         "result": result,
+                         "entry": self._pending_view(settled)})
+
+    @staticmethod
+    def _pending_view(entry: dict) -> dict:
+        # the card view never needs the full script content again
+        return {k: v for k, v in entry.items() if k != "script_content"}
+
+    @staticmethod
+    def _note_session(app, entry: dict, note: str) -> None:
+        session_id = str(entry.get("session_id") or "")
+        if not session_id:
+            return
+        try:
+            from ..agents.memory import ConversationStore
+            memory = ConversationStore(app.config.chat_dir)
+            memory.append(session_id, "user", note)
+        except Exception:
+            pass  # the note is best-effort context, never a hard failure
+
+    # ---------------------------------------------------- server metrics
+    def _server_metrics(self, server: str) -> None:
+        import time as _time
+        from ..core.validation import valid_server_name
+        app = self.state.app
+        client = app.client()
+        name = valid_server_name(server or app.config.default_server())
+        document = client.metrics(name)
+        # rolling history for the trend strip (7 days, max 1000 rows)
+        history_dir = app.config.metrics_dir
+        history_dir.mkdir(parents=True, exist_ok=True)
+        history_path = history_dir / f"{name}.jsonl"
+        row = {"at": document.get("collected_at") or
+               _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+               "cpu_pct": (document.get("cpu") or {}).get("usage_pct"),
+               "mem_pct": (document.get("mem") or {}).get("used_pct"),
+               "load_one": (document.get("load") or {}).get("one"),
+               "gpu_pct": max([g.get("util_pct") or 0
+                               for g in document.get("gpus") or [0]] or [0])}
+        try:
+            with open(history_path, "a", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+        history = []
+        try:
+            lines = history_path.read_text(
+                encoding="utf-8", errors="replace").splitlines()
+            if len(lines) > 1000:
+                with open(history_path, "w", encoding="utf-8",
+                          newline="\n") as f:
+                    f.write("\n".join(lines[-1000:]) + "\n")
+                lines = lines[-1000:]
+            for line in lines[-60:]:
+                try:
+                    history.append(json.loads(line))
+                except ValueError:
+                    continue
+        except OSError:
+            pass
+        self._send_json({**document, "history": history})
 
     # ----------------------------------------------------- background runs
     def _start_run(self, plan_id: str, approval_ref: str,
@@ -488,6 +725,23 @@ class UiHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": {
                 "code": "empty_message", "message": "message is required"}})
             return
+        session_id = str(body.get("session_id") or "").strip()
+        history: list[dict[str, Any]] = []
+        project_dir: Path | None = None
+        project_name = ""
+        memory = None
+        if session_id:
+            from ..agents.memory import ConversationStore
+            memory = ConversationStore(app.config.chat_dir)
+            session = memory.load(session_id)
+            if session is not None:
+                history = session.get("messages") or []
+                project_name = str(session.get("project") or "")
+                if project_name:
+                    candidate = (app.config.projects_dir /
+                                 project_name).resolve()
+                    if candidate.is_dir():
+                        project_dir = candidate
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -501,18 +755,59 @@ class UiHandler(BaseHTTPRequestHandler):
 
         try:
             from ..agents.runtime import AgentRuntime
+            from ..agents.skills import SkillStore
             from ..cli.agent import _resolve_mode
             entry, provider, mode = _resolve_mode(app, body.get("provider"))
-            frame({"type": "meta", "provider": entry.id, "mode": mode})
+            frame({"type": "meta", "provider": entry.id, "mode": mode,
+                   "session_id": session_id, "project": project_name})
+            system_extra_parts = []
+            skills_index = SkillStore(
+                app.config.skills_dir, audit=app.audit).index_prompt()
+            if skills_index:
+                system_extra_parts.append(skills_index)
+            if project_name:
+                system_extra_parts.append(
+                    f"Active local project: {project_name} "
+                    f"(directory {project_dir}). project_read/project_write "
+                    f"with an empty project name target it implicitly; "
+                    f"upload_file paths resolve inside it.")
+            submit_mode = app.config.agent_submit_mode()
+            system_extra_parts.append(
+                f"agent_submit_mode={submit_mode}: " + (
+                    "job_submit pauses for human confirmation — tell the user "
+                    "to click the approval card, then verify next turn."
+                    if submit_mode == "confirm" else
+                    "job_submit submits directly (audit-only)."))
             runtime = AgentRuntime(
                 provider=provider,
-                registry=app.registry(project_root=body.get("project_root")),
+                registry=app.build_registry(
+                    project_root=project_dir or body.get("project_root"),
+                    session_id=session_id),
                 mode=mode, audit=app.audit,
+                system_extra="\n\n".join(system_extra_parts),
                 stream_cb=lambda fragment: frame({"type": "delta",
                                                   "text": fragment}),
                 event_cb=lambda kind, payload: frame({"type": kind, **payload}))
-            result = runtime.run(message)
+            result = runtime.run(message, history=history)
             frame({"type": "final", "result": result})
+            if memory is not None and session_id and result.get("ok"):
+                try:
+                    memory.append(session_id, "user", message)
+                    memory.append(session_id, "assistant",
+                                  str(result.get("answer", "")))
+                except Exception:
+                    pass
+            if session_id:
+                try:
+                    from ..workflow.pending import PendingSubmitStore
+                    pending = PendingSubmitStore(
+                        app.config.pending_submits_path).pending(session_id)
+                    if pending:
+                        frame({"type": "pending",
+                               "pending": [self._pending_view(e)
+                                           for e in pending]})
+                except Exception:
+                    pass
         except VaspilotError as exc:
             frame({"type": "error", "error": exc.to_dict()})
         except Exception as exc:

@@ -88,20 +88,36 @@ def build_plan(*, from_dir: str | Path, server: str, remote_dir: str,
             "remote_path": f"{remote_dir.rstrip('/')}/{name}",
         })
 
-    script = render_job_script(
-        scheduler=scheduler, job_name=job_name,
-        partition=partition, ntasks=ntasks, walltime=walltime,
-        vasp_executable=vasp_executable)
+    custom_script_path = source / "run.job.sh"
+    if custom_script_path.is_file():
+        # a project-authored job script is adopted verbatim; its hash is
+        # frozen into the plan exactly like the rendered one
+        try:
+            script = custom_script_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ValidationError(
+                f"custom run.job.sh is not readable UTF-8 text: {exc}") from exc
+        if not script.strip():
+            raise ValidationError("custom run.job.sh is empty")
+        script_source = "custom"
+    else:
+        script = render_job_script(
+            scheduler=scheduler, job_name=job_name,
+            partition=partition, ntasks=ntasks, walltime=walltime,
+            vasp_executable=vasp_executable)
+        script_source = "rendered"
     script_entry = {
         "name": "run.job.sh",
         "content_sha256": text_sha256(script),
         "remote_path": f"{remote_dir.rstrip('/')}/run.job.sh",
+        "source": script_source,
     }
     files.append({
         "name": "run.job.sh",
         "sha256": script_entry["content_sha256"],
         "size": len(script.encode("utf-8")),
-        "local_path": None,
+        "local_path": str(custom_script_path) if script_source == "custom"
+                      else None,
         "remote_path": script_entry["remote_path"],
         "content": script,
     })
@@ -141,6 +157,10 @@ def build_plan(*, from_dir: str | Path, server: str, remote_dir: str,
             "run records both separately",
         ],
     }
+    if script_source == "custom":
+        risk["notes"].append(
+            "job script comes verbatim from the input directory "
+            "(project-authored run.job.sh)")
 
     body = {
         "schema": "vaspilot.plan/1",
@@ -150,6 +170,7 @@ def build_plan(*, from_dir: str | Path, server: str, remote_dir: str,
                   for entry in files],
         "job_script": {"name": "run.job.sh",
                        "content_sha256": script_entry["content_sha256"],
+                       "source": script_source,
                        "scheduler": scheduler,
                        "job_name": job_name, "partition": partition,
                        "ntasks": ntasks, "walltime": walltime,

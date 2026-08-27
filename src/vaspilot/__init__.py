@@ -5,8 +5,10 @@ Three-layer boundary:
   2. Vlab gateway layer     - non-sensitive server catalog, per-server SSH mux
   3. HPC adapter layer      - Slurm/PBS, file ops, VASP validation/parsing
 
-No layer ever exposes an arbitrary remote shell to a model.
+The agent operates through a named, audited tool registry; shell access
+(shell_run / remote_run) is an explicit operator policy — audit-only, never
+intercepted. Job submission pauses for human confirmation by default.
 """
 
-__version__ = "1.0.0"
-GATEWAY_PROTOCOL_VERSION = "1"
+__version__ = "1.1.0"
+GATEWAY_PROTOCOL_VERSION = "2"

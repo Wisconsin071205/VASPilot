@@ -66,20 +66,29 @@ class App:
 
     def registry(self, *, project_root=None, potcar_library=None) -> ToolRegistry:
         if self._registry is None:
-            import os
-            from pathlib import Path
-            context = ToolContext(
-                config=self.config,
-                client=self.client(),
-                project_root=Path(project_root).resolve()
-                if project_root else None,
-                potcar_library=Path(potcar_library).expanduser()
-                if potcar_library else
-                (Path(os.environ["VASPILOT_POTCAR_LIBRARY"]).expanduser()
-                 if os.environ.get("VASPILOT_POTCAR_LIBRARY") else None),
-                workflow_engine=self.engine())
-            self._registry = ToolRegistry(context)
+            self._registry = self.build_registry(
+                project_root=project_root, potcar_library=potcar_library)
         return self._registry
+
+    def build_registry(self, *, project_root=None, potcar_library=None,
+                       session_id: str = "") -> ToolRegistry:
+        """A fresh registry bound to one session (UI builds one per chat
+        request so the active project dir and session id stay accurate)."""
+        import os
+        from pathlib import Path
+        context = ToolContext(
+            config=self.config,
+            client=self.client(),
+            project_root=Path(project_root).resolve()
+            if project_root else None,
+            potcar_library=Path(potcar_library).expanduser()
+            if potcar_library else
+            (Path(os.environ["VASPILOT_POTCAR_LIBRARY"]).expanduser()
+             if os.environ.get("VASPILOT_POTCAR_LIBRARY") else None),
+            workflow_engine=self.engine(),
+            audit=self.audit,
+            session_id=session_id)
+        return ToolRegistry(context)
 
 
 def build_parser() -> argparse.ArgumentParser:

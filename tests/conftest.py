@@ -114,7 +114,7 @@ class FakeTransport:
 
     # -- operations --------------------------------------------------------------
     def op_version(self, args):
-        return {"ok": True, "gateway_version": "1.0.0", "protocol": "1"}
+        return {"ok": True, "gateway_version": "1.1.0", "protocol": "2"}
 
     def op_servers(self, args):
         servers = [{"name": name, "target": e["target"], "port": e["port"],
@@ -123,7 +123,7 @@ class FakeTransport:
                     "connected": self.state.connected.get(name, False)}
                    for name, e in self.state.servers.items()]
         return {"ok": True, "servers": servers, "default": self.state.default,
-                "gateway_version": "1.0.0", "protocol": "1"}
+                "gateway_version": "1.1.0", "protocol": "2"}
 
     def op_server_add(self, args):
         name = args[1]
@@ -416,6 +416,49 @@ class FakeTransport:
     def op_diagnostic(self, args):
         return {"ok": True, "server": self._server(args),
                 "diagnostic": args[-1], "output": "fake diagnostic"}
+
+    def op_exec(self, args):
+        server = self._server(args)
+        idx = args.index("--") if "--" in args else len(args)
+        command = " ".join(args[idx + 1:])
+        if not hasattr(self.state, "exec_log"):
+            self.state.exec_log = []
+        self.state.exec_log.append((server, command))
+        if command.startswith("echo "):
+            return {"ok": True, "server": server, "rc": 0,
+                    "stdout": command[5:] + "\n", "stderr": "",
+                    "truncated": False, "command": command}
+        if "boom" in command:
+            return {"ok": True, "server": server, "rc": 2, "stdout": "",
+                    "stderr": "boom failed\n", "truncated": False,
+                    "command": command}
+        return {"ok": True, "server": server, "rc": 0, "stdout": "",
+                "stderr": "", "truncated": False, "command": command}
+
+    def op_metrics(self, args):
+        server = self._server(args)
+        return {"ok": True, "server": server,
+                "collected_at": "2026-01-01T00:00:00+00:00",
+                "sections": {
+                    "cpu1": "cpu  100 20 30 1000 10 0 0 0",
+                    "cpu2": "cpu  200 40 60 1100 10 0 0 0",
+                    "load": "0.52 0.41 0.35 1/512 12345",
+                    "nproc": "32",
+                    "mem": "MemTotal:       16384000 kB\n"
+                           "MemAvailable:    8192000 kB\n"
+                           "SwapTotal:       2097152 kB\n"
+                           "SwapFree:        2097152 kB",
+                    "df": "Filesystem     1024-blocks      Used Available "
+                          "Capacity Mounted on\n"
+                          "tmpfs            8192000        0   8192000       "
+                          "0% /dev/shm\n"
+                          "/dev/sda1      500000000 200000000 300000000     "
+                          "40% /",
+                    "gpu": "0, NVIDIA A100, 5, 1200, 32510, 45, 70.5",
+                    "gpu_proc": "GPU-0, 12345, python, 1200 MiB",
+                    "sched": "slurm\ncpu|up|4|160/64/0/224",
+                    "done": "",
+                }}
 
 
 from pathlib import PurePosixPath  # noqa: E402  (used above)

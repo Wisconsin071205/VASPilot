@@ -172,6 +172,30 @@ class Config:
     def audit_dir(self) -> Path:
         return self.home / "audit"
 
+    @property
+    def projects_dir(self) -> Path:
+        return self.home / "projects"
+
+    @property
+    def projects_index_path(self) -> Path:
+        return self.home / "projects.json"
+
+    @property
+    def chat_dir(self) -> Path:
+        return self.home / "chat"
+
+    @property
+    def skills_dir(self) -> Path:
+        return self.home / "skills"
+
+    @property
+    def metrics_dir(self) -> Path:
+        return self.home / "metrics"
+
+    @property
+    def pending_submits_path(self) -> Path:
+        return self.home / "pending_submits.json"
+
     # -- settings ------------------------------------------------------------
     def load_settings(self) -> dict:
         return _load_json(self.settings_path, {})
@@ -207,6 +231,45 @@ class Config:
         if override:
             return override
         return self.vlab["identity_file"]
+
+    # -- agent execution policy -------------------------------------------------
+    def agent_submit_mode(self) -> str:
+        """'confirm' (default): model job submissions pause for a human click;
+        'auto': the agent submits directly, audit-only."""
+        value = self.load_settings().get("agent_submit_mode")
+        return value if value in ("confirm", "auto") else "confirm"
+
+    def set_agent_submit_mode(self, mode: str) -> str:
+        if mode not in ("confirm", "auto"):
+            raise ValidationError("agent_submit_mode must be 'confirm' or 'auto'")
+        self.update_settings(agent_submit_mode=mode)
+        return mode
+
+    # -- web search configuration -------------------------------------------------
+    WEBSEARCH_PROVIDERS = ("zhipu", "bocha")
+
+    def websearch(self) -> dict:
+        data = self.load_settings().get("websearch") or {}
+        provider = str(data.get("provider", "zhipu"))
+        return {
+            "provider": provider if provider in self.WEBSEARCH_PROVIDERS else "zhipu",
+            "enabled": bool(data.get("enabled", False)),
+            "key_saved": self.provider_key_saved("websearch"),
+        }
+
+    def set_websearch(self, *, provider: str, enabled: bool) -> dict:
+        if provider not in self.WEBSEARCH_PROVIDERS:
+            raise ValidationError(
+                f"websearch provider must be one of {self.WEBSEARCH_PROVIDERS}")
+        current = self.load_settings().get("websearch") or {}
+        current.update({"provider": provider, "enabled": bool(enabled)})
+        self.update_settings(websearch=current)
+        return self.websearch()
+
+    def websearch_key(self) -> str:
+        """Env var beats the DPAPI vault; never logged."""
+        override = os.environ.get("VASPILOT_WEBSEARCH_KEY", "").strip()
+        return override or self.get_provider_key("websearch")
 
     # -- servers (local mirror) ----------------------------------------------
     def load_servers(self) -> list[ServerEntry]:

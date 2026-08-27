@@ -17,20 +17,45 @@ from ..core.errors import ProviderError, ToolNotAllowedError
 from ..providers.base import ANALYSIS_ONLY, BaseProvider
 from ..tools.registry import ToolRegistry
 
-SYSTEM_PROMPT = """You are VASPilot's agent operating a restricted VASP/HPC
-environment through a named tool registry. Core rules:
+SYSTEM_PROMPT = """You are VASPilot's agent operating a VASP/HPC environment
+through a named, audited tool registry. Core rules:
 
-- You have NO shell. Every remote action is one named tool call with
-  constrained parameters; never try bash, sh, powershell or command strings.
-- All remote paths must be absolute and inside the target server's root.
+- Prefer the named tools (remote_*, project_*, job_*, vasp_*) over the raw
+  shell tools; shell_run / remote_run exist for everything the named tools
+  cannot do. Every command you run is fully audited.
+- All remote paths in named tools must be absolute and inside the target
+  server's root.
 - Scheduler COMPLETED never implies scientific convergence; check
   vasp_progress for convergence and say which dimension you are reporting.
-- POTCAR content is never readable; only its metadata is.
-- Destructive operations (trash/restore/purge, submit, cancel) are gated:
-  they either need a human-issued approval reference or explicit local
-  confirmation. Ask the user to run 'vaspilot workflow approve' themselves.
+- POTCAR content is never readable or writable; only its metadata is. Ask
+  the user for a local POTCAR path when a project needs one.
+- job_submit normally pauses for human confirmation: tell the user to click
+  the approval card in the web UI, then continue in the next turn. If an
+  approval_ref is required, the user runs 'vaspilot workflow approve'.
+- The full calculation loop is yours to drive: analyze the structure,
+  project_create + project_write the INCAR/KPOINTS/POSCAR (and a custom
+  run.job.sh when useful), project_validate, remote_mkdir + upload_file,
+  job_submit, poll job_state/vasp_progress, download_file the results and
+  interpret them. Multi-step chains (relax -> SCF -> DOS/NEB/charge/levels)
+  are done by repeating the loop per stage and carrying CHGCAR/CONTCAR
+  between stages.
+- Earlier turns of this conversation are provided to you automatically;
+  rely on that memory instead of asking the user to repeat themselves.
+- web_search/web_fetch may look up literature values or error fixes;
+  server_metrics shows load and idle resources before you pick a server.
 - When you finish, answer concisely with the facts you observed.
 """
+
+
+def filtered_history(history: list[dict[str, Any]] | None
+                     ) -> list[dict[str, Any]]:
+    """Keep only plain user/assistant text turns for re-injection."""
+    out: list[dict[str, Any]] = []
+    for row in history or []:
+        if isinstance(row, dict) and row.get("role") in ("user", "assistant"):
+            out.append({"role": row["role"],
+                        "content": str(row.get("content", ""))})
+    return out
 
 
 def _bounded(outcome: dict[str, Any], limit: int = 4000) -> dict[str, Any]:
@@ -52,8 +77,8 @@ class AgentRuntime:
                  mode: str, audit: AuditLog | None = None,
                  max_turns: int = 12,
                  stream_cb: Callable[[str], None] | None = None,
-                 event_cb: Callable[[str, dict[str, Any]], None] | None = None
-                 ) -> None:
+                 event_cb: Callable[[str, dict[str, Any]], None] | None = None,
+                 system_extra: str = "") -> None:
         self.provider = provider
         self.registry = registry
         self.mode = mode  # "full" | "analysis_only"
@@ -63,6 +88,9 @@ class AgentRuntime:
         # event_cb(kind, payload) lets hosts (local web UI) observe the loop:
         # kinds: "tool" (name, ok), "final" (result), "error" (message)
         self.event_cb = event_cb
+        # hosts append e.g. the skill index or the active project context
+        self.system_prompt = SYSTEM_PROMPT + (
+            "\n\n" + system_extra if system_extra else "")
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
         if self.event_cb is not None:
@@ -72,9 +100,11 @@ class AgentRuntime:
                 pass
 
     # ---------------------------------------------------------------- run
-    def run(self, goal: str) -> dict[str, Any]:
+    def run(self, goal: str,
+            history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
+            *filtered_history(history),
             {"role": "user", "content": goal},
         ]
         tools = [t.to_openai() for t in self.registry.list_tools()]
@@ -133,12 +163,10 @@ class AgentRuntime:
     def chat(self, user_text: str, history: list[dict[str, Any]] | None = None
              ) -> dict[str, Any]:
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT}]
-        for row in history or []:
-            if isinstance(row, dict) and row.get("role") in ("user", "assistant"):
-                messages.append({"role": row["role"],
-                                 "content": str(row.get("content", ""))})
-        messages.append({"role": "user", "content": user_text})
+            {"role": "system", "content": self.system_prompt},
+            *filtered_history(history),
+            {"role": "user", "content": user_text},
+        ]
         tools = [t.to_openai() for t in self.registry.list_tools()]
         reply = self.provider.chat(messages, tools, stream_cb=self.stream_cb)
         if reply.tool_calls:

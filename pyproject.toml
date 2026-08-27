@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vaspilot"
-version = "1.0.0"
+version = "1.1.0"
 description = "CLI-first, multi-model VASP/HPC agent with restricted, auditable remote operations"
 requires-python = ">=3.11"
 license = { text = "Proprietary (research prototype)" }

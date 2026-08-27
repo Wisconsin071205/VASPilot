@@ -1,16 +1,16 @@
 """The named tool registry — the single model-facing action surface.
 
 Every consumer (CLI ``agent chat/run``, the MCP server, the Codex plugin)
-dispatches through this registry. There is deliberately NO shell tool and no
-path-freeform tool: each entry validates its arguments through
-:mod:`vaspilot.core.validation` and calls one :class:`GatewayClient` method.
+dispatches through this registry. Most tools are named operations whose
+arguments are validated through :mod:`vaspilot.core.validation` and map to
+one :class:`GatewayClient` method; the shell tools (shell_run/remote_run)
+are deliberately audit-only with no interception, per the operator's
+explicit policy choice.
 
 Kinds:
   read      — safe for any provider, including degraded analysis_only ones
-  write     — mutates remote state (mkdir/copy/move/trash/restore/upload/
-              download/submit); requires a provider whose capability probe
-              passed everything, and destructive entries carry their own
-              double-confirm gate
+  write     — mutates local/remote state; requires a provider whose
+              capability probe passed everything
 """
 
 from __future__ import annotations
@@ -69,12 +69,41 @@ class ToolContext:
     def __init__(self, *, config: Config, client: GatewayClient,
                  project_root: Path | None = None,
                  potcar_library: Path | None = None,
-                 workflow_engine: Any = None) -> None:
+                 workflow_engine: Any = None,
+                 audit: Any = None,
+                 session_id: str = "") -> None:
         self.config = config
         self.client = client
         self.project_root = Path(project_root).resolve() if project_root else None
         self.potcar_library = Path(potcar_library).expanduser() if potcar_library else None
         self.workflow_engine = workflow_engine
+        self.audit = audit
+        self.session_id = str(session_id or "")
+
+    # -- lazily built stores (imported here to avoid cycles) -------------------
+    @property
+    def project_store(self) -> Any:
+        from ..workflow.projects import ProjectStore
+        return ProjectStore(projects_dir=self.config.projects_dir,
+                            index_path=self.config.projects_index_path,
+                            audit=self.audit)
+
+    @property
+    def skill_store(self) -> Any:
+        from ..agents.skills import SkillStore
+        return SkillStore(self.config.skills_dir, audit=self.audit)
+
+    @property
+    def pending_store(self) -> Any:
+        from ..workflow.pending import PendingSubmitStore
+        return PendingSubmitStore(self.config.pending_submits_path)
+
+    def audit_record(self, event: str, **fields: Any) -> None:
+        if self.audit is not None:
+            try:
+                self.audit.record(event, **fields)
+            except Exception:
+                pass
 
 
 class ToolRegistry:
@@ -282,15 +311,142 @@ class ToolRegistry:
         # ---- jobs (write) --------------------------------------------------------
         self._add(
             "job_submit",
-            "Submit a job script inside a remote directory. Requires an "
-            "approval_ref issued by the local trusted approval flow; the "
-            "model cannot create one.", "write",
+            "Submit a job script inside a remote directory. Default mode "
+            "pauses for human confirmation in the web UI (tell the user to "
+            "approve the card, then check job_state next turn); an optional "
+            "approval_ref from 'vaspilot workflow approve' submits directly.",
+            "write",
             {"server": _server_param(),
              "directory": _path_param("remote directory"),
              "script": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"},
              "approval_ref": {"type": "string",
-                              "description": "approval token from workflow approve"}},
+                              "description": "optional approval token from workflow approve"}},
             lambda a: self._submit(a))
+
+        # ---- server resource metrics (read) --------------------------------------
+        self._add(
+            "server_metrics",
+            "Live node resources of a server: CPU/load/memory/disk, GPU "
+            "telemetry (when present) and scheduler queue summary. Use this "
+            "to pick the least-loaded server or partition before submitting.",
+            "read",
+            {"server": _server_param()}, lambda a: client.metrics(a.get("server")))
+
+        # ---- shell (write; audit-only, no interception by design) ------------------
+        self._add(
+            "shell_run",
+            "Run one shell command on the LOCAL Windows machine. Every "
+            "command, working dir, exit code and output is fully audited. "
+            "Timeouts kill the process.", "write",
+            {"command": {"type": "string", "minLength": 1, "maxLength": 8000},
+             "cwd": {"type": "string", "maxLength": 1024,
+                     "description": "optional working directory"},
+             "timeout_seconds": {"type": "integer", "minimum": 1,
+                                 "maximum": 600, "default": 60}},
+            lambda a: self._shell_run(a))
+        self._add(
+            "remote_run",
+            "Run one shell command on a remote HPC server (login node) "
+            "through the gateway. Fully audited on both sides.", "write",
+            {"server": _server_param(),
+             "command": {"type": "string", "minLength": 1, "maxLength": 8000},
+             "timeout_seconds": {"type": "integer", "minimum": 1,
+                                 "maximum": 600, "default": 120}},
+            lambda a: client.run_command(
+                str(a["command"]),
+                timeout_seconds=int(a.get("timeout_seconds", 120)),
+                server=a.get("server")))
+
+        # ---- local projects ----------------------------------------------------------
+        self._add(
+            "project_create",
+            "Create a local calculation project under ~/.vaspilot/projects "
+            "with INCAR/KPOINTS/POSCAR text (blank strings are skipped). "
+            "POTCAR cannot be written as text — ask the user for a local "
+            "POTCAR path instead.", "write",
+            {"name": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+             "incar": {"type": "string", "maxLength": 65536},
+             "kpoints": {"type": "string", "maxLength": 65536},
+             "poscar": {"type": "string", "maxLength": 262144}},
+            lambda a: {**self.context.project_store.create(
+                str(a["name"]),
+                {"INCAR": str(a.get("incar") or ""),
+                 "KPOINTS": str(a.get("kpoints") or ""),
+                 "POSCAR": str(a.get("poscar") or "")}), "ok": True})
+        self._add(
+            "project_list",
+            "List local calculation projects with input-file completeness.",
+            "read", {}, lambda a: {"ok": True,
+                                   "projects": self.context.project_store.list()})
+        self._add(
+            "project_read",
+            "Read one file of a local project. POTCAR returns metadata "
+            "only (TITEL/ENMAX/size/sha256). Empty project = the session's "
+            "active project.", "read",
+            {"project": {"type": "string", "maxLength": 64},
+             "file": {"type": "string", "enum": ["INCAR", "KPOINTS", "POSCAR",
+                                                 "POTCAR", "run.job.sh"]}},
+            lambda a: {"ok": True,
+                       **self.context.project_store.read_file(
+                           self._project_name(a), str(a["file"]))})
+        self._add(
+            "project_write",
+            "Write one file of a local project (INCAR/KPOINTS/POSCAR/"
+            "run.job.sh). POTCAR is refused — copy it via a user-supplied "
+            "path instead. Empty project = the session's active project.",
+            "write",
+            {"project": {"type": "string", "maxLength": 64},
+             "file": {"type": "string", "enum": ["INCAR", "KPOINTS", "POSCAR",
+                                                 "run.job.sh"]},
+             "content": {"type": "string", "maxLength": 262144}},
+            lambda a: {"ok": True,
+                       **self.context.project_store.write_file(
+                           self._project_name(a), str(a["file"]),
+                           str(a["content"]))})
+        self._add(
+            "project_validate",
+            "Preflight-check a local project's VASP inputs (empty project = "
+            "the session's active project).", "read",
+            {"project": {"type": "string", "maxLength": 64}},
+            lambda a: self.context.project_store.validate(self._project_name(a)))
+
+        # ---- skills (self-evolution) ----------------------------------------------------
+        self._add(
+            "skill_list", "List saved skills (name + description).", "read",
+            {}, lambda a: {"ok": True,
+                           "skills": self.context.skill_store.list()})
+        self._add(
+            "skill_read",
+            "Fetch the full guide of one saved skill.", "read",
+            {"name": {"type": "string", "pattern": r"^[a-z0-9][a-z0-9-]{0,63}$"}},
+            lambda a: {"ok": True,
+                       **self.context.skill_store.read(str(a["name"]))})
+        self._add(
+            "skill_write",
+            "Create or update a skill (max 16 KiB body, 50 skills) so later "
+            "sessions automatically know the procedure. Deletion is "
+            "human-only in the UI settings.", "write",
+            {"name": {"type": "string", "pattern": r"^[a-z0-9][a-z0-9-]{0,63}$"},
+             "description": {"type": "string", "minLength": 4, "maxLength": 200},
+             "body": {"type": "string", "maxLength": 16384}},
+            lambda a: {"ok": True,
+                       **self.context.skill_store.write(
+                           str(a["name"]), str(a["description"]),
+                           str(a["body"]))})
+
+        # ---- web (read) --------------------------------------------------------------------
+        self._add(
+            "web_search",
+            "Search the web (literature values, reference data, error "
+            "fixes). Requires a configured search API key.", "read",
+            {"query": {"type": "string", "minLength": 2, "maxLength": 400}},
+            lambda a: self._web_search(a))
+        self._add(
+            "web_fetch",
+            "Fetch one public http(s) page as plain text (HTML stripped, "
+            "50 KiB cap). Private/internal targets are refused.", "read",
+            {"url": {"type": "string", "minLength": 8, "maxLength": 2048}},
+            lambda a: self._web_fetch(a))
 
         # ---- workflow (read-only previews; approve/run are local-only) ------------
         if self.context.workflow_engine is not None:
@@ -360,21 +516,114 @@ class ToolRegistry:
             str(args["path"]), local, server=args.get("server"))
 
     def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
+        server = str(args.get("server") or "")
+        directory = str(args["directory"])
+        script = str(args["script"])
         approval_ref = str(args.get("approval_ref") or "").strip()
-        if not approval_ref:
+        if approval_ref:
+            # legacy one-shot approval: verify + consume + submit directly
+            if self.context.workflow_engine is not None:
+                self.context.workflow_engine.verify_submit_approval(
+                    approval_ref, server=server,
+                    directory=directory, script=script)
+            result = self.context.client.submit(
+                directory, script, approval_ref=approval_ref, server=server)
+            if self.context.workflow_engine is not None:
+                self.context.workflow_engine.mark_approval_consumed(approval_ref)
+            return result
+        mode = self.context.config.agent_submit_mode()
+        if mode == "auto":
+            return self.context.client.submit(directory, script, server=server)
+        # confirm mode: freeze the exact parameters for a human click
+        script_content = ""
+        script_sha = ""
+        try:
+            remote = f"{directory.rstrip('/')}/{script}"
+            doc = self.context.client.read(remote, server=server)
+            script_content = str(doc.get("content", ""))
+            from ..core.hashing import text_sha256
+            script_sha = text_sha256(script_content)
+        except Exception:
+            script_content = ""  # card will show "content unavailable"
+        entry = self.context.pending_store.create(
+            server=server or self.context.config.default_server(),
+            directory=directory, script=script,
+            script_sha256=script_sha, script_content=script_content,
+            session_id=self.context.session_id)
+        return {
+            "ok": True, "status": "pending_confirmation",
+            "id": entry["id"], "expires_at": entry["expires_at"],
+            "server": entry["server"], "directory": directory,
+            "message": "submission queued for human confirmation: ask the "
+                       "user to approve the card in the web UI, then verify "
+                       "with job_state in the next turn",
+        }
+
+    # -- local shell -----------------------------------------------------------------
+    def _shell_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        import subprocess
+        command = str(args.get("command") or "").strip()
+        if not command:
+            raise ValidationError("command is required")
+        timeout = max(1, min(int(args.get("timeout_seconds", 60) or 60), 600))
+        cwd = str(args.get("cwd") or "").strip() or None
+        if cwd and not Path(cwd).is_dir():
+            raise ValidationError(f"cwd is not a directory: {cwd}")
+        try:
+            completed = subprocess.run(
+                command, shell=True, cwd=cwd, capture_output=True,
+                timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            stdout = (exc.stdout or b"").decode("utf-8", "replace")
+            stderr = (exc.stderr or b"").decode("utf-8", "replace")
+            self.context.audit_record(
+                "shell.run", outcome="timeout", command=command, cwd=cwd,
+                output=(stdout + stderr)[:262144])
+            return {"ok": False, "timeout": True, "rc": None,
+                    "stdout": stdout[:20000], "stderr": stderr[:20000],
+                    "message": f"command exceeded {timeout}s and was killed"}
+        stdout = completed.stdout.decode("utf-8", "replace")
+        stderr = completed.stderr.decode("utf-8", "replace")
+        self.context.audit_record(
+            "shell.run", outcome="ok" if completed.returncode == 0 else "fail",
+            command=command, cwd=cwd, rc=completed.returncode,
+            output=(stdout + stderr)[:262144])
+        total = len(stdout) + len(stderr)
+        return {"ok": completed.returncode == 0, "rc": completed.returncode,
+                "stdout": stdout[:20000], "stderr": stderr[:20000],
+                "truncated": total > 40000}
+
+    # -- web -----------------------------------------------------------------------------
+    def _web_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        from . import web
+        settings = self.context.config.websearch()
+        if not settings["enabled"]:
             raise ValidationError(
-                "job_submit requires an approval_ref from 'vaspilot workflow "
-                "approve'; the model cannot mint one")
-        if self.context.workflow_engine is not None:
-            # verify + consume the one-shot approval reference
-            self.context.workflow_engine.verify_submit_approval(
-                approval_ref,
-                server=str(args.get("server") or ""),
-                directory=str(args["directory"]),
-                script=str(args["script"]))
-        result = self.context.client.submit(
-            str(args["directory"]), str(args["script"]),
-            approval_ref=approval_ref, server=args.get("server"))
-        if self.context.workflow_engine is not None:
-            self.context.workflow_engine.mark_approval_consumed(approval_ref)
-        return result
+                "web search is disabled; enable it in the UI settings")
+        result = web.web_search(str(args["query"]),
+                                provider=settings["provider"],
+                                api_key=self.context.config.websearch_key())
+        self.context.audit_record(
+            "web.search", outcome="ok", query=result["query"],
+            provider=result["provider"], results=len(result["results"]))
+        return {"ok": True, **result}
+
+    def _web_fetch(self, args: dict[str, Any]) -> dict[str, Any]:
+        from . import web
+        result = web.web_fetch(str(args["url"]))
+        self.context.audit_record(
+            "web.fetch", outcome="ok", url=result["url"],
+            bytes=len(result["text"]))
+        return {"ok": True, **result}
+
+    # -- local projects -----------------------------------------------------------------
+    def _project_name(self, args: dict[str, Any]) -> str:
+        name = str(args.get("project") or "").strip()
+        if name:
+            return name
+        root = self.context.project_root
+        store_root = self.context.config.projects_dir.resolve()
+        if root is not None and root.parent.resolve() == store_root:
+            return root.name
+        raise ValidationError(
+            "no project name given and the session has no active project")

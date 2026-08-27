@@ -44,8 +44,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.0.0"
-PROTOCOL_VERSION = "1"
+GATEWAY_VERSION = "1.1.0"
+PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
 CONFIG_DIR = Path(os.environ.get("VASPILOT_GATEWAY_CONFIG", HOME / ".config/vaspilot"))
@@ -166,11 +166,12 @@ def socket_path(name: str) -> Path:
 
 
 # ---------------------------------------------------------------- transport
-def _remote_runner(server: str, target: str, command: str, sock: Path) -> subprocess.CompletedProcess:
+def _remote_runner(server: str, target: str, command: str, sock: Path,
+                   timeout: int = 180) -> subprocess.CompletedProcess:
     fake = os.environ.get("VASPILOT_FAKE_HPC", "")
     if fake:
         proc = subprocess.run([sys.executable, fake, server, command],
-                              capture_output=True, text=True, timeout=180)
+                              capture_output=True, text=True, timeout=timeout)
         return subprocess.CompletedProcess(command, proc.returncode, proc.stdout, proc.stderr)
     import subprocess as _sp
     return _sp.run(
@@ -181,7 +182,7 @@ def _remote_runner(server: str, target: str, command: str, sock: Path) -> subpro
          "-o", f"ControlPath={sock}",
          target, command],
         stdin=subprocess.DEVNULL, text=True, capture_output=True,
-        timeout=180)
+        timeout=timeout)
 
 
 def connected(name: str, timeout: int = 4) -> bool:
@@ -911,6 +912,88 @@ def op_diagnostic(args) -> int:
     return 0
 
 
+# --------------------------------------------------------- exec (audit-only)
+def op_exec(args) -> int:
+    """Run one caller-supplied shell command on the HPC login node.
+
+    Explicit operator policy: no interception, full audit. Unlike every
+    other op there is no path confinement and no fixed command shape —
+    the audit row is the control plane.
+    """
+    name, entry = resolve_server(args.server)
+    require_connection(name)
+    command_tokens = list(args.command or [])
+    if command_tokens and command_tokens[0] == "--":
+        command_tokens = command_tokens[1:]
+    command = " ".join(command_tokens).strip()
+    if not command:
+        return fail("empty_command", "exec requires a command")
+    if len(command) > 8000:
+        return fail("command_too_long", "exec command exceeds 8000 chars")
+    timeout = max(1, min(int(args.timeout or 120), 600))
+    try:
+        result = _remote_runner(name, entry["target"], command,
+                                socket_path(name), timeout=timeout)
+    except subprocess.TimeoutExpired:
+        audit("exec", "timeout", command[:300], name)
+        return fail("timeout", f"remote command exceeded {timeout}s")
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    audit("exec", "ok" if result.returncode == 0 else "fail",
+          command[:300], name)
+    out({
+        "server": name, "rc": result.returncode,
+        "stdout": stdout[:262144], "stderr": stderr[:65536],
+        "truncated": len(stdout) > 262144 or len(stderr) > 65536,
+        "command": command[:500],
+    })
+    return 0
+
+
+# ---------------------------------------------------------------- metrics
+METRICS_SCRIPT = r"""
+echo __VP_CPU1__; head -n 1 /proc/stat 2>/dev/null
+sleep 0.25
+echo __VP_CPU2__; head -n 1 /proc/stat 2>/dev/null
+echo __VP_LOAD__; cat /proc/loadavg 2>/dev/null
+echo __VP_NPROC__; nproc 2>/dev/null
+echo __VP_MEM__; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo 2>/dev/null
+echo __VP_DF__; df -P -k 2>/dev/null | sed -n '1,18p'
+echo __VP_GPU__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw --format=csv,noheader,nounits 2>&1 || echo _ERR_; else echo _MISSING_; fi
+echo __VP_GPUPROC__; if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi --query-compute-apps=gpu_uuid,pid,process_name,used_gpu_memory --format=csv,noheader,nounits 2>&1 || true; fi
+echo __VP_SCHED__; if command -v sinfo >/dev/null 2>&1; then echo slurm; sinfo -h -o '%R|%a|%D|%C' 2>/dev/null; elif command -v qstat >/dev/null 2>&1; then echo pbs; qstat -q 2>/dev/null | sed -n '1,20p'; fi
+echo __VP_DONE__
+"""
+
+
+def op_metrics(args) -> int:
+    """Collect raw node-resource sections in one SSH round trip.
+
+    The remote script is fixed; the LOCAL client parses the tagged sections
+    (RackTop-style). Read-only by construction.
+    """
+    name, entry = resolve_server(args.server)
+    require_connection(name)
+    raw = remote(name, METRICS_SCRIPT)
+    sections: dict = {}
+    current = None
+    for line in raw.splitlines():
+        marker = re.fullmatch(r"__VP_([A-Z0-9_]+)__", line.strip())
+        if marker:
+            current = marker.group(1).lower()
+            sections[current] = []
+            continue
+        if current is not None:
+            sections[current].append(line)
+    sections = {key: "\n".join(lines).strip()
+                for key, lines in sections.items()}
+    audit("metrics", "ok", "", name)
+    out({"server": name, "collected_at":
+         datetime.now(timezone.utc).isoformat(timespec="seconds"),
+         "sections": sections})
+    return 0
+
+
 # ------------------------------------------------------------- data motion
 def op_upload(args) -> int:
     """Move a staged /tmp file into place after SHA-256 verification."""
@@ -1284,6 +1367,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("diagnostic", op_diagnostic)
     p.add_argument("diagnostic", choices=sorted(DIAGNOSTICS))
+
+    p = add("exec", op_exec)
+    p.add_argument("--timeout", type=int, default=120)
+    p.add_argument("command", nargs=argparse.REMAINDER)
+    add("metrics", op_metrics)
 
     p = add("upload", op_upload)
     p.add_argument("stage")

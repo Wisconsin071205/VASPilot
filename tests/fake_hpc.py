@@ -118,6 +118,40 @@ class FakeHpc:
     def execute(self, command: str) -> tuple[int, str]:
         paths = path_tokens(command)
         try:
+            # metrics collector script (tagged sections, RackTop style)
+            if "__VP_CPU1__" in command:
+                return 0, (
+                    "__VP_CPU1__\n"
+                    "cpu  100 20 30 1000 10 0 0 0\n"
+                    "__VP_CPU2__\n"
+                    "cpu  200 40 60 1100 10 0 0 0\n"
+                    "__VP_LOAD__\n"
+                    "0.52 0.41 0.35 1/512 12345\n"
+                    "__VP_NPROC__\n"
+                    "32\n"
+                    "__VP_MEM__\n"
+                    "MemTotal:       16384000 kB\n"
+                    "MemAvailable:    8192000 kB\n"
+                    "SwapTotal:       2097152 kB\n"
+                    "SwapFree:        2097152 kB\n"
+                    "__VP_DF__\n"
+                    "Filesystem     1024-blocks      Used Available Capacity "
+                    "Mounted on\n"
+                    "tmpfs            8192000        0   8192000       0% "
+                    "/dev/shm\n"
+                    "/dev/sda1      500000000 200000000 300000000     40% /\n"
+                    "__VP_GPU__\n"
+                    "0, NVIDIA A100, 5, 1200, 32510, 45, 70.5\n"
+                    "__VP_GPUPROC__\n"
+                    "GPU-0, 12345, python, 1200 MiB\n"
+                    "__VP_SCHED__\n"
+                    "slurm\ncpu|up|4|160/64/0/224\n"
+                    "__VP_DONE__\n")
+            # arbitrary exec passthrough (audit-only remote shell)
+            if command.startswith("echo "):
+                return 0, command[5:].strip() + "\n"
+            if "exit 3" in command:
+                return 3, "intentional failure\n"
             if command == "echo $HOME":
                 return 0, self.root + "\n"
             if command.startswith("realpath -m --"):

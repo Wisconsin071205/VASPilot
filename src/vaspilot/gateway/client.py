@@ -405,6 +405,41 @@ class GatewayClient:
         return self._call("server.diagnostic",
                           ["diagnostic", "--server", name, key], diagnostic=key)
 
+    # ------------------------------------------------------------ shell / metrics
+    def run_command(self, command: str, *, timeout_seconds: int = 120,
+                    server: str | None = None) -> dict:
+        """Arbitrary remote command (operator policy: audit-only, no gate)."""
+        name = self._require(server)
+        command = str(command or "").strip()
+        if not command:
+            raise ValidationError("command is required")
+        if len(command) > 8000:
+            raise ValidationError("command exceeds 8000 chars")
+        timeout = max(5, min(int(timeout_seconds or 120), 600)) + 15
+        document = self._call("remote.run",
+                              ["exec", "--server", name,
+                               "--timeout", str(int(timeout_seconds or 120)),
+                               "--", command],
+                              timeout=timeout)
+        rc = document.get("rc")
+        return {"ok": rc == 0, "server": name,
+                "rc": rc,
+                "stdout": str(document.get("stdout", ""))[:20000],
+                "stderr": str(document.get("stderr", ""))[:20000],
+                "truncated": bool(document.get("truncated")),
+                "command": str(document.get("command", command))}
+
+    def metrics(self, server: str | None = None) -> dict:
+        """Live node resources parsed from the gateway's tagged sections."""
+        name = self._require(server)
+        document = self._call("server.metrics",
+                              ["metrics", "--server", name], timeout=60)
+        sections = document.get("sections") or {}
+        parsed = _parse_metric_sections(sections)
+        return {"ok": True, "server": name,
+                "collected_at": document.get("collected_at"),
+                **parsed}
+
     # ------------------------------------------------------------- internal
     def _resolve(self, server: str, path: str) -> str:
         """Accept an absolute remote path or a root-relative one."""
@@ -423,3 +458,173 @@ class GatewayClient:
         parts = relative.split("/")
         return remote_path("/".join([entry.remote_root.rstrip("/")] + parts),
                            remote_root=entry.remote_root)
+
+
+# ------------------------------------------------------------ metric parsing
+def _parse_metric_sections(sections: dict) -> dict:
+    """Turn the gateway's raw tagged sections into structured metrics.
+
+    CPU usage comes from the delta between the two /proc/stat samples the
+    remote script took; GPU telemetry is clamped (0-100 %, non-negative);
+    pseudo mounts are filtered out of the disk table (RackTop approach).
+    """
+    import re as _re
+
+    def _clamp_pct(value) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(100.0, number))
+
+    def _float(value, default=0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    # -- cpu (two /proc/stat samples; cores from the nproc section)
+    cpu: dict = {}
+    samples = []
+    for key in ("cpu1", "cpu2"):
+        line = str(sections.get(key, "")).strip()
+        fields = line.split()
+        if fields and fields[0] == "cpu" and len(fields) >= 5:
+            samples.append([int(f) for f in fields[1:8]
+                            if f.lstrip("-").isdigit()][:7])
+    cores = int(_float(str(sections.get("nproc", "")).strip(), 0))
+    if cores:
+        cpu["cores"] = cores
+    if len(samples) == 2 and len(samples[0]) == len(samples[1]):
+        delta = [b - a for a, b in zip(samples[0], samples[1])]
+        total = sum(delta)
+        idle = delta[3] + (delta[4] if len(delta) > 4 else 0)
+        if total > 0:
+            cpu["usage_pct"] = round((total - idle) * 100.0 / total, 1)
+    cpu.setdefault("usage_pct", None)
+
+    # -- load
+    load = {}
+    fields = str(sections.get("load", "")).split()
+    if len(fields) >= 3:
+        load = {"one": _float(fields[0]), "five": _float(fields[1]),
+                "fifteen": _float(fields[2])}
+
+    # -- memory
+    mem: dict = {}
+    values_kb: dict[str, int] = {}
+    for line in str(sections.get("mem", "")).splitlines():
+        match = _re.match(r"(\w+):\s+(\d+)\s*kB", line.strip())
+        if match:
+            values_kb[match.group(1)] = int(match.group(2))
+    if values_kb.get("MemTotal"):
+        total_kb = values_kb["MemTotal"]
+        available = values_kb.get("MemAvailable", 0)
+        mem = {"total_gb": round(total_kb / 1048576, 1),
+               "available_gb": round(available / 1048576, 1),
+               "used_pct": round((total_kb - available) * 100.0 / total_kb, 1)
+               if total_kb else 0.0,
+               "swap_total_gb": round(values_kb.get("SwapTotal", 0) / 1048576, 1),
+               "swap_free_gb": round(values_kb.get("SwapFree", 0) / 1048576, 1)}
+
+    # -- disks (filter pseudo mounts, cap 16)
+    pseudo = {"tmpfs", "devtmpfs", "overlay", "squashfs", "fuse.snapfuse",
+              "fuse.lxcfs", "nsfs", "proc", "sysfs", "devpts", "cgroup",
+              "cgroup2", "mqueue", "shm", "hugetlbfs", "efivarfs",
+              "autofs", "binfmt_misc", "configfs", "debugfs", "tracefs",
+              "pstore", "securityfs", "fusectl", "rpc_pipefs", "bpf"}
+    disks = []
+    for line in str(sections.get("df", "")).splitlines()[1:]:
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        filesystem, blocks, used, available, capacity, mounted = parts[:6]
+        if filesystem.split("/")[-1] in pseudo or filesystem.startswith(
+                ("vaspilot/", "/snap/")) or mounted in ("/boot/efi",):
+            continue
+        disks.append({
+            "filesystem": filesystem[:80], "mount": mounted[:80],
+            "total_gb": round(_float(blocks) / 1048576, 1),
+            "used_gb": round(_float(used) / 1048576, 1),
+            "free_gb": round(_float(available) / 1048576, 1),
+            "used_pct": _clamp_pct(capacity.rstrip("%")),
+        })
+        if len(disks) >= 16:
+            break
+
+    # -- gpus
+    gpus = []
+    gpu_raw = str(sections.get("gpu", "")).strip()
+    gpu_status = "missing"
+    if gpu_raw and gpu_raw not in ("_MISSING_", "_ERR_"):
+        gpu_status = "available"
+        for line in gpu_raw.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 7:
+                continue
+            try:
+                index = int(parts[0])
+            except ValueError:
+                continue
+            gpus.append({
+                "index": index, "name": parts[1][:60],
+                "util_pct": _clamp_pct(parts[2]),
+                "mem_used_gb": round(_float(parts[3]) / 1024, 1),
+                "mem_total_gb": round(_float(parts[4]) / 1024, 1),
+                "temp_c": _float(parts[5]),
+                "power_w": _float(parts[6]),
+            })
+    elif gpu_raw == "_ERR_":
+        gpu_status = "degraded"
+
+    # -- gpu processes
+    gpu_procs = []
+    for line in str(sections.get("gpu_proc", "")).splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) >= 3:
+            gpu_procs.append({
+                "gpu_uuid": parts[0][:60],
+                "pid": parts[1][:16],
+                "process": parts[2][:80],
+                "mem_mib": _float(parts[3].split()[0]) if len(parts) > 3 and
+                parts[3].split() else None,
+            })
+
+    # -- scheduler queue summary
+    queue: dict = {}
+    sched_lines = [line for line in
+                   str(sections.get("sched", "")).splitlines() if line.strip()]
+    if sched_lines:
+        kind = sched_lines[0].strip()
+        queue["kind"] = kind
+        partitions = []
+        if kind == "slurm":
+            for line in sched_lines[1:]:
+                parts = line.split("|")
+                if len(parts) != 4:
+                    continue
+                cpus = parts[3]  # A/I/O/T
+                match = _re.match(r"(\d+)/(\d+)/(\d+)/(\d+)", cpus)
+                partitions.append({
+                    "partition": parts[0][:32], "state": parts[1][:16],
+                    "nodes": _float(parts[2]),
+                    "cpus_alloc": int(match.group(1)) if match else None,
+                    "cpus_idle": int(match.group(2)) if match else None,
+                    "cpus_total": int(match.group(4)) if match else None,
+                })
+        elif kind == "pbs":
+            for line in sched_lines[1:]:
+                parts = line.split()
+                if len(parts) >= 6 and not parts[0].startswith("-") \
+                        and parts[0] != "Queue":
+                    partitions.append({
+                        "queue": parts[0][:32], "state": parts[4][:16],
+                        "run": _float(parts[5]), "queued": _float(parts[6])
+                        if len(parts) > 6 else None,
+                        "lm": parts[-2] if len(parts) > 2 else "",
+                    })
+        queue["partitions"] = partitions
+
+    return {"cpu": cpu, "load": load, "mem": mem, "disks": disks,
+            "gpus": gpus, "gpu_status": gpu_status, "gpu_procs": gpu_procs,
+            "queue": queue}
