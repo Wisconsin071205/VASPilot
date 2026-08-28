@@ -26,16 +26,35 @@ def register(sub) -> None:
                    help="poll interval in seconds")
 
 
-def _snapshot(app, names=None) -> dict:
-    """One aggregate over every (or the named) registered server."""
+def _snapshot(app, names=None, *, fresh: bool = False) -> dict:
+    """One aggregate over every (or the named) registered server.
+
+    ``fresh`` is the manual-refresh signal from dashboard clients: it skips
+    nothing security-relevant (host-key failures are never retried) and only
+    marks that the caller wants live per-server state, not any cached view.
+    """
     servers = [s.to_dict() for s in app.config.load_servers()]
     if names and names != ["all"]:
         wanted = set(names)
         servers = [s for s in servers if s["name"] in wanted]
+    try:
+        catalog = app.client().servers()
+        auth_map = {s["name"]: s for s in catalog.get("servers", [])}
+    except Exception:
+        auth_map = {}
     entries = []
     for entry in servers:
         name = entry["name"]
-        record = {"server": name, "scheduler": entry["scheduler"]}
+        cat = auth_map.get(name, {})
+        record = {"server": name, "scheduler": entry["scheduler"],
+                  "auth_mode": cat.get("auth_mode",
+                                       entry.get("auth_mode",
+                                                 "interactive")),
+                  "auto_connect": bool(cat.get(
+                      "auto_connect", entry.get("auto_connect", False))),
+                  "reconnect_state": cat.get("reconnect_state", "-"),
+                  "retry_in": cat.get("retry_in", 0),
+                  "last_connect_error": cat.get("last_connect_error", "")}
         try:
             status = app.client().status(name)
             record["connected"] = bool(status.get("connected"))

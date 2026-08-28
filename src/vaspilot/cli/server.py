@@ -37,6 +37,8 @@ def register(sub) -> None:
     p.add_argument("--root")
     p.add_argument("--persist")
     p.add_argument("--scheduler", choices=["auto", "slurm", "pbs"])
+    p.add_argument("--auth-mode", choices=["interactive", "key"])
+    p.add_argument("--auto-connect", action="store_true")
 
     p = command("remove", cmd_remove)
     p.add_argument("name")
@@ -50,6 +52,22 @@ def register(sub) -> None:
     p.add_argument("name")
     command("doctor", cmd_doctor).add_argument(
         "server", nargs="?", help="probe this server too")
+
+    p = command("key-setup", cmd_key_setup,
+                help="one-shot per-server key onboarding (human-driven)")
+    p.add_argument("server")
+    p.add_argument("--wait", type=int, default=180,
+                   help="seconds to wait for the final password/TOTP login")
+    p = command("key-status", cmd_key_status)
+    p.add_argument("server")
+    p = command("key-disable", cmd_key_disable,
+                help="stop using the key; nothing is deleted")
+    p.add_argument("server")
+    p = command("key-revoke", cmd_key_revoke,
+                help="remove the key from the HPC and delete it here")
+    p.add_argument("server")
+    p.add_argument("--confirm-server", required=True,
+                   help="type the server name again to confirm")
 
 
 def cmd_list(app, args):
@@ -83,7 +101,8 @@ def cmd_edit(app, args):
     return app.client().server_edit(
         args.name, target=args.target, port=args.port,
         remote_root=args.root, persist=args.persist,
-        scheduler=args.scheduler)
+        scheduler=args.scheduler, auth_mode=args.auth_mode,
+        auto_connect=(True if args.auto_connect else None))
 
 
 def cmd_remove(app, args):
@@ -95,8 +114,16 @@ def cmd_set_default(app, args):
 
 
 def cmd_connect(app, args):
-    """Interactive login in the CURRENT terminal (password + TOTP here)."""
-    return app.client().connect_interactive(args.server)
+    """key-mode servers reconnect unattended; interactive servers run the
+    login in THIS terminal (password + TOTP here)."""
+    name = args.server
+    try:
+        entry = app.client().server_entry(name) if name else None
+    except Exception:
+        entry = None
+    if entry is not None and entry.auth_mode == "key":
+        return app.client().connect(name, manual=True)
+    return app.client().connect_interactive(name)
 
 
 def cmd_disconnect(app, args):
@@ -105,6 +132,31 @@ def cmd_disconnect(app, args):
 
 def cmd_status(app, args):
     return app.client().status(args.server)
+
+
+def cmd_key_setup(app, args):
+    """Human-driven: generate key -> ONE final password/TOTP login in the
+    popped terminal -> install + verify -> flip to key/auto."""
+    result = app.client().key_setup(args.server, wait_seconds=args.wait)
+    result["next"] = ("done — future sessions auto-reconnect with the key; "
+                      "Codex/CLI need no password")
+    return result
+
+
+def cmd_key_status(app, args):
+    return app.client().key_status(args.server)
+
+
+def cmd_key_disable(app, args):
+    return app.client().key_disable(args.server)
+
+
+def cmd_key_revoke(app, args):
+    if args.confirm_server != args.server:
+        raise ValidationError(
+            "--confirm-server must repeat the server name exactly")
+    return app.client().key_revoke(args.server,
+                                   confirm_server=args.confirm_server)
 
 
 def cmd_doctor(app, args):

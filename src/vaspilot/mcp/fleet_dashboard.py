@@ -45,6 +45,8 @@ FLEET_DASHBOARD_HTML = r"""<!doctype html>
     .name { display:flex; gap:8px; align-items:center; font-size:21px; font-weight:750; }
     .status { font-size:12px; border-radius:999px; padding:5px 8px; white-space:nowrap; }
     .online { color:var(--green); background:#1e3329; } .offline { color:var(--red); background:#3b2927; }
+    .reconnect { color:var(--amber); background:#393220; }
+    .auth { font-size:11px; border-radius:999px; padding:4px 7px; color:var(--muted); border:1px solid var(--line); }
     .scheduler { margin:5px 0 13px; font-size:13px; color:var(--muted); }
     .counts { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:13px; }
     .count { background:#121916; padding:10px; border-radius:9px; } .count b { display:block; font-size:19px; } .count span { font-size:11px; color:var(--muted); }
@@ -90,9 +92,18 @@ FLEET_DASHBOARD_HTML = r"""<!doctype html>
       snapshot.servers.forEach(server => grid.append(serverCard(server)));
       schedule();
     }
+    function connState(server) { if(server.connected) return {t:'在线',c:'online'};
+      const st=String(server.reconnect_state||''); const err=String(server.last_connect_error||'');
+      if(server.auth_mode==='key'){
+        if(st==='host_key_failed'||err.includes('host_key')) return {t:'主机指纹异常（已停止自动重连）',c:'offline'};
+        if(err.includes('key_rejected')) return {t:'公钥被拒绝',c:'offline'};
+        if(err.includes('network')) return {t:'网络不可达',c:'offline'};
+        if(st==='waiting_backoff') return {t:'自动重连中 · 等待退避 '+(server.retry_in||0)+'s',c:'reconnect'};
+        if(st==='retrying') return {t:'自动重连中',c:'reconnect'}; }
+      return {t:'离线 · 需要登录',c:'offline'}; }
     function serverCard(server) {
-      const card=el('article','card'); const head=el('div','card-head'); const title=el('div'); const name=el('div','name'); name.append(el('i','dot')); name.append(document.createTextNode(text(server.server))); title.append(name); title.append(el('div','scheduler','调度器 '+text(server.scheduler_detected || server.scheduler || 'auto'))); head.append(title);
-      const status=el('span','status '+(server.connected?'online':'offline'),server.connected?'在线':'离线'); head.append(status); card.append(head);
+      const card=el('article','card'); const head=el('div','card-head'); const title=el('div'); const name=el('div','name'); name.append(el('i','dot')); name.append(document.createTextNode(text(server.server))); title.append(name); title.append(el('div','scheduler','调度器 '+text(server.scheduler_detected || server.scheduler || 'auto')+' · 认证 '+(server.auth_mode==='key'?'密钥':'交互'))); head.append(title);
+      const conn=connState(server); const status=el('span','status '+conn.c,conn.t); head.append(status); card.append(head);
       const counts=el('div','counts'); const first=el('div','count'); first.append(el('b','',text(server.active_jobs||0))); first.append(el('span','','运行/排队作业')); const second=el('div','count'); second.append(el('b','',server.states && server.states.length ? server.states.join(' · ') : '—')); second.append(el('span','','当前状态')); counts.append(first,second); card.append(counts);
       const jobs=el('div','jobs'); const rows=Array.isArray(server.jobs)?server.jobs:[]; if(rows.length){ rows.slice(0,20).forEach(job=>{const row=el('div','job');const left=el('div'); left.append(el('div','', '作业 '+text(job.job_id)+(job.name?' · '+job.name:''))); left.append(el('div','job-detail',[job.elapsed && '已运行 '+job.elapsed,job.partition && '队列 '+job.partition,job.nodes && '节点 '+job.nodes].filter(Boolean).join(' · ') || '调度器未提供更多字段')); row.append(left,el('span','state '+stateClass(job.state),text(job.state)));jobs.append(row);}); } else { jobs.append(el('div','empty', server.error || server.jobs_error || '当前没有活动作业')); } card.append(jobs);
       const caseBox=el('div','case'); const row=el('div','case-row'); const input=document.createElement('input'); input.placeholder='计算目录，例如 /.../00_relax'; input.setAttribute('aria-label',text(server.server)+' 计算目录'); const button=el('button','', '科学进度'); button.type='button'; const result=el('div','case-result',''); button.onclick=async()=>{ if(!input.value.trim()) { result.textContent='请输入该服务器已绑定根目录内的计算目录。'; return; } button.disabled=true; result.textContent='读取 VASP 收敛信息…'; try { const reply=await request('tools/call',{name:'vasp_progress',arguments:{server:server.server,directory:input.value.trim()}}); const data=reply && reply.structuredContent; result.textContent=progressText(data); } catch(error) { result.textContent='无法读取：'+String(error && error.message || error); result.classList.add('error'); } finally { button.disabled=false; } }; row.append(input,button); caseBox.append(row,result); card.append(caseBox); return card;

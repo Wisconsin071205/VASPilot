@@ -32,10 +32,17 @@ class FakeGatewayState:
         self.job_states: dict[str, dict] = {}  # server -> {job_id: state}
         self.job_polls: dict[str, int] = {}    # job_id -> poll count
         self.scheduler = {"cl9": "slurm", "pbs1": "pbs"}
+        self.key_present: dict[str, bool] = {}
+        self.key_verified: dict[str, bool] = {}
+        self.key_reject = False
+        self.key_hostkey_fail = False
+        self.reconnect: dict[str, dict] = {}
 
     def add_server(self, name, root=ROOT, scheduler="slurm", connected=True):
         self.servers[name] = {"target": f"user@{name}", "port": 22, "root": root,
-                              "scheduler": scheduler}
+                              "scheduler": scheduler,
+                              "auth_mode": "interactive",
+                              "auto_connect": False}
         self.dirs.setdefault(name, {root})
         self.files.setdefault(name, {})
         self.trash.setdefault(name, [])
@@ -114,16 +121,22 @@ class FakeTransport:
 
     # -- operations --------------------------------------------------------------
     def op_version(self, args):
-        return {"ok": True, "gateway_version": "1.2.0", "protocol": "2"}
+        return {"ok": True, "gateway_version": "1.3.0", "protocol": "2"}
 
     def op_servers(self, args):
+        state = getattr(self.state, "reconnect", {})
         servers = [{"name": name, "target": e["target"], "port": e["port"],
                     "remote_root": e["root"], "persist": "8h",
                     "scheduler": e["scheduler"],
+                    "auth_mode": e.get("auth_mode", "interactive"),
+                    "auto_connect": bool(e.get("auto_connect", False)),
+                    "reconnect_state": state.get(name, {}).get("state", "-"),
+                    "retry_in": state.get(name, {}).get("retry_in", 0),
+                    "last_connect_error": state.get(name, {}).get("error", ""),
                     "connected": self.state.connected.get(name, False)}
                    for name, e in self.state.servers.items()]
         return {"ok": True, "servers": servers, "default": self.state.default,
-                "gateway_version": "1.2.0", "protocol": "2"}
+                "gateway_version": "1.3.0", "protocol": "2"}
 
     def op_server_add(self, args):
         name = args[1]
@@ -152,12 +165,18 @@ class FakeTransport:
                 "code": "disconnected",
                 "message": f"{server} has no reusable SSH session; run "
                            f"'vaspilot server connect {server}' in a terminal"}}
-        return {"ok": True, "server": server, "connected": True}
+        entry = self.state.servers[server]
+        return {"ok": True, "server": server, "connected": True,
+                "auth_mode": entry.get("auth_mode", "interactive"),
+                "auto_connect": bool(entry.get("auto_connect", False))}
 
     def op_connect(self, args):
         server = self._server(args)
         self.state.connected[server] = True
-        return {"ok": True, "server": server, "connected": True}
+        entry = self.state.servers[server]
+        return {"ok": True, "server": server, "connected": True,
+                "auth_mode": entry.get("auth_mode", "interactive"),
+                "auto_connect": bool(entry.get("auto_connect", False))}
 
     def op_disconnect(self, args):
         server = self._server(args)
@@ -503,6 +522,61 @@ class FakeTransport:
                     "sched": "slurm\ncpu|up|4|160/64/0/224",
                     "done": "",
                 }}
+
+
+    # -- per-server key auth -------------------------------------------------
+    def op_key_generate(self, args):
+        name = args[-1]
+        self.state.key_present[name] = True
+        return {"ok": True, "server": name, "generated": True,
+                "key_material_present": True}
+
+    def op_key_status(self, args):
+        name = args[-1]
+        entry = self.state.servers.get(name, {})
+        return {"ok": True, "server": name,
+                "auth_mode": entry.get("auth_mode", "interactive"),
+                "auto_connect": bool(entry.get("auto_connect", False)),
+                "key_material_present": bool(
+                    self.state.key_present.get(name)),
+                "batch_login_verified": bool(
+                    self.state.key_verified.get(name)),
+                "reconnect_state": "-", "error": ""}
+
+    def op_key_install(self, args):
+        name = args[1]
+        if not self.state.key_present.get(name):
+            return {"ok": False, "error": {"code": "key_missing",
+                                           "message": "generate first"}}
+        if getattr(self.state, "key_reject", False):
+            return {"ok": False, "error": {"code": "key_verify_failed",
+                                           "message": "key_rejected"}}
+        entry = self.state.servers[name]
+        entry["auth_mode"] = "key"
+        entry["auto_connect"] = True
+        self.state.key_verified[name] = True
+        return {"ok": True, "server": name, "auth_mode": "key",
+                "auto_connect": True, "batch_login_verified": True}
+
+    def op_key_disable(self, args):
+        name = args[-1]
+        entry = self.state.servers.get(name, {})
+        entry["auth_mode"] = "interactive"
+        entry["auto_connect"] = False
+        return {"ok": True, "server": name, "auth_mode": "interactive"}
+
+    def op_key_revoke(self, args):
+        name = args[1]
+        confirm = args[args.index("--confirm-server") + 1]             if "--confirm-server" in args else ""
+        if confirm != name:
+            return {"ok": False, "error": {"code": "confirm_mismatch",
+                                           "message": "confirm mismatch"}}
+        self.state.key_present[name] = False
+        entry = self.state.servers.get(name, {})
+        entry["auth_mode"] = "interactive"
+        entry["auto_connect"] = False
+        return {"ok": True, "server": name, "revoked": True,
+                "lines_removed": 1}
 
 
 from pathlib import PurePosixPath  # noqa: E402  (used above)

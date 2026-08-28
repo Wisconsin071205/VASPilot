@@ -68,19 +68,29 @@ def _load_json(path: Path, default):
 
 
 class ServerEntry:
-    """Mirror of one gateway catalog entry (metadata only, never secrets)."""
+    """Mirror of one gateway catalog entry (metadata only, never secrets).
 
-    __slots__ = ("name", "target", "port", "remote_root", "persist", "scheduler")
+    ``auth_mode``: 'interactive' (default, password+TOTP in a visible
+    terminal) or 'key' (per-server Ed25519 key on the gateway host, enabling
+    unattended auto-reconnect). ``auto_connect`` gates that reconnect.
+    """
+
+    __slots__ = ("name", "target", "port", "remote_root", "persist",
+                 "scheduler", "auth_mode", "auto_connect")
 
     def __init__(self, name: str, target: str, port: int = 22,
                  remote_root: str = "", persist: str = "",
-                 scheduler: str = "slurm") -> None:
+                 scheduler: str = "slurm", auth_mode: str = "interactive",
+                 auto_connect: bool = False) -> None:
         self.name = name
         self.target = target
         self.port = int(port)
         self.remote_root = remote_root
         self.persist = persist
         self.scheduler = scheduler
+        self.auth_mode = auth_mode if auth_mode in ("interactive", "key") \
+            else "interactive"
+        self.auto_connect = bool(auto_connect)
 
     def to_dict(self) -> dict:
         return {
@@ -90,10 +100,13 @@ class ServerEntry:
             "remote_root": self.remote_root,
             "persist": self.persist,
             "scheduler": self.scheduler,
+            "auth_mode": self.auth_mode,
+            "auto_connect": self.auto_connect,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "ServerEntry":
+        # legacy entries without the fields migrate to interactive/no-auto
         return cls(
             name=str(data.get("name", "")),
             target=str(data.get("target", "")),
@@ -101,6 +114,8 @@ class ServerEntry:
             remote_root=str(data.get("remote_root", "") or ""),
             persist=str(data.get("persist", "") or ""),
             scheduler=str(data.get("scheduler", "slurm") or "slurm"),
+            auth_mode=str(data.get("auth_mode", "interactive") or "interactive"),
+            auto_connect=bool(data.get("auto_connect", False)),
         )
 
 

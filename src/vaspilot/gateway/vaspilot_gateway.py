@@ -42,10 +42,11 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.2.0"
+GATEWAY_VERSION = "1.3.0"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -126,6 +127,11 @@ def validate_server(name: str, entry: dict) -> None:
     scheduler = entry.get("scheduler", "auto")
     if scheduler not in ("auto",) + SCHEDULERS:
         raise ValueError("scheduler must be auto, slurm or pbs")
+    auth_mode = entry.get("auth_mode", "interactive")
+    if auth_mode not in ("interactive", "key"):
+        raise ValueError("auth_mode must be interactive or key")
+    if not isinstance(entry.get("auto_connect", False), bool):
+        raise ValueError("auto_connect must be a boolean")
 
 
 def load_config() -> dict:
@@ -305,11 +311,179 @@ def connected(name: str, timeout: int = 4) -> bool:
         return False
 
 
-def require_connection(name: str) -> None:
-    if not connected(name):
-        raise GatewayError("disconnected",
-                           f"{name} has no reusable SSH session; run "
-                           f"'vaspilot server connect {name}' in a terminal")
+def require_connection(name: str, *, manual: bool = False) -> None:
+    """Ensure a usable session, auto-reconnecting key-mode servers first.
+
+    interactive servers behave exactly as before: no session -> the caller
+    reports ``auth_required`` and a human types the password/TOTP. key-mode
+    servers transparently rebuild their ControlMaster with the per-server
+    key (subject to the reconnect backoff unless ``manual``).
+    """
+    if connected(name):
+        record_reconnect(name, ok=True)
+        return
+    if ensure_session(name, manual=manual):
+        return
+    entry = CFG["servers"][name]
+    if entry.get("auth_mode") == "key":
+        state = reconnect_state(name)
+        raise GatewayError(
+            "disconnected",
+            f"{name} key session unavailable "
+            f"(state={state.get('error_code') or 'retrying'}, "
+            f"retry_in={max(0, int(state.get('next_attempt', 0) - time.time()))}s)")
+    raise GatewayError("disconnected",
+                       f"{name} has no reusable SSH session; run "
+                       f"'vaspilot server connect {name}' in a terminal")
+
+
+# ------------------------------------------- per-server keys + auto reconnect
+KEY_DIR = Path.home() / ".ssh" / "vaspilot"
+BACKOFF_LADDER = (30, 60, 120, 300)     # seconds, capped
+RECONNECT_FILE = CACHE_DIR / "reconnect-state.json"
+
+
+def _key_paths(name: str) -> tuple[Path, Path]:
+    if not SERVER_NAME_RE.fullmatch(name or ""):
+        raise GatewayError("invalid_name", "server name is invalid")
+    return KEY_DIR / name, KEY_DIR / f"{name}.pub"
+
+
+def _load_reconnect() -> dict:
+    try:
+        data = json.loads(RECONNECT_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_reconnect(state: dict) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".reconnect-", dir=str(CACHE_DIR))
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, ensure_ascii=False, sort_keys=True)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, RECONNECT_FILE)
+
+
+def reconnect_state(name: str) -> dict:
+    """Read-only view for status/monitor surfaces (no secrets)."""
+    return {k: v for k, v in _load_reconnect().get(name, {}).items()
+            if k in ("last_attempt", "next_attempt", "failure_count",
+                     "error_code", "error")}
+
+
+def record_reconnect(name: str, *, ok: bool, error_code: str = "",
+                     error: str = "") -> None:
+    state = _load_reconnect()
+    entry = state.get(name, {})
+    if ok:
+        if entry.get("failure_count") or entry.get("error_code"):
+            entry = {"failure_count": 0, "last_attempt": int(time.time())}
+        elif entry:
+            return                # already clean; avoid file churn
+        else:
+            entry = {"failure_count": 0, "last_attempt": int(time.time())}
+    else:
+        count = int(entry.get("failure_count", 0)) + 1
+        gap = BACKOFF_LADDER[min(count - 1, len(BACKOFF_LADDER) - 1)]
+        now = int(time.time())
+        entry = {"failure_count": count,
+                 "last_attempt": now,
+                 "next_attempt": now + gap,
+                 "error_code": (error_code or "failed")[:40],
+                 "error": error[:120]}
+    state[name] = entry
+    _save_reconnect(state)
+
+
+def key_connect(name: str, *, manual: bool = False) -> tuple[bool, str]:
+    """Rebuild the ControlMaster with the per-server key (BatchMode)."""
+    entry = CFG["servers"][name]
+    priv, _pub = _key_paths(name)
+    if not priv.is_file():
+        return False, "key_missing"
+    sock = socket_path(name)
+    if sock.exists():
+        sock.unlink()                 # a stale socket is safe to remove
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        import json as _json
+        cfg_path = os.environ.get("VASPILOT_FAKE_HPC_CONFIG", "")
+        try:
+            fake = _json.loads(
+                Path(cfg_path).read_text(encoding="utf-8")) if cfg_path else {}
+        except (OSError, ValueError):
+            fake = {}
+        srv = fake.get("servers", {}).get(name, {})
+        if srv.get("host_key_fail"):
+            record_reconnect(name, ok=False, error_code="host_key_failed",
+                             error="simulated host key change")
+            return False, "host_key_failed"
+        if srv.get("reject_key"):
+            record_reconnect(name, ok=False, error_code="key_rejected",
+                             error="simulated public key rejection")
+            return False, "key_rejected"
+        if not srv.get("key_installed"):
+            record_reconnect(name, ok=False, error_code="key_rejected",
+                             error="public key not installed yet")
+            return False, "key_rejected"
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        sock.write_text("up\n", encoding="utf-8")
+        record_reconnect(name, ok=True)
+        return True, ""
+    command = [
+        "ssh", "-M", "-S", str(sock),
+        "-o", "ControlMaster=yes",
+        "-o", "ControlPersist=yes",          # unattended survival across days
+        "-o", "BatchMode=yes",
+        "-o", "IdentitiesOnly=yes",
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", "UpdateHostKeys=no",
+        "-o", "ConnectTimeout=15",
+        "-i", str(priv),
+        "-p", str(entry.get("port", 22)), "-fN", entry["target"],
+    ]
+    try:
+        result = subprocess.run(command, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=45)
+    except (OSError, subprocess.TimeoutExpired):
+        record_reconnect(name, ok=False, error_code="network_unreachable",
+                         error="ssh invocation failed")
+        return False, "network_unreachable"
+    low = (result.stderr or "").lower()
+    if result.returncode == 0 and connected(name):
+        record_reconnect(name, ok=True)
+        return True, ""
+    if "host key" in low:
+        record_reconnect(name, ok=False, error_code="host_key_failed",
+                         error=(result.stderr or "").strip()[:120])
+        return False, "host_key_failed"
+    if "permission denied" in low or "publickey" in low or \
+            "authentication failed" in low:
+        record_reconnect(name, ok=False, error_code="key_rejected",
+                         error=(result.stderr or "").strip()[:120])
+        return False, "key_rejected"
+    record_reconnect(name, ok=False, error_code="network_unreachable",
+                     error=(result.stderr or "").strip()[:120])
+    return False, "network_unreachable"
+
+
+def ensure_session(name: str, *, manual: bool = False) -> bool:
+    """Auto-reconnect a key-mode server; never touches interactive servers."""
+    entry = CFG["servers"].get(name, {})
+    if entry.get("auth_mode") != "key" or not entry.get("auto_connect"):
+        return False
+    if manual or not RECONNECT_FILE.exists():
+        ok, _err = key_connect(name, manual=manual)
+        return ok
+    state = _load_reconnect().get(name, {})
+    if state.get("error_code") == "host_key_failed" and not manual:
+        return False                    # fingerprint changes never auto-retry
+    now = time.time()
+    if now < float(state.get("next_attempt", 0)):
+        return False                    # waiting out the backoff window
+    ok, _err = key_connect(name)
+    return ok
 
 
 class GatewayError(Exception):
@@ -1214,7 +1388,10 @@ def op_transfer(args) -> int:
 # ------------------------------------------------------------ server catalog
 def op_servers(args) -> int:
     servers = []
+    state = _load_reconnect()
+    now = time.time()
     for name, entry in sorted(CFG.get("servers", {}).items()):
+        s = state.get(name, {})
         servers.append({
             "name": name,
             "target": entry.get("target", ""),
@@ -1222,7 +1399,19 @@ def op_servers(args) -> int:
             "remote_root": entry.get("remote_root", ""),
             "persist": entry.get("persist", ""),
             "scheduler": entry.get("scheduler", "auto"),
+            "auth_mode": entry.get("auth_mode", "interactive"),
+            "auto_connect": bool(entry.get("auto_connect", False)),
             "connected": connected(name),
+            "reconnect_state": (
+                "online" if connected(name) else
+                ("host_key_failed" if s.get("error_code") == "host_key_failed"
+                 else ("waiting_backoff"
+                       if now < float(s.get("next_attempt", 0))
+                       else ("retrying" if s.get("failure_count") else "-")))),
+            "failure_count": int(s.get("failure_count", 0)),
+            "retry_in": max(0, int(float(s.get("next_attempt", 0)) - now)),
+            "last_connect_error": str(s.get("error", "")
+                                      or s.get("error_code", ""))[:120],
         })
     out({"servers": servers, "default": CFG.get("default_server", ""),
          "gateway_version": GATEWAY_VERSION, "protocol": PROTOCOL_VERSION})
@@ -1238,6 +1427,8 @@ def op_server_add(args) -> int:
         "remote_root": args.root or "",
         "persist": args.persist or "8h",
         "scheduler": args.scheduler or "auto",
+        "auth_mode": getattr(args, "auth_mode", "") or "interactive",
+        "auto_connect": bool(getattr(args, "auto_connect", False)),
     }
     try:
         validate_server(args.name, entry)
@@ -1300,6 +1491,12 @@ def op_server_edit(args) -> int:
     if args.scheduler:
         entry["scheduler"] = args.scheduler
         changed = True
+    if getattr(args, "auth_mode", None):
+        entry["auth_mode"] = args.auth_mode
+        changed = True
+    if getattr(args, "auto_connect", None) is not None:
+        entry["auto_connect"] = bool(args.auto_connect)
+        changed = True
     if not changed:
         return fail("no_changes", "server-edit needs at least one field")
     try:
@@ -1317,17 +1514,46 @@ def op_server_edit(args) -> int:
 # ------------------------------------------------------------- session ops
 def op_status(args) -> int:
     name, entry = resolve_server(args.server)
+    state = reconnect_state(name)
+    now = time.time()
     out({"server": name, "connected": connected(name),
-         "socket": str(socket_path(name))})
+         "socket": str(socket_path(name)),
+         "auth_mode": entry.get("auth_mode", "interactive"),
+         "auto_connect": bool(entry.get("auto_connect", False)),
+         "reconnect_state": (
+             "online" if connected(name) else
+             ("host_key_failed" if state.get("error_code") == "host_key_failed"
+              else ("waiting_backoff"
+                    if now < float(state.get("next_attempt", 0))
+                    else ("retrying" if state.get("failure_count")
+                          else "-")))),
+         "retry_in": max(0, int(float(state.get("next_attempt", 0)) - now)),
+         "failure_count": int(state.get("failure_count", 0)),
+         "last_connect_error": str(state.get("error", ""))[:120]})
     return 0
 
 
 def op_connect(args) -> int:
-    """Establish the ControlMaster session (interactive: password + TOTP)."""
+    """Establish the ControlMaster session.
+
+    interactive servers spawn the prompting master (password + TOTP in the
+    caller's terminal). key-mode servers reconnect with their dedicated key
+    via ``ensure_session``; ``--manual`` bypasses the reconnect backoff.
+    """
     name, entry = resolve_server(args.server)
+    manual = bool(getattr(args, "manual", False))
     if connected(name):
+        record_reconnect(name, ok=True)
         out({"server": name, "connected": True, "already": True})
         return 0
+    if entry.get("auth_mode") == "key" and entry.get("auto_connect"):
+        ok, err = ensure_session(name, manual=manual)
+        if ok:
+            audit("connect", "ok", "key", name)
+            out({"server": name, "connected": True, "via": "key"})
+            return 0
+        return fail(err or "connect_failed",
+                    f"key reconnect failed for {name}: {err}")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     sock = socket_path(name)
     if sock.exists():
@@ -1375,6 +1601,195 @@ def op_disconnect(args) -> int:
     return 0
 
 
+# ------------------------------------------------------- per-server key mgmt
+def _pub_prefix(pub: Path) -> str:
+    """`<type> <b64>` head of the public key — the precise, comment-free
+    identity used for authorized_keys line matching."""
+    parts = pub.read_text(encoding="utf-8").strip().split()
+    if len(parts) < 2:
+        raise GatewayError("key_invalid", "public key file is malformed")
+    return f"{parts[0]} {parts[1]}"
+
+
+def op_key_generate(args) -> int:
+    """Create the per-server Ed25519 pair on this gateway host (Vlab)."""
+    name = args.name
+    if not SERVER_NAME_RE.fullmatch(name or ""):
+        return fail("invalid_name", "server name is invalid")
+    priv, pub = _key_paths(name)
+    if priv.exists() or pub.exists():
+        return fail("key_exists",
+                    "keys already exist; use key-disable/key-revoke instead "
+                    "of overwriting (refusing to clobber)")
+    KEY_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(KEY_DIR, 0o700)
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        priv.write_text("FAKE-PRIVATE\n")
+        pub.write_text(f"ssh-ed25519 FAKEPUB vaspilot:{name}\n")
+    else:
+        result = subprocess.run(
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "",
+             "-C", f"vaspilot:{name}", "-f", str(priv)],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        if result.returncode != 0:
+            return fail("keygen_failed",
+                        (result.stderr or "ssh-keygen failed").strip()[:200])
+    os.chmod(priv, 0o600)
+    audit("key.generate", "ok", name)
+    out({"server": name, "generated": True,
+         "key_material_present": True})
+    return 0
+
+
+def op_key_status(args) -> int:
+    name = args.name
+    if not SERVER_NAME_RE.fullmatch(name or ""):
+        return fail("invalid_name", "server name is invalid")
+    priv, pub = _key_paths(name)
+    entry = CFG["servers"].get(name, {})
+    state = reconnect_state(name)
+    out({
+        "server": name,
+        "auth_mode": entry.get("auth_mode", "interactive"),
+        "auto_connect": bool(entry.get("auto_connect", False)),
+        "key_material_present": priv.is_file() and pub.is_file(),
+        "batch_login_verified": bool(state.get("batch_login_verified")),
+        "last_verified": str(state.get("last_verified", "")),
+        "reconnect_state": ("online" if connected(name) else
+                            state.get("error_code", "-")),
+        "error": str(state.get("error", ""))[:160],
+    })
+    return 0
+
+
+def op_key_install(args) -> int:
+    """Append the public key to the HPC authorized_keys over the LIVE mux,
+    then prove it with a BatchMode login using ONLY the new key."""
+    name, entry = resolve_server(args.name)
+    priv, pub = _key_paths(name)
+    if not (priv.is_file() and pub.is_file()):
+        return fail("key_missing",
+                    "generate the per-server key first (key-generate)")
+    pubfull = pub.read_text(encoding="utf-8").strip()
+    quoted = q(pubfull)
+    remote(name,
+           f"mkdir -p ~/.ssh && chmod 700 ~/.ssh; "
+           f"touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys; "
+           f"grep -qxF {quoted} ~/.ssh/authorized_keys || "
+           f"printf '%s\\n' {quoted} >> ~/.ssh/authorized_keys")
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        # fake mode: reconnect simulation keys off this config flag
+        import json as _json
+        cfg_path = os.environ.get("VASPILOT_FAKE_HPC_CONFIG")
+        try:
+            fake = _json.loads(Path(cfg_path).read_text(encoding="utf-8")) \
+                if cfg_path else {}
+        except (OSError, ValueError):
+            fake = {}
+        fake.setdefault("servers", {}).setdefault(name, {})[
+            "key_installed"] = True
+        if cfg_path:
+            Path(cfg_path).write_text(_json.dumps(fake), encoding="utf-8")
+    else:
+        verify = [
+            "ssh", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+            "-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
+            "-o", "ConnectTimeout=15", "-i", str(priv),
+            "-p", str(entry.get("port", 22)), entry["target"],
+            "echo VP_KEY_OK",
+        ]
+        result = subprocess.run(verify, stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=45)
+        if result.returncode != 0 or "VP_KEY_OK" not in (result.stdout or ""):
+            low = (result.stderr or "").lower()
+            code = ("host_key_failed" if "host key" in low else
+                    "key_rejected" if ("permission denied" in low or
+                                       "publickey" in low) else
+                    "network_unreachable")
+            audit("key.install", "failed", code, name)
+            return fail("key_verify_failed",
+                        f"BatchMode login with the new key failed: {code}; "
+                        "staying in interactive mode")
+    entry["auth_mode"] = "key"
+    entry["auto_connect"] = True
+    servers = dict(CFG.get("servers", {}))
+    servers[name] = {**servers.get(name, {}), **entry}
+    CFG["servers"] = servers
+    save_config(CFG)
+    record_reconnect(name, ok=True)
+    state = _load_reconnect()
+    state.setdefault(name, {})
+    state[name]["batch_login_verified"] = True
+    state[name]["last_verified"] = datetime.now(
+        timezone.utc).isoformat(timespec="seconds")
+    _save_reconnect(state)
+    audit("key.install", "ok", name)
+    out({"server": name, "auth_mode": "key", "auto_connect": True,
+         "batch_login_verified": True})
+    return 0
+
+
+def op_key_disable(args) -> int:
+    """Stop using the key (back to interactive) WITHOUT deleting anything."""
+    name = args.name
+    if name not in CFG.get("servers", {}):
+        return fail("not_found", f"server {name} is not registered")
+    entry = dict(CFG["servers"][name])
+    entry["auth_mode"] = "interactive"
+    entry["auto_connect"] = False
+    servers = dict(CFG.get("servers", {}))
+    servers[name] = entry
+    CFG["servers"] = servers
+    save_config(CFG)
+    audit("key.disable", "ok", name)
+    out({"server": name, "auth_mode": "interactive", "auto_connect": False,
+         "key_material_present":
+             all(p.is_file() for p in _key_paths(name))})
+    return 0
+
+
+def op_key_revoke(args) -> int:
+    """Remove the exact `vaspilot:<server>` public key from the HPC and
+    delete the gateway-side pair. Requires the typed server name twice and
+    a live session; anything ambiguous aborts without touching the file."""
+    name, entry = resolve_server(args.name)
+    confirm = getattr(args, "confirm_server", "")
+    if confirm != name:
+        return fail("confirm_mismatch",
+                    f"revoke requires --confirm-server to exactly repeat "
+                    f"the server name {name}")
+    priv, pub = _key_paths(name)
+    if not pub.is_file():
+        return fail("key_missing", "no gateway-side public key to revoke")
+    prefix = _pub_prefix(pub)
+    pubfull = pub.read_text(encoding="utf-8").strip()
+    check = remote(name, f"grep -cF {q(pubfull)} ~/.ssh/authorized_keys || true")
+    removed = int(check.strip() or 0)
+    if removed > 1:
+        return fail("ambiguous", f"{removed} identical lines found; "
+                                 "refusing to edit authorized_keys blindly")
+    if removed == 1:
+        remote(name,
+               f"awk 'index($0, prefix) != 1' prefix={q(prefix)} "
+               f"~/.ssh/authorized_keys > ~/.ssh/authorized_keys.vptmp && "
+               f"mv ~/.ssh/authorized_keys.vptmp ~/.ssh/authorized_keys && "
+               f"chmod 600 ~/.ssh/authorized_keys")
+    priv.unlink(missing_ok=True)
+    pub.unlink(missing_ok=True)
+    if name in CFG.get("servers", {}):
+        entry = dict(CFG["servers"][name])
+        entry["auth_mode"] = "interactive"
+        entry["auto_connect"] = False
+        servers = dict(CFG.get("servers", {}))
+        servers[name] = entry
+        CFG["servers"] = servers
+        save_config(CFG)
+    audit("key.revoke", "ok", f"{name} removed={removed}")
+    out({"server": name, "revoked": True, "lines_removed": removed,
+         "auth_mode": "interactive"})
+    return 0
+
+
 def op_whoami(args) -> int:
     name, entry = resolve_server(args.server)
     raw = remote(name, 'echo "$(id -un)@$(hostname -s):$(pwd)"').strip()
@@ -1410,6 +1825,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root", default="")
     p.add_argument("--persist", default="8h")
     p.add_argument("--scheduler", default="auto", choices=["auto", "slurm", "pbs"])
+    p.add_argument("--auth-mode", default="interactive",
+                   choices=["interactive", "key"])
+    p.add_argument("--auto-connect", action="store_true")
 
     p = add("server-remove", op_server_remove, server=False)
     p.add_argument("name")
@@ -1422,11 +1840,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--root")
     p.add_argument("--persist")
     p.add_argument("--scheduler", choices=["auto", "slurm", "pbs"])
+    p.add_argument("--auth-mode", choices=["interactive", "key"])
+    p.add_argument("--auto-connect", dest="auto_connect",
+                   action="store_true", default=None)
 
     add("status", op_status)
-    add("connect", op_connect)
+    p = add("connect", op_connect)
+    p.add_argument("--manual", action="store_true",
+                   help="bypass the reconnect backoff for this attempt")
     add("disconnect", op_disconnect)
     add("whoami", op_whoami)
+
+    # ---------------------------------------------- per-server key lifecycle
+    p = add("key-generate", op_key_generate, server=False)
+    p.add_argument("name")
+    p = add("key-install", op_key_install)
+    p.add_argument("name")
+    p = add("key-status", op_key_status, server=False)
+    p.add_argument("name")
+    p = add("key-disable", op_key_disable, server=False)
+    p.add_argument("name")
+    p = add("key-revoke", op_key_revoke)
+    p.add_argument("name")
+    p.add_argument("--confirm-server", required=True)
 
     p = add("pwd", op_pwd)
     p = add("list", op_list)

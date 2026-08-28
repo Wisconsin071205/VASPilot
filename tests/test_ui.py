@@ -822,3 +822,20 @@ class TestMonitorApi:
         assert call(ui, "settings")["temperature_alert_c"] == 90.0
         bad = call(ui, "monitor.save", {"temperature_alert_c": 200})
         assert bad["ok"] is False
+
+
+class TestMonitorAuthView:
+    """监控视图携带认证模式与重连状态（密钥直连特性）。"""
+
+    def test_monitor_snapshot_exposes_auth_fields(self, ui):
+        r = call(ui, "monitor.snapshot", {})
+        assert r["ok"]
+        for server in r["servers"]:
+            assert "auth_mode" in server
+            assert "reconnect_state" in server
+
+    def test_state_includes_auth_fields(self, ui):
+        r = call(ui, "state")
+        names = {s["name"]: s for s in r["servers"]}
+        assert names["cl9"]["auth_mode"] == "interactive"
+        assert names["cl9"]["auto_connect"] is False

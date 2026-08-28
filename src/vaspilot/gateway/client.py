@@ -8,11 +8,12 @@ CLI, the agent tool registry and the MCP server use to touch remote systems.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from ..core.audit import AuditLog
 from ..core.config import Config, ServerEntry
-from ..core.errors import RemoteError, ValidationError
+from ..core.errors import AuthRequiredError, RemoteError, ValidationError
 from ..core.hashing import file_sha256
 from ..core.validation import (confirm_match, remote_path, scheduler_kind,
                                valid_filename, valid_glob, valid_job_id,
@@ -75,18 +76,23 @@ class GatewayClient:
 
     def server_add(self, *, name: str, target: str, port: int = 22,
                    remote_root: str = "", persist: str = "8h",
-                   scheduler: str = "auto", set_default: bool = False) -> dict:
+                   scheduler: str = "auto", set_default: bool = False,
+                   auth_mode: str = "interactive",
+                   auto_connect: bool = False) -> dict:
         name = valid_server_name(name)
         if scheduler not in ("auto", "slurm", "pbs"):
             raise ValidationError("scheduler must be auto, slurm or pbs")
         result = self._call("server.add", [
             "server-add", name, "--target", target, "--port", str(port),
             "--root", remote_root, "--persist", persist,
-            "--scheduler", scheduler])
+            "--scheduler", scheduler,
+            "--auth-mode", auth_mode]
+            + (["--auto-connect"] if auto_connect else []))
         # keep the local mirror in sync (metadata only)
         self.config.upsert_server(ServerEntry(
             name=name, target=target, port=port, remote_root=remote_root,
-            persist=persist, scheduler=scheduler))
+            persist=persist, scheduler=scheduler,
+            auth_mode=auth_mode, auto_connect=auto_connect))
         if set_default:
             self.config.set_default_server(name)
             self.transport.run_gateway(
@@ -96,7 +102,9 @@ class GatewayClient:
     def server_edit(self, name: str, *, target: str | None = None,
                     port: int | None = None, remote_root: str | None = None,
                     persist: str | None = None,
-                    scheduler: str | None = None) -> dict:
+                    scheduler: str | None = None,
+                    auth_mode: str | None = None,
+                    auto_connect: bool | None = None) -> dict:
         name = valid_server_name(name)
         args = ["server-edit", name]
         if target is not None:
@@ -109,6 +117,10 @@ class GatewayClient:
             args += ["--persist", persist]
         if scheduler is not None:
             args += ["--scheduler", scheduler_kind(scheduler)]
+        if auth_mode is not None:
+            args += ["--auth-mode", auth_mode]
+        if auto_connect is not None and auto_connect:
+            args += ["--auto-connect"]
         result = self._call("server.edit", args)
         # refresh the mirror entry
         entry = self.server_entry(name)
@@ -122,6 +134,10 @@ class GatewayClient:
             entry.persist = persist
         if scheduler is not None:
             entry.scheduler = scheduler
+        if auth_mode is not None:
+            entry.auth_mode = auth_mode
+        if auto_connect is not None:
+            entry.auto_connect = auto_connect
         self.config.upsert_server(entry)
         return result
 
@@ -150,7 +166,10 @@ class GatewayClient:
                 port=int(item.get("port", 22) or 22),
                 remote_root=str(item.get("remote_root", "") or ""),
                 persist=str(item.get("persist", "") or ""),
-                scheduler=str(item.get("scheduler", "auto") or "auto")))
+                scheduler=str(item.get("scheduler", "auto") or "auto"),
+                auth_mode=str(item.get("auth_mode", "interactive")
+                              or "interactive"),
+                auto_connect=bool(item.get("auto_connect", False))))
         self.config.save_servers(entries, default=str(catalog.get("default", "")))
         return entries
 
@@ -164,6 +183,106 @@ class GatewayClient:
         if self.audit:
             self.audit.record("server.connect", outcome="ok", server=name)
         return result
+
+    def connect(self, server: str | None = None, *,
+                manual: bool = True) -> dict:
+        """Unattended connect: key-mode servers reconnect with their key;
+        interactive servers raise instead of ever answering a prompt."""
+        name = self._require(server)
+        entry = self.server_entry(name)
+        if entry.auth_mode != "key":
+            raise AuthRequiredError(
+                f"{name} is interactive; run 'vaspilot server connect "
+                f"{name}' in a terminal")
+        args = ["connect", "--server", name]
+        if manual:
+            args.append("--manual")
+        result = self._call("server.connect", args)
+        if self.audit:
+            self.audit.record("server.connect", outcome="ok", server=name)
+        return result
+
+    def ensure_session(self, server: str | None = None, *,
+                       manual: bool = False) -> dict:
+        """Session-or-reconnect used by read/scheduler/progress paths."""
+        name = self._require(server)
+        try:
+            self.refresh_server_mirror()   # auth fields must be current
+        except Exception:
+            pass
+        entry = self.server_entry(name)
+        if entry.auth_mode == "key" and entry.auto_connect:
+            return self.connect(name, manual=manual)
+        return self.status(name)
+
+    def key_generate(self, server: str | None = None) -> dict:
+        name = self._require(server)
+        return self._call("server.key_generate",
+                          ["key-generate", name], server=name)
+
+    def key_install(self, server: str | None = None) -> dict:
+        name = self._require(server)
+        return self._call("server.key_install",
+                          ["key-install", name], server=name)
+
+    def key_status(self, server: str | None = None) -> dict:
+        name = self._require(server)
+        return self._call("server.key_status", ["key-status", name],
+                          server=name)
+
+    def key_disable(self, server: str | None = None) -> dict:
+        name = self._require(server)
+        return self._call("server.key_disable", ["key-disable", name],
+                          server=name)
+
+    def key_revoke(self, server: str | None = None, *,
+                   confirm_server: str = "") -> dict:
+        name = self._require(server)
+        return self._call("server.key_revoke",
+                          ["key-revoke", name,
+                           "--confirm-server", confirm_server or name],
+                          server=name)
+
+    def key_setup(self, server: str | None = None, *,
+                  wait_seconds: int = 180) -> dict:
+        """Human-driven key onboarding: generate, ensure ONE last interactive
+        login (visible terminal), install + verify, flip to key/auto.
+
+        Must be run by the person in their own terminal -- never callable
+        end-to-end by a model (MCP only opens the terminal).
+        """
+        name = self._require(server)
+        entry = self.server_entry(name)
+        generated = self.key_generate(name)
+        status = self.status(name)
+        if not status.get("connected"):
+            self.open_login_terminal(name)
+            deadline = time.time() + max(30, min(wait_seconds, 600))
+            while time.time() < deadline:
+                time.sleep(3)
+                try:
+                    status = self.status(name)
+                except Exception:
+                    continue
+                if status.get("connected"):
+                    break
+            else:
+                return {"ok": False, "server": name,
+                        "error": "no live session appeared; finish the "
+                                 "password/TOTP login and rerun "
+                                 "'vaspilot server key-setup'"}
+        installed = self.key_install(name)
+        try:
+            self.refresh_server_mirror()   # mirror must see auth_mode=key
+        except Exception:
+            pass
+        final = self.key_status(name)
+        return {"ok": True, "server": name, "generated": generated.get(
+                    "key_material_present", True),
+                "auth_mode": final.get("auth_mode"),
+                "auto_connect": final.get("auto_connect"),
+                "batch_login_verified": final.get("batch_login_verified"),
+                "install": installed}
 
     def open_login_terminal(self, server: str | None = None) -> dict:
         """Open the fast-path login terminal for one server.

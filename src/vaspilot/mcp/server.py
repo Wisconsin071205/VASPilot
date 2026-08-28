@@ -76,6 +76,41 @@ def _wrap(app, registry) -> list[dict[str, Any]]:
                         "required": ["plan_id"], "additionalProperties": False},
     })
     tools.append({
+        "name": "server_connect",
+        "description": "Connect one registered server. key-mode servers "
+                       "reconnect unattended with their dedicated key "
+                       "(subject to reconnect backoff; host-key failures are "
+                       "never retried). interactive servers return "
+                       "needs_interactive — use open_remote_login instead.",
+        "inputSchema": {"type": "object",
+                        "properties": {"server": {"type": "string",
+                                                  "pattern": SERVER_RE.pattern}},
+                        "required": ["server"], "additionalProperties": False},
+    })
+    tools.append({
+        "name": "server_key_status",
+        "description": "Read-only key-auth status for one server: auth_mode, "
+                       "auto_connect, key_material_present, "
+                       "batch_login_verified, reconnect state. Never returns "
+                       "key paths, content or fingerprints.",
+        "inputSchema": {"type": "object",
+                        "properties": {"server": {"type": "string",
+                                                  "pattern": SERVER_RE.pattern}},
+                        "required": ["server"], "additionalProperties": False},
+    })
+    tools.append({
+        "name": "open_key_setup_terminal",
+        "description": "Open a visible terminal pre-loaded with the one-shot "
+                       "'vaspilot server key-setup <server>' command for the "
+                       "user to run. Key installation and revocation are "
+                       "human-only actions; the model can never perform "
+                       "them. The user types the last password/TOTP there.",
+        "inputSchema": {"type": "object",
+                        "properties": {"server": {"type": "string",
+                                                  "pattern": SERVER_RE.pattern}},
+                        "required": ["server"], "additionalProperties": False},
+    })
+    tools.append({
         "name": "vaspilot_self_check",
         "description": "Return the backend's own consistency report: registry "
                        "size, gateway protocol version requirement, and "
@@ -148,6 +183,21 @@ def _dispatch(app, registry, name: str, arguments: Any) -> dict[str, Any]:
             raise ValueError("server must be a registered simple name")
         result = app.client().open_login_terminal(server)
         return result
+    if name == "server_connect":
+        server = str(args.get("server") or "")
+        if not SERVER_RE.fullmatch(server):
+            raise ValueError("server must be a registered simple name")
+        return app.client().ensure_session(server, manual=True)
+    if name == "server_key_status":
+        server = str(args.get("server") or "")
+        if not SERVER_RE.fullmatch(server):
+            raise ValueError("server must be a registered simple name")
+        return app.client().key_status(server)
+    if name == "open_key_setup_terminal":
+        server = str(args.get("server") or "")
+        if not SERVER_RE.fullmatch(server):
+            raise ValueError("server must be a registered simple name")
+        return _spawn_key_setup_terminal(server)
     if name == "open_approval_terminal":
         plan_id = str(args.get("plan_id") or "")
         if not re.fullmatch(r"[0-9a-f]{16}", plan_id):
@@ -196,6 +246,26 @@ def _spawn_approval_terminal(plan_id: str) -> dict[str, Any]:
     return {"opened": True, "plan_id": plan_id,
             "note": "the approval phrase must be typed in the new terminal; "
                     "this tool never returns the approval reference"}
+
+
+def _spawn_key_setup_terminal(server: str) -> dict[str, Any]:
+    """Open a NEW VISIBLE console pre-loaded with the key-setup command.
+
+    The tool NEVER runs key-setup itself: installation and revocation are
+    human-only actions performed in the visible terminal.
+    """
+    import subprocess
+    command = [sys.executable, "-m", "vaspilot", "server", "key-setup", server]
+    creationflags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+    try:
+        subprocess.Popen(command, creationflags=creationflags)
+    except OSError as exc:
+        raise RuntimeError(f"could not open the key-setup terminal: {exc}") \
+            from exc
+    return {"opened": True, "server": server,
+            "note": "run the printed 'vaspilot server key-setup' command in "
+                    "the new terminal; type the final password/TOTP there. "
+                    "Then call server_key_status to confirm."}
 
 
 def _response(request_id, result) -> dict:
@@ -255,7 +325,8 @@ def self_test() -> int:
     names = {t["name"] for t in tools}
     expected = {"server_list", "remote_list", "remote_read", "vasp_progress",
                 "job_state", "open_remote_login", "open_approval_terminal",
-                "vaspilot_self_check"}
+                "vaspilot_self_check", "server_connect", "server_key_status",
+                "open_key_setup_terminal"}
     missing = expected - names
     assert not missing, f"missing tools: {missing}"
     # no shell-ish tool may ever appear

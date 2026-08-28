@@ -30,6 +30,8 @@ def gateway_env(tmp_path, monkeypatch):
     for directory in (config_dir, cache_dir, fs, stage):
         directory.mkdir(parents=True)
     fake_config = tmp_path / "fake-hpc-config.json"
+    vlab_home = tmp_path / "vlab-home"
+    vlab_home.mkdir()
     fake_config.write_text(json.dumps({
         "servers": {"cl9": {"root": ROOT, "real": str(fs),
                             "scheduler": "slurm"}},
@@ -41,6 +43,10 @@ def gateway_env(tmp_path, monkeypatch):
     monkeypatch.setenv("VASPILOT_FAKE_HPC_CONFIG", str(fake_config))
     # gateway-local stage reads resolve into the fixture stage dir
     monkeypatch.setenv("VASPILOT_GATEWAY_STAGE_DIR", str(stage))
+    # the gateway generates per-server keys under ~/.ssh/vaspilot —
+    # redirect HOME/USERPROFILE so tests never touch the real home
+    monkeypatch.setenv("HOME", str(vlab_home))
+    monkeypatch.setenv("USERPROFILE", str(vlab_home))
 
     def run(*args, check=False):
         result = subprocess.run(
@@ -61,7 +67,7 @@ def gateway_env(tmp_path, monkeypatch):
         "--persist", "8h", "--scheduler", "slurm", check=True)
     run("connect", "--server", "cl9", check=True)
     return {"run": run, "fs": fs, "stage": stage, "cache": cache_dir,
-            "config": config_dir}
+            "config": config_dir, "fake_config": fake_config}
 
 
 class TestConfinement:
@@ -269,7 +275,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.2.0"
+        assert result["gateway_version"] == "1.3.0"
 
     def test_exec_passthrough(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9",
@@ -325,3 +331,99 @@ def test_pbs_sched_section_columns():
     assert rows["normal"]["state"].startswith("E")
     assert rows["short"]["queued"] == 0
     assert rows["atk"]["run"] == 1
+
+
+class TestKeyAuthLifecycle:
+    """v1.3.0 per-server key auth + auto reconnect, against the REAL
+    gateway script with the fake HPC."""
+
+    def _flip(self, gateway_env, name, **flags):
+        import json
+        path = gateway_env["fake_config"]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        entry = data.setdefault("servers", {}).setdefault(name, {})
+        entry.update(flags)
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+    def _marker(self, gateway_env):
+        return gateway_env["cache"] / "ctl-cl9.sock"
+
+    def test_generate_refuses_overwrite(self, gateway_env):
+        run = gateway_env["run"]
+        first = run("key-generate", "cl9")
+        assert first["ok"] is True and first["key_material_present"] is True
+        again = run("key-generate", "cl9")
+        assert again["ok"] is False and again["error"]["code"] == "key_exists"
+
+    def test_install_requires_live_session(self, gateway_env):
+        run = gateway_env["run"]
+        run("key-generate", "cl9")
+        run("disconnect", "--server", "cl9", check=True)
+        result = run("key-install", "cl9")
+        assert result["ok"] is False
+        assert result["error"]["code"] == "disconnected"
+
+    def test_full_lifecycle_with_auto_reconnect(self, gateway_env):
+        run = gateway_env["run"]
+        assert run("key-generate", "cl9")["ok"] is True
+        run("key-install", "cl9")
+        servers = run("servers")["servers"]
+        me = next(s for s in servers if s["name"] == "cl9")
+        assert me["auth_mode"] == "key" and me["auto_connect"] is True
+        # Vlab/HPC restart: kill the ControlMaster socket, then any read op
+        # must transparently rebuild the session with the key
+        self._marker(gateway_env).unlink()
+        result = run("whoami", "--server", "cl9")
+        assert result["ok"] is True
+        assert self._marker(gateway_env).exists()   # session rebuilt
+
+    def test_key_rejection_surfaces_and_backs_off(self, gateway_env):
+        run = gateway_env["run"]
+        run("key-generate", "cl9")
+        run("key-install", "cl9")
+        self._flip(gateway_env, "cl9", reject_key=True)
+        self._marker(gateway_env).unlink()
+        result = run("whoami", "--server", "cl9")
+        assert result["ok"] is False
+        assert "key_rejected" in result["error"]["message"]
+        import json
+        state = json.loads((gateway_env["cache"] /
+                            "reconnect-state.json").read_text())
+        assert state["cl9"]["failure_count"] == 1
+        assert state["cl9"]["error_code"] == "key_rejected"
+
+    def test_host_key_failure_fails_closed(self, gateway_env):
+        run = gateway_env["run"]
+        run("key-generate", "cl9")
+        run("key-install", "cl9")
+        self._flip(gateway_env, "cl9", host_key_fail=True)
+        self._marker(gateway_env).unlink()
+        first = run("whoami", "--server", "cl9")
+        assert first["ok"] is False
+        assert "host_key_failed" in first["error"]["message"]
+        import json, time
+        state = json.loads((gateway_env["cache"] /
+                            "reconnect-state.json").read_text())
+        count = state["cl9"]["failure_count"]
+        time.sleep(0.2)
+        second = run("whoami", "--server", "cl9")
+        assert second["ok"] is False
+        state = json.loads((gateway_env["cache"] /
+                            "reconnect-state.json").read_text())
+        assert state["cl9"]["failure_count"] == count   # never auto-retried
+
+    def test_backoff_ladder_30_60_120_300(self, gateway_env):
+        run = gateway_env["run"]
+        run("key-generate", "cl9")
+        run("key-install", "cl9")
+        self._flip(gateway_env, "cl9", reject_key=True)
+        import json
+        gaps = []
+        for _ in range(4):
+            self._marker(gateway_env).unlink(missing_ok=True)
+            run("connect", "--server", "cl9", "--manual")   # force attempt
+            state = json.loads((gateway_env["cache"] /
+                                "reconnect-state.json").read_text())
+            entry = state["cl9"]
+            gaps.append(entry["next_attempt"] - entry["last_attempt"])
+        assert gaps == [30, 60, 120, 300]
