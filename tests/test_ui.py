@@ -124,13 +124,13 @@ class TestTokenGuard:
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "VASPilot" in body and "vaspilot ui" in body
+        assert "胡伟团队专用智能体" in body and "vaspilot ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "VASPilot" in html and "chatinput" in html
+        assert "胡伟团队专用智能体" in html and "chatinput" in html
 
 
 class TestPortFallback:

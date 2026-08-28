@@ -34,7 +34,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 MAX_BODY = 1 << 20  # 1 MiB request cap
 
 _EXPIRED_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>会话已过期 — VASPilot</title><style>
+<title>会话已过期 — 胡伟团队专用智能体</title><style>
 body{background:#0d1117;color:#e6edf3;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{max-width:520px;background:#161b22;border:1px solid #2d3644;border-radius:12px;padding:28px 32px}
@@ -43,20 +43,20 @@ code{background:#1c2330;border-radius:5px;padding:2px 7px;font-size:13px;color:#
 </style></head><body><div class="card">
 <h1>⏱ 会话已过期</h1>
 <p>每次启动 <code>vaspilot ui</code> 都会生成新的会话令牌，旧标签页的链接随之失效。</p>
-<p>请重新打开：<b>桌面「VASPilot 控制台」</b>快捷方式，或在终端运行
+<p>请重新打开：<b>桌面「胡伟团队专用智能体」</b>快捷方式，或在终端运行
 <code>vaspilot ui</code> —— 浏览器会自动打开新会话。</p>
 <p style="font-size:12px">若提示端口被占用，服务会自动改用相邻端口并打印实际地址。</p>
 </div></body></html>"""
 
 _LANDING_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>VASPilot 控制台</title><style>
+<title>胡伟团队专用智能体</title><style>
 body{background:#0d1117;color:#e6edf3;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{max-width:520px;background:#161b22;border:1px solid #2d3644;border-radius:12px;padding:28px 32px}
 h1{font-size:18px;margin:0 0 10px}p{color:#9aa7b8;margin:8px 0}
 code{background:#1c2330;border-radius:5px;padding:2px 7px;font-size:13px;color:#4f9cf7}
 </style></head><body><div class="card">
-<h1>VASPilot 控制台</h1>
+<h1>胡伟团队专用智能体</h1>
 <p>控制台通过带会话令牌的地址访问，请从快捷方式或命令启动（浏览器会自动打开）：</p>
 <p><code>vaspilot ui</code></p>
 <p style="font-size:12px">这是设计如此：令牌防止本机其他页面盗用控制台 API。</p>
