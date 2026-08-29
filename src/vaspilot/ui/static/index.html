@@ -466,7 +466,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <section class="view" id="v-files">
     <div class="card">
       <div class="row">
-        <div class="fg"><label>服务器</label><select id="fsrv"></select></div>
+        <div class="fg"><label>服务器</label><select id="fsrv" onchange="pickFileServer()"></select></div>
         <div class="fg" style="flex:1"><label>远端路径（须在服务器根内）</label>
           <input id="fpath" style="width:420px" placeholder="/public/home/…"></div>
         <button class="btn ghost" id="fup" onclick="goUp()" disabled title="已在服务器根目录">上一级</button>
@@ -821,14 +821,14 @@ window.addEventListener("error", e => {
 let STATE = {servers:[], providers:[], default_provider:""};
 let CURRENT_PLAN = null, CURRENT_APPROVAL = null;
 
-async function api(action, body = {}) {
+async function api(action, body = {}, silent = false) {
   const res = await fetch("/api/" + action, {
     method: action === "workflow.status" ? "GET" : "POST",
     headers: {"Content-Type": "application/json", "X-Vaspilot-Token": TOKEN},
     body: action === "workflow.status" ? undefined : JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({ok:false, error:{message:"响应解析失败"}}));
-  if (!data.ok && data.error) toast(data.error.message, "err");
+  if (!data.ok && data.error && !silent) toast(data.error.message, "err");
   return data;
 }
 function toast(text, kind = "") {
@@ -849,6 +849,8 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "flow") refreshProjects();
+  if (t.dataset.v === "files" && !document.getElementById("fpath").value)
+    pickFileServer();
 });
 document.getElementById("ver").textContent = "v" + (location.search.includes("debug") ? "?" : "");
 document.getElementById("chatinput").addEventListener("keydown", e => {
@@ -954,6 +956,20 @@ setInterval(() => {
 function remoteRootOf(server) {
   const s = (STATE.servers || []).find(x => x.name === server);
   return (s && s.remote_root) || "";
+}
+async function pickFileServer() {
+  // 选服务器即自动定位根目录：优先用配置里的 remote_root；没配置则向网关
+  // 查询该服务器探测到的有效根（登录主目录），第一级目录无需手动输入。
+  // 查询失败（如未连接）静默跳过，不打扰。
+  const server = document.getElementById("fsrv").value;
+  let root = remoteRootOf(server);
+  if (!root) {
+    const r = await api("remote.pwd", {server}, true);
+    if (r.ok && (r.root || r.pwd)) root = String(r.root || r.pwd).trim();
+  }
+  if (!root || document.getElementById("fpath").value === root) return;
+  document.getElementById("fpath").value = root;
+  if (document.getElementById("v-files").classList.contains("on")) browse();
 }
 function parentDir(path) {
   // parent from the server-normalized absolute path; never emits ".."
@@ -2437,6 +2453,7 @@ async function saveSkillModal() {
 refreshServers().then(() => Promise.all([
   loadSnapshot(), loadSettings(), loadSessions(true), refreshProjects(),
 ])).then(() => {
+  pickFileServer();  // 启动即为文件页预填默认服务器的根目录
   // 恢复最近会话的历史气泡
   if (CURRENT_SESSION) openSession(CURRENT_SESSION);
 });

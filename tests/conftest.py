@@ -185,8 +185,13 @@ class FakeTransport:
 
     def op_pwd(self, args):
         server = self._server(args)
-        return {"ok": True, "server": server,
-                "root": self.state.servers[server]["root"]}
+        if not self.state.connected.get(server):
+            return {"ok": False, "error": {
+                "code": "disconnected",
+                "message": f"{server} has no reusable SSH session; run "
+                           f"'vaspilot server connect {server}' in a terminal"}}
+        root = self.state.servers[server]["root"]
+        return {"ok": True, "server": server, "root": root, "pwd": root}
 
     def op_list(self, args):
         server = self._server(args)

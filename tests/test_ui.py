@@ -131,6 +131,8 @@ class TestTokenGuard:
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
         assert "胡伟团队专用智能体" in html and "chatinput" in html
+        # files view auto-fills the server root (no manual first-level path)
+        assert "pickFileServer" in html
 
 
 class TestPortFallback:
@@ -185,6 +187,18 @@ class TestViews:
         doc = call(ui, "remote.read", {"server": "cl9",
                                        "path": f"{ROOT}/runs/good/INCAR"})
         assert "SYSTEM=good" in doc["content"]
+
+    def test_remote_pwd_reports_effective_root(self, ui):
+        doc = call(ui, "remote.pwd", {"server": "cl9"})
+        assert doc["ok"]
+        assert doc["root"] == ROOT
+        assert doc["pwd"] == ROOT
+
+    def test_remote_pwd_disconnected_maps_to_json(self, ui):
+        ui["state"].connected["cl9"] = False
+        doc = call(ui, "remote.pwd", {"server": "cl9"})
+        assert doc["ok"] is False
+        assert doc["error"]["code"] == "auth_required"
 
     def test_outside_root_rejected_as_json(self, ui):
         payload = call(ui, "remote.list", {"server": "cl9", "path": "/etc"})

@@ -234,6 +234,11 @@ class UiHandler(BaseHTTPRequestHandler):
             elif action == "remote.read":
                 self._send_json(client.read(str(body.get("path") or ""),
                                             server=body.get("server")))
+            elif action == "remote.pwd":
+                # gateway reports the server's effective root (configured
+                # remote_root, else the probed login home) so the Files view
+                # can auto-fill the first-level directory
+                self._send_json(client.pwd(str(body.get("server") or "")))
             elif action == "job.list":
                 document = client.jobs(server=body.get("server"))
                 self._job_ledger().observe(_server_name(body),
