@@ -149,6 +149,21 @@ class FakeHpc:
                     "slurm\ncpu|up|4|160/64/0/224\n"
                     "__VP_HB__\n\n"
                     "__VP_DONE__\n")
+            if "qstat -f" in command:
+                return 0, (
+                    "Job Id: 5001.admin\n"
+                    "    Job_Name = relax_case1\n"
+                    "    job_state = R\n"
+                    "    queue = work\n"
+                    "    resources_used.walltime = 00:12:34\n"
+                    "    stime = Fri Aug 29 10:00:00 2026\n"
+                    "Job Id: 5000.admin\n"
+                    "    Job_Name = bader_run\n"
+                    "    job_state = F\n"
+                    "    queue = work\n"
+                    "    resources_used.walltime = 01:02:03\n"
+                    "    resources_used.exit_status = 0\n"
+                    "    mtime = Fri Aug 29 11:02:03 2026\n")
             # arbitrary exec passthrough (audit-only remote shell)
             if command.startswith("echo "):
                 return 0, command[5:].strip() + "\n"

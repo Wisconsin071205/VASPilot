@@ -608,9 +608,74 @@ def normalize_state(raw: str) -> str:
         return "RUNNING"
     if code.startswith("PD") or code.startswith("P") or code == "Q":
         return "PENDING"
+    if code == "E":
+        return "EXITING"
+    if code == "H":
+        return "HELD"
+    if code == "S":
+        return "SUSPENDED"
     if code.startswith("C") or code.startswith("F"):
         return "COMPLETED"
     return code or "UNKNOWN"
+
+
+def _pbs_parse_qstat_f(raw: str) -> dict[str, dict]:
+    """Parse classic `qstat -f` stanzas (PBS Pro & Torque) into
+    {job_id: {name, state, elapsed, partition, nodes, completed_at,
+    exit_status, limit}} — the only PBS format that reliably exposes
+    walltime and the end timestamp for FINISHED jobs."""
+    import time as _t
+
+    jobs: dict[str, dict] = {}
+    current: dict | None = None
+    last_key: str | None = None
+    for raw_line in (raw or "").splitlines():
+        line = raw_line.rstrip()
+        if line.startswith("Job Id:"):
+            job_id = line.split(":", 1)[1].strip().split(".")[0]
+            current = {"job_id": job_id}
+            jobs[job_id] = current
+            last_key = None
+            continue
+        if current is None:
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if line.startswith(("    ", "\t")) and " = " in stripped \
+                and not stripped.startswith(" " * 6 + "&&"):
+            key, _, value = stripped.partition(" = ")
+            key = key.strip().split(".")[-1]        # strip resources_used.
+            current[key] = value.strip()
+            last_key = key
+        elif last_key and stripped and not stripped.startswith(("+++", "===")):
+            current[last_key] = (current.get(last_key, "") + " "
+                                 + stripped).strip()
+    for job in jobs.values():
+        state = normalize_state(job.pop("job_state", "UNKNOWN"))
+        if "exit_status" in job and job["exit_status"].isdigit() \
+                and int(job["exit_status"]) != 0 and state == "COMPLETED":
+            state = "FAILED"
+        job["state"] = state
+        job["name"] = job.pop("Job_Name", "")
+        if "walltime" in job:
+            job["elapsed"] = job.pop("walltime")
+        if "mtime" in job and state in ("COMPLETED", "FAILED", "EXITING"):
+            try:
+                job["completed_at"] = datetime.strptime(
+                    job.pop("mtime"), "%a %b %d %H:%M:%S %Y"
+                ).astimezone().isoformat(timespec="seconds")
+            except ValueError:
+                job.pop("mtime", None)
+        if "stime" in job:
+            try:
+                job["started_at"] = datetime.strptime(
+                    job.pop("stime"), "%a %b %d %H:%M:%S %Y"
+                ).astimezone().isoformat(timespec="seconds")
+            except ValueError:
+                job.pop("stime", None)
+        job.setdefault("completed_at", "")
+    return jobs
 
 
 # ------------------------------------------------------------- vasp parsing
@@ -984,22 +1049,32 @@ def op_jobs(args) -> int:
     name, entry = resolve_server(args.server)
     scheduler = scheduler_for(name, entry)
     if scheduler == "pbs":
-        command = 'qstat -u "$(id -un)"'
+        raw = remote(name, "qstat -f 2>/dev/null || qstat -fx 2>/dev/null")
+        mapped = _pbs_parse_qstat_f(raw)
+        active_states = ("RUNNING", "PENDING", "EXITING", "HELD",
+                         "SUSPENDED")
+        jobs = [{"job_id": j["job_id"], "state": j["state"],
+                 "elapsed": j.get("elapsed", ""),
+                 "limit": j.get("walltime", j.get("limit", "")),
+                 "partition": j.get("queue", ""),
+                 "name": j.get("name", ""),
+                 "nodes": j.get("exec_host", "")[:80]}
+                for j in mapped.values() if j["state"] in active_states]
     else:
         command = ('squeue -u "$(id -un)" -h -o '
                    '"%i|%T|%M|%L|%P|%j|%N"')
-    raw = remote(name, command)
-    jobs = []
-    for line in raw.splitlines():
-        fields = [f.strip() for f in line.split("|")]
-        if len(fields) >= 2 and fields[0][:1].isdigit():
-            jobs.append({"job_id": fields[0].split(".")[0],
-                         "state": normalize_state(fields[1]),
-                         "elapsed": fields[2] if len(fields) > 2 else "",
-                         "limit": fields[3] if len(fields) > 3 else "",
-                         "partition": fields[4] if len(fields) > 4 else "",
-                         "name": fields[5] if len(fields) > 5 else "",
-                         "nodes": fields[6] if len(fields) > 6 else ""})
+        raw = remote(name, command)
+        jobs = []
+        for line in raw.splitlines():
+            fields = [f.strip() for f in line.split("|")]
+            if len(fields) >= 2 and fields[0][:1].isdigit():
+                jobs.append({"job_id": fields[0].split(".")[0],
+                             "state": normalize_state(fields[1]),
+                             "elapsed": fields[2] if len(fields) > 2 else "",
+                             "limit": fields[3] if len(fields) > 3 else "",
+                             "partition": fields[4] if len(fields) > 4 else "",
+                             "name": fields[5] if len(fields) > 5 else "",
+                             "nodes": fields[6] if len(fields) > 6 else ""})
     out({"scheduler": scheduler, "jobs": jobs})
     audit("jobs", "ok", f"{len(jobs)} jobs", name)
     return 0
@@ -1009,13 +1084,15 @@ def op_recent(args) -> int:
     name, entry = resolve_server(args.server)
     scheduler = scheduler_for(name, entry)
     if scheduler == "pbs":
-        raw = remote(name, 'qstat -x -u "$(id -un)" 2>/dev/null || qstat -u "$(id -un)"')
-        jobs = []
-        for line in raw.splitlines():
-            head = line.split()
-            if len(head) >= 5 and head[0][:1].isdigit() and "." in head[0]:
-                jobs.append({"job_id": head[0].split(".")[0],
-                             "state": normalize_state(head[3])})
+        raw = remote(name, "qstat -f 2>/dev/null || qstat -fx 2>/dev/null")
+        mapped = _pbs_parse_qstat_f(raw)
+        jobs = [{"job_id": j["job_id"], "name": j.get("name", ""),
+                 "partition": j.get("queue", ""), "state": j["state"],
+                 "elapsed": j.get("elapsed", ""),
+                 "completed_at": j.get("completed_at", ""),
+                 "started_at": j.get("started_at", ""),
+                 "nodes": j.get("exec_host", "")[:80]}
+                for j in mapped.values()]
     else:
         raw = remote(
             name,

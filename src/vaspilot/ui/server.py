@@ -240,13 +240,17 @@ class UiHandler(BaseHTTPRequestHandler):
                                            document.get("jobs") or [])
                 self._send_json(document)
             elif action == "job.recent":
+                # fold ACTIVE rows first (so state transitions land), then
+                # the finished-inclusive listing with infer_missing=True:
+                # a job the scheduler no longer knows at all is finished —
+                # stamp completion at first absence
+                active = client.jobs(server=body.get("server"))
+                self._job_ledger().observe(_server_name(body),
+                                           active.get("jobs") or [])
                 fresh = client.recent_jobs(server=body.get("server"))
-                # fold the cluster's own history in, then serve the union
-                # from the local ledger so completed jobs persist with
-                # their completion timestamps even when the scheduler
-                # forgets them (PBS shows active jobs only)
                 merged = self._job_ledger().observe(
-                    _server_name(body), fresh.get("jobs") or [])
+                    _server_name(body), fresh.get("jobs") or [],
+                    infer_missing=True)
                 self._send_json({"ok": True, "jobs": merged,
                                  "scheduler": fresh.get("scheduler")})
             elif action == "vasp.progress":

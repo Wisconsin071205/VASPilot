@@ -1019,7 +1019,7 @@ async function loadJobs() {
     <tr><td class="mono">${esc(j.job_id)}</td>
     <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED","CANCELED"].includes(String(j.state).toUpperCase()) ? "err" : "info")}</td>
     <td class="mono">${esc(j.elapsed || "—")}</td>
-    <td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc((j.completed_at || "").replace("T", " ").slice(0, 19)) || "—"}</td>
+    <td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc((j.completed_at || "").replace("T", " ").slice(0, 19)) || "—"}${j.assumed_end ? ' <span class="badge b-warn" title="调度器已遗忘此作业，完成时间为本机首次发现其消失的时刻">推断</span>' : ""}</td>
     <td>${esc(j.name || "")}</td></tr>`).join("")
     || `<tr><td colspan="5" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
 }

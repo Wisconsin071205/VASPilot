@@ -9,6 +9,7 @@ separation, server catalog CRUD, and the auth_required signal.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
 import sys
 from pathlib import Path
@@ -427,3 +428,43 @@ class TestKeyAuthLifecycle:
             entry = state["cl9"]
             gaps.append(entry["next_attempt"] - entry["last_attempt"])
         assert gaps == [30, 60, 120, 300]
+
+
+class TestPbsQstatFParsing:
+    """v1.3.1: PBS jobs/recent parse `qstat -f` stanzas — walltime, name,
+    and the completion timestamp of FINISHED jobs now survive."""
+
+    def test_pbs_jobs_and_recent(self, gateway_env):
+        run = gateway_env["run"]
+        # fake HPC 需认识这台服务器（qstat -f 会经它的 execute 执行）
+        import json as _json
+        fc = Path(gateway_env["fake_config"])
+        data = _json.loads(fc.read_text(encoding="utf-8"))
+        data["servers"]["pbst"] = {"root": "/h/x", "real": str(gateway_env["fs"]),
+                                   "scheduler": "pbs"}
+        fc.write_text(_json.dumps(data), encoding="utf-8")
+        run("server-add", "pbst", "--target", "u@p", "--root", "/h/x",
+            "--scheduler", "pbs", check=True)
+        run("connect", "--server", "pbst", check=True)
+        jobs = run("jobs", "--server", "pbst")
+        if not jobs.get("ok"):
+            import sys as _sys
+            print("JOBS-FAIL:", _json.dumps(jobs, ensure_ascii=False)[:600],
+                  file=_sys.stderr)
+        assert jobs["ok"] is True and jobs["scheduler"] == "pbs"
+        active = {j["job_id"]: j for j in jobs["jobs"]}
+        # 只有活动作业进 job 列表；Finished 被 过滤
+        assert set(active) == {"5001"}
+        assert active["5001"]["state"] == "RUNNING"
+        assert active["5001"]["elapsed"] == "00:12:34"
+        assert active["5001"]["name"] == "relax_case1"
+
+        recent = run("recent", "--server", "pbst")
+        rows = {j["job_id"]: j for j in recent["jobs"]}
+        assert set(rows) == {"5000", "5001"}
+        done = rows["5000"]
+        assert done["state"] == "COMPLETED"
+        assert done["elapsed"] == "01:02:03"
+        assert done["name"] == "bader_run"
+        assert "2026-08-29" in done["completed_at"]
+        assert "11:02:03" in done["completed_at"]

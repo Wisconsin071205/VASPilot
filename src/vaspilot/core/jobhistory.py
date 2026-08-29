@@ -69,9 +69,15 @@ class JobLedger:
                 pass
             raise
 
-    def observe(self, server: str,
-                rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Fold freshly observed scheduler rows into the ledger."""
+    def observe(self, server: str, rows: list[dict[str, Any]], *,
+                infer_missing: bool = False) -> list[dict[str, Any]]:
+        """Fold freshly observed scheduler rows into the ledger.
+
+        ``infer_missing=True`` marks previously-tracked non-terminal jobs
+        that have vanished from the scheduler as COMPLETED at first
+        absence (PBS keeps finished jobs only briefly — when even the
+        finished listing no longer knows a job, it is finished).
+        """
         if not server:
             return []
         now = _now()
@@ -97,11 +103,26 @@ class JobLedger:
                           if "cluster" not in entry.get("source", "")
                           else entry["source"],
             })
+            if row.get("started_at") and not entry.get("started_at"):
+                entry["started_at"] = str(row["started_at"])
+            if row.get("completed_at") and not entry.get("completed_at"):
+                entry["completed_at"] = str(row["completed_at"])
             if prior_state != state or "state_history" not in entry:
                 entry.setdefault("state_history", []).append(
                     {"state": state, "at": now})
             if _is_terminal(state) and not entry.get("completed_at"):
                 entry["completed_at"] = now
+        if infer_missing:
+            known = {str(r.get("job_id") or "") for r in rows or []}
+            for job_id, entry in jobs.items():
+                if job_id in known or _is_terminal(str(entry.get("state"))):
+                    continue
+                entry["state"] = "COMPLETED"
+                entry["assumed_end"] = True
+                entry.setdefault("state_history", []).append(
+                    {"state": "COMPLETED", "assumed": True, "at": now})
+                if not entry.get("completed_at"):
+                    entry["completed_at"] = now
         # cap + prune old terminal entries
         horizon = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
         for job_id in list(jobs):
@@ -146,6 +167,8 @@ class JobLedger:
             "state": entry.get("state"),
             "elapsed": entry.get("elapsed"),
             "completed_at": entry.get("completed_at"),
+            "started_at": entry.get("started_at"),
+            "assumed_end": bool(entry.get("assumed_end")),
             "first_seen": entry.get("first_seen"),
             "last_seen": entry.get("last_seen"),
             "local_record": True,
