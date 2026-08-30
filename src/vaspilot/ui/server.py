@@ -239,6 +239,11 @@ class UiHandler(BaseHTTPRequestHandler):
                 # remote_root, else the probed login home) so the Files view
                 # can auto-fill the first-level directory
                 self._send_json(client.pwd(str(body.get("server") or "")))
+            elif action == "remote.du":
+                # on-demand real size of one directory (recursive du); the
+                # Files view measures only rows the user clicks
+                self._send_json(client.du(str(body.get("path") or ""),
+                                          server=body.get("server")))
             elif action == "job.list":
                 document = client.jobs(server=body.get("server"))
                 self._job_ledger().observe(_server_name(body),

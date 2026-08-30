@@ -133,6 +133,8 @@ class TestTokenGuard:
         assert "胡伟团队专用智能体" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
+        # directory rows offer on-demand real-size measurement instead of 4096
+        assert "measureSize" in html
 
 
 class TestPortFallback:
@@ -199,6 +201,12 @@ class TestViews:
         doc = call(ui, "remote.pwd", {"server": "cl9"})
         assert doc["ok"] is False
         assert doc["error"]["code"] == "auth_required"
+
+    def test_remote_du_measures_directory(self, ui):
+        doc = call(ui, "remote.du", {"server": "cl9", "path": f"{ROOT}/runs"})
+        assert doc["ok"]
+        assert doc["bytes"] > 0
+        assert doc["size_human"].endswith("B")
 
     def test_outside_root_rejected_as_json(self, ui):
         payload = call(ui, "remote.list", {"server": "cl9", "path": "/etc"})

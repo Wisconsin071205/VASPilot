@@ -1000,9 +1000,35 @@ async function browse() {
     <tr><td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
       ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
-    <td class="mono">${e.size}</td><td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
+    <td class="mono">${e.type === "dir"
+      ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" onclick="measureSize('${esc(server)}','${esc(r.path)}/${esc(e.name)}',this)">测量</span>`
+      : e.size}</td>
+    <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
   document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
+}
+const DU_CACHE = {};
+async function measureSize(server, path, el) {
+  // 目录的真实大小按需测量（du -sb）：目录 inode 的 4096 没有信息量，
+  // 递归统计又不能对所有行自动做。测过一次的结果本页缓存。
+  const key = server + " " + path;
+  if (DU_CACHE[key]) {
+    el.textContent = DU_CACHE[key];
+    el.style.color = ""; el.style.cursor = "default";
+    el.onclick = null;
+    return;
+  }
+  if (el.dataset.busy) return;
+  el.dataset.busy = "1";
+  el.textContent = "…";
+  const r = await api("remote.du", {server, path});
+  delete el.dataset.busy;
+  if (!r.ok) { el.textContent = "测量"; return; }
+  const human = String(r.size_human || "").trim().split(/\s+/)[0];
+  DU_CACHE[key] = human || String(r.bytes);
+  el.textContent = DU_CACHE[key];
+  el.style.color = ""; el.style.cursor = "default";
+  el.onclick = null;
 }
 async function readFile(server, path) {
   const r = await api("remote.read", {server, path});
