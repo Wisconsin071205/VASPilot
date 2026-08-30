@@ -307,7 +307,7 @@ class Config:
         return number
 
     # -- web search configuration -------------------------------------------------
-    WEBSEARCH_PROVIDERS = ("zhipu", "bocha")
+    WEBSEARCH_PROVIDERS = ("zhipu", "bocha", "bing")
 
     def websearch(self) -> dict:
         data = self.load_settings().get("websearch") or {}

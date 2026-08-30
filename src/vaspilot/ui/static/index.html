@@ -654,6 +654,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
           <div class="row">
             <div class="fg"><label>搜索服务商</label>
               <select id="webprovider">
+                <option value="bing">必应（免密钥）</option>
                 <option value="zhipu">智谱 web-search-pro</option>
                 <option value="bocha">博查 Bocha</option>
               </select></div>
@@ -2478,8 +2479,10 @@ function renderWebsearch(w) {
   if (!w) return;
   document.getElementById("webprovider").value = w.provider || "zhipu";
   document.getElementById("webenabled").checked = !!w.enabled;
-  document.getElementById("webbadge").innerHTML =
-    (w.key_saved ? badge("Key 已保存（加密）", "ok") : badge("未存 Key", "warn")) + " " +
+  const keyBadge = w.provider === "bing"
+    ? badge("免密钥", "info")
+    : (w.key_saved ? badge("Key 已保存（加密）", "ok") : badge("未存 Key", "warn"));
+  document.getElementById("webbadge").innerHTML = keyBadge + " " +
     (w.enabled ? badge("已启用", "ok") : badge("未启用", "info"));
 }
 async function loadSkills() {

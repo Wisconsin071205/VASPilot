@@ -128,9 +128,61 @@ class TestSearch:
         with pytest.raises(ValidationError):
             web.web_search("q", provider="zhipu", api_key="")
 
-    def test_bad_provider_rejected(self):
+    def test_bing_needs_no_key(self):
+        assert web._search_bing.__doc__  # keyless adapter exists
         with pytest.raises(ValidationError):
-            web.web_search("q", provider="bing", api_key="k")
+            web.web_search("q", provider="google", api_key="k")
+
+    SERP = """
+    <ol id="b_results">
+      <li class="b_algo"><h2><a href="https://vasp.example/wiki"
+        class="link">VASP INCAR Guide</a></h2>
+        <div class="b_caption"><p>ENCUT controls the plane-wave
+        cutoff.</p></div></li>
+      <li class="b_algo"><h2><a href="/relative/skip">no href</a></h2>
+        <p>x</p></li>
+      <li class="b_algo"><h2><a
+        href="https://example.com/nested">Nested <b>title</b></a></h2>
+        <p>snippet two</p></li>
+    </ol>"""
+
+    def test_bing_adapter_parses_serp(self, monkeypatch):
+        body = self.SERP.encode("utf-8")
+
+        class Headers:
+            @staticmethod
+            def get_content_charset():
+                return "utf-8"
+
+        class Response:
+            headers = Headers()
+
+            def read(self, n):
+                return body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        class Opener:
+            def open(self, req, timeout=None):
+                return Response()
+
+        monkeypatch.setattr(web, "_assert_public_url",
+                            lambda url: web.urllib.parse.urlparse(url))
+        monkeypatch.setattr(web.urllib.request, "build_opener",
+                            lambda *a, **k: Opener())
+        result = web.web_search("VASP INCAR", provider="bing")
+        assert result["provider"] == "bing"
+        assert len(result["results"]) == 2
+        first = result["results"][0]
+        assert first["title"] == "VASP INCAR Guide"
+        assert first["url"] == "https://vasp.example/wiki"
+        assert "ENCUT" in first["snippet"]
+        # nested markup still concatenated into the title
+        assert result["results"][1]["title"] == "Nested title"
 
 
 class TestRegistryWebTools:

@@ -1,7 +1,8 @@
 """Web access for the agent: search adapters and a hardened URL fetcher.
 
-- web_search: provider adapters (zhipu web-search, bocha). The API key comes
-  from ``VASPILOT_WEBSEARCH_KEY`` or the DPAPI vault — never logged.
+- web_search: provider adapters (zhipu web-search, bocha, and a keyless
+  Bing SERP reader). The API key comes from ``VASPILOT_WEBSEARCH_KEY``
+  or the DPAPI vault — never logged; bing needs none.
 - web_fetch: plain http(s) GET with SSRF protection (no private/loopback
   targets, no exotic ports), HTML stripped to readable text, size-capped.
 """
@@ -24,7 +25,7 @@ FETCH_BODY_CAP = 512 * 1024   # raw bytes read from the wire
 FETCH_TEXT_CAP = 50 * 1024    # text returned to the model
 ALLOWED_PORTS = (80, 443, 8080, 8443)
 
-_SEARCH_PROVIDERS = ("zhipu", "bocha")
+_SEARCH_PROVIDERS = ("zhipu", "bocha", "bing")
 
 
 class _TextExtractor(HTMLParser):
@@ -128,22 +129,24 @@ def web_fetch(url: str) -> dict[str, Any]:
             "text": text, "truncated": truncated}
 
 
-def web_search(query: str, *, provider: str, api_key: str) -> dict[str, Any]:
+def web_search(query: str, *, provider: str, api_key: str = "") -> dict[str, Any]:
     query = str(query or "").strip()
     if not query:
         raise ValidationError("query is required")
     if len(query) > 400:
         raise ValidationError("query too long (max 400 chars)")
-    if not api_key:
-        raise ValidationError(
-            "no web-search API key configured (set VASPILOT_WEBSEARCH_KEY "
-            "or save one in the UI settings)")
     if provider not in _SEARCH_PROVIDERS:
         raise ValidationError(
             f"web-search provider must be one of {_SEARCH_PROVIDERS}")
+    if provider != "bing" and not api_key:
+        raise ValidationError(
+            "no web-search API key configured (set VASPILOT_WEBSEARCH_KEY "
+            "or save one in the UI settings)")
     if provider == "zhipu":
         return _search_zhipu(query, api_key)
-    return _search_bocha(query, api_key)
+    if provider == "bocha":
+        return _search_bocha(query, api_key)
+    return _search_bing(query)
 
 
 def _post_json(url: str, payload: dict, api_key: str,
@@ -189,3 +192,102 @@ def _search_bocha(query: str, api_key: str) -> dict[str, Any]:
                                item.get("summary") or "")[:400],
             })
     return {"provider": "bocha", "query": query, "results": results}
+
+
+class _BingSerpParser(HTMLParser):
+    """Extract organic results from bing.com SERP ``li.b_algo`` blocks."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[dict] = []
+        self._in_algo = False
+        self._li_depth = 0
+        self._h2_depth = 0
+        self._href = ""
+        self._title: list[str] = []
+        self._title_done = False
+        self._p_depth = 0
+        self._snippet: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        classes = str(a.get("class") or "").split()
+        if tag == "li" and "b_algo" in classes and not self._in_algo:
+            self._in_algo = True
+            self._li_depth = 0
+            self._h2_depth = 0
+            self._href = ""
+            self._title = []
+            self._title_done = False
+            self._p_depth = 0
+            self._snippet = []
+            return
+        if not self._in_algo:
+            return
+        if tag == "li":
+            self._li_depth += 1
+        elif tag == "h2":
+            self._h2_depth += 1
+        elif tag == "a" and self._h2_depth and not self._title_done:
+            href = str(a.get("href") or "")
+            if href.startswith("http"):
+                self._href = href
+        elif tag == "p" and self._title_done:
+            self._p_depth += 1
+
+    def handle_endtag(self, tag):
+        if not self._in_algo:
+            return
+        if tag == "h2" and self._h2_depth:
+            self._h2_depth -= 1
+            if not self._h2_depth:
+                self._title_done = True
+        elif tag == "p" and self._p_depth:
+            self._p_depth -= 1
+        elif tag == "li":
+            if self._li_depth:
+                self._li_depth -= 1
+            else:
+                title = "".join(self._title).strip()
+                if title and self._href:
+                    self.results.append({
+                        "title": title[:200], "url": self._href[:500],
+                        "snippet": "".join(self._snippet).strip()[:400]})
+                self._in_algo = False
+
+    def handle_data(self, data):
+        if not self._in_algo:
+            return
+        if self._h2_depth:
+            self._title.append(data)
+        elif self._p_depth:
+            self._snippet.append(data)
+
+
+def _search_bing(query: str) -> dict[str, Any]:
+    """Keyless Bing web results: fetch the SERP with the same hardened
+    direct-connection fetcher and parse the organic blocks. Layout-driven,
+    so a Bing redesign may reduce yield; the paid adapters stay the
+    high-reliability option."""
+    url = ("https://www.bing.com/search?" +
+           urllib.parse.urlencode({"q": query, "mkt": "zh-CN",
+                                   "count": "10"}))
+    parsed = _assert_public_url(url)
+    request = urllib.request.Request(
+        parsed.geturl(),
+        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 "
+                 "Safari/537.36",
+                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.6",
+                 "Accept": "text/html,application/xhtml+xml,*/*;q=0.5"})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=15) as response:
+        raw = response.read(FETCH_BODY_CAP)
+        charset = response.headers.get_content_charset() or "utf-8"
+    parser = _BingSerpParser()
+    try:
+        parser.feed(raw.decode(charset, errors="replace"))
+    except Exception:
+        pass
+    return {"provider": "bing", "query": query,
+            "results": parser.results[:10]}
