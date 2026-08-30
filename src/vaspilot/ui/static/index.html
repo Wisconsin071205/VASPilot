@@ -466,7 +466,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <section class="view" id="v-files">
     <div class="card">
       <div class="row">
-        <div class="fg"><label>服务器</label><select id="fsrv" onchange="pickFileServer()"></select></div>
+        <div class="fg"><label>服务器</label><select id="fsrv" onchange="pickFileServer(true)"></select></div>
         <div class="fg" style="flex:1"><label>远端路径（须在服务器根内）</label>
           <input id="fpath" style="width:420px" placeholder="/public/home/…"></div>
         <button class="btn ghost" id="fup" onclick="goUp()" disabled title="已在服务器根目录">上一级</button>
@@ -957,19 +957,24 @@ function remoteRootOf(server) {
   const s = (STATE.servers || []).find(x => x.name === server);
   return (s && s.remote_root) || "";
 }
-async function pickFileServer() {
+async function pickFileServer(force = false) {
   // 选服务器即自动定位根目录：优先用配置里的 remote_root；没配置则向网关
   // 查询该服务器探测到的有效根（登录主目录），第一级目录无需手动输入。
-  // 查询失败（如未连接）静默跳过，不打扰。
+  // 查询失败（如未连接）静默跳过。force=用户切换服务器，强制回到根目录；
+  // 否则仅在路径为空或列表尚未加载过时补位，不打断用户当前的浏览位置。
   const server = document.getElementById("fsrv").value;
   let root = remoteRootOf(server);
   if (!root) {
     const r = await api("remote.pwd", {server}, true);
     if (r.ok && (r.root || r.pwd)) root = String(r.root || r.pwd).trim();
   }
-  if (!root || document.getElementById("fpath").value === root) return;
-  document.getElementById("fpath").value = root;
-  if (document.getElementById("v-files").classList.contains("on")) browse();
+  if (!root) return;
+  const fpath = document.getElementById("fpath");
+  const onFiles = document.getElementById("v-files").classList.contains("on");
+  const virgin = !document.querySelector("#filetable tbody").dataset.loaded;
+  if (!force && fpath.value && !(onFiles && virgin)) return;
+  fpath.value = root;
+  if (onFiles) browse();
 }
 function parentDir(path) {
   // parent from the server-normalized absolute path; never emits ".."
@@ -1006,6 +1011,7 @@ async function browse() {
     <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
   document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
+  document.querySelector("#filetable tbody").dataset.loaded = "1";
 }
 const DU_CACHE = {};
 async function measureSize(server, path, el) {
