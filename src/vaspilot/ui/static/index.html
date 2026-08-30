@@ -471,6 +471,8 @@ textarea:focus{outline:none;border-color:var(--acc)}
           <input id="fpath" style="width:420px" placeholder="/public/home/…"></div>
         <button class="btn ghost" id="fup" onclick="goUp()" disabled title="已在服务器根目录">上一级</button>
         <button class="btn" onclick="browse()">浏览</button>
+        <button class="btn ghost" id="duall" onclick="measureAll()"
+          title="递归统计本列表中所有目录的真实大小（大目录耗时较长；再点一次停止）">测量全部</button>
       </div>
     </div>
     <div class="card"><h2>目录内容</h2><table id="filetable">
@@ -986,6 +988,7 @@ function parentDir(path) {
 async function browse() {
   const server = document.getElementById("fsrv").value;
   const path = document.getElementById("fpath").value.trim();
+  if (DU_RUN) DU_RUN.cancel = true;  // 列表即将刷新，批量测量目标失效
   const r = await api("remote.list", {server, path});
   if (!r.ok) return;
   document.getElementById("fpath").value = r.path;
@@ -1006,7 +1009,7 @@ async function browse() {
       ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
     <td class="mono">${e.type === "dir"
-      ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" onclick="measureSize('${esc(server)}','${esc(r.path)}/${esc(e.name)}',this)">测量</span>`
+      ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" data-server="${esc(server)}" data-path="${esc(r.path)}/${esc(e.name)}" onclick="measureSize(this)">测量</span>`
       : e.size}</td>
     <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
   document.querySelector("#filetable tbody").innerHTML = rows
@@ -1014,6 +1017,7 @@ async function browse() {
   document.querySelector("#filetable tbody").dataset.loaded = "1";
 }
 const DU_CACHE = {};
+let DU_RUN = null;
 function fmtBytes(n) {
   if (!Number.isFinite(n) || n < 0) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -1021,9 +1025,10 @@ function fmtBytes(n) {
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
   return (i ? n.toFixed(1) : String(n)) + " " + units[i];
 }
-async function measureSize(server, path, el) {
+async function measureSize(el) {
   // 目录的真实大小按需测量（du -sb）：目录 inode 的 4096 没有信息量，
-  // 递归统计又不能对所有行自动做。测过一次的结果本页缓存。
+  // 递归统计又不能对所有行自动做（「测量全部」除外）。测过一次本页缓存。
+  const server = el.dataset.server, path = el.dataset.path;
   const key = server + " " + path;
   if (DU_CACHE[key]) {
     el.textContent = DU_CACHE[key];
@@ -1043,6 +1048,32 @@ async function measureSize(server, path, el) {
   el.textContent = DU_CACHE[key];
   el.style.color = ""; el.style.cursor = "default";
   el.onclick = null;
+}
+async function measureAll() {
+  // 一键测量当前列表里的所有目录：3 路并发，逐个就地显示；再点一次停止
+  const btn = document.getElementById("duall");
+  if (DU_RUN) { DU_RUN.cancel = true; return; }
+  const spans = [...document.querySelectorAll(
+    "#filetable tbody td:nth-child(3) span[data-path]")]
+    .filter(s => s.textContent === "测量");
+  if (!spans.length) return;
+  const run = { cancel: false };
+  DU_RUN = run;
+  btn.textContent = `停止 0/${spans.length}`;
+  let done = 0, idx = 0;
+  const worker = async () => {
+    while (!run.cancel) {
+      const i = idx++;
+      if (i >= spans.length) break;
+      const s = spans[i];
+      if (s.isConnected && s.textContent === "测量")
+        await measureSize(s);
+      done++;
+      if (!run.cancel) btn.textContent = `停止 ${done}/${spans.length}`;
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  if (DU_RUN === run) { DU_RUN = null; btn.textContent = "测量全部"; }
 }
 async function readFile(server, path) {
   const r = await api("remote.read", {server, path});

@@ -10,5 +10,5 @@ The agent operates through a named, audited tool registry; shell access
 intercepted. Job submission pauses for human confirmation by default.
 """
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 GATEWAY_PROTOCOL_VERSION = "2"

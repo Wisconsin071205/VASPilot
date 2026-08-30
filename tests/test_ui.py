@@ -135,6 +135,8 @@ class TestTokenGuard:
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
         assert "measureSize" in html
+        # one-click batch measurement for every directory in the listing
+        assert "measureAll" in html
 
 
 class TestPortFallback:
