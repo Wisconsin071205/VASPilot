@@ -414,7 +414,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <div id="d-trend" style="display:none">
         <div class="card">
           <div class="row" style="justify-content:space-between">
-            <h2 style="margin:0">资源热力图（每列 1 天 · 每格 3 小时平均）</h2>
+            <h2 style="margin:0">资源热力图<span id="hmdates"></span>（每列 1 天 · 每格 3 小时平均）</h2>
             <span class="row" style="gap:8px;font-size:12px;color:var(--fg2)">
               天数
               <select id="hmDays" onchange="reloadTrend()" style="width:90px">
@@ -2246,8 +2246,15 @@ function drawHeatmap() {
            `<option value="${i}" ${HM_MET === i ? "selected" : ""}>${i === "..." ? "选择 GPU" : "GPU " + i}</option>`).join("")}
        </select>
        <button class="btn ghost" onclick="setHmMetric('c')">← 看 CPU</button>`;
-  cols.innerHTML = days.map((d, i) => i % 6 === 0
-    ? `<span style="width:23px;text-align:left;margin-left:${i === 0 ? "34px" : "-6px"}">${d.d.slice(5)}</span>` : "").join("");
+  // 标题显示日期范围（避免把轴首日期误读为当前日期）；轴上标首、尾和每 6 天
+  const lastIdx = days.length - 1;
+  document.getElementById("hmdates").textContent = days.length > 1
+    ? ` ${days[0].d.slice(5)} ~ ${days[lastIdx].d.slice(5)}`
+    : days.length ? ` ${days[0].d.slice(5)}` : "";
+  const showLast = days.length > 1 && lastIdx % 6 >= 3;
+  cols.innerHTML = days.map((d, i) =>
+    i % 6 === 0 || i === 0 || (showLast && i === lastIdx)
+      ? `<span style="width:23px;text-align:left;margin-left:${i === 0 ? "34px" : "-6px"}">${d.d.slice(5)}</span>` : "").join("");
   const seriesFor = d => HM_SRC === "cpu"
     ? {label: "CPU " + (HM_MET === "u" ? "UTL" : "MEM"), cells: HM_MET === "u" ? d.cpu : d.mem}
     : {label: `GPU ${HM_MET}`, cells: ((d.gpu || {})[HM_MET] || {})[HM_MET === "u" ? "u" : "m"]};
