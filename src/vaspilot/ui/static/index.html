@@ -1014,6 +1014,13 @@ async function browse() {
   document.querySelector("#filetable tbody").dataset.loaded = "1";
 }
 const DU_CACHE = {};
+function fmtBytes(n) {
+  if (!Number.isFinite(n) || n < 0) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(1) : String(n)) + " " + units[i];
+}
 async function measureSize(server, path, el) {
   // 目录的真实大小按需测量（du -sb）：目录 inode 的 4096 没有信息量，
   // 递归统计又不能对所有行自动做。测过一次的结果本页缓存。
@@ -1031,7 +1038,8 @@ async function measureSize(server, path, el) {
   delete el.dataset.busy;
   if (!r.ok) { el.textContent = "测量"; return; }
   const human = String(r.size_human || "").trim().split(/\s+/)[0];
-  DU_CACHE[key] = human || String(r.bytes);
+  // du -sh 对近似空目录会给出 "0"，回退到按字节格式化
+  DU_CACHE[key] = human && human !== "0" ? human : fmtBytes(Number(r.bytes));
   el.textContent = DU_CACHE[key];
   el.style.color = ""; el.style.cursor = "default";
   el.onclick = null;
