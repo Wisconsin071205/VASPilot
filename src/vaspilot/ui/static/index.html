@@ -2251,7 +2251,7 @@ function drawHeatmap() {
   document.getElementById("hmdates").textContent = days.length > 1
     ? ` ${days[0].d.slice(5)} ~ ${days[lastIdx].d.slice(5)}`
     : days.length ? ` ${days[0].d.slice(5)}` : "";
-  const showLast = days.length > 1 && lastIdx % 6 >= 3;
+  const showLast = days.length > 1 && lastIdx % 6 >= 2;
   cols.innerHTML = days.map((d, i) =>
     i % 6 === 0 || i === 0 || (showLast && i === lastIdx)
       ? `<span style="width:23px;text-align:left;margin-left:${i === 0 ? "34px" : "-6px"}">${d.d.slice(5)}</span>` : "").join("");
