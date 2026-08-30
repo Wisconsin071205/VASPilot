@@ -2252,9 +2252,13 @@ function drawHeatmap() {
     ? ` ${days[0].d.slice(5)} ~ ${days[lastIdx].d.slice(5)}`
     : days.length ? ` ${days[0].d.slice(5)}` : "";
   const showLast = days.length > 1 && lastIdx % 6 >= 2;
-  cols.innerHTML = days.map((d, i) =>
-    i % 6 === 0 || i === 0 || (showLast && i === lastIdx)
-      ? `<span style="width:23px;text-align:left;margin-left:${i === 0 ? "34px" : "-6px"}">${d.d.slice(5)}</span>` : "").join("");
+  // 每列一个 20px 定位元素（与 .hcell 同宽同距），标签文字只在标记列出现，
+  // 这样任意标签组合都按列对齐、互不重叠
+  cols.innerHTML = days.map((d, i) => {
+    const labeled = i % 6 === 0 || i === 0 || (showLast && i === lastIdx);
+    return `<span style="display:inline-block;width:20px;margin-right:3px;
+      text-align:left;white-space:nowrap;${i === 0 ? "margin-left:34px;" : ""}">${labeled ? d.d.slice(5) : ""}</span>`;
+  }).join("");
   const seriesFor = d => HM_SRC === "cpu"
     ? {label: "CPU " + (HM_MET === "u" ? "UTL" : "MEM"), cells: HM_MET === "u" ? d.cpu : d.mem}
     : {label: `GPU ${HM_MET}`, cells: ((d.gpu || {})[HM_MET] || {})[HM_MET === "u" ? "u" : "m"]};
