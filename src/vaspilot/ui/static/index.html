@@ -473,6 +473,8 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <button class="btn" onclick="browse()">浏览</button>
         <button class="btn ghost" id="duall" onclick="measureAll()"
           title="递归统计本列表中所有目录的真实大小（大目录耗时较长；再点一次停止）">测量全部</button>
+        <button class="btn ghost" onclick="openVscode()"
+          title="用 VS Code Remote-SSH 打开当前目录（借道 Vlab 已有会话，无需再输密码；二进制/大文件也可直接查看）">VS Code</button>
       </div>
     </div>
     <div class="card"><h2>目录内容</h2><table id="filetable">
@@ -1016,6 +1018,12 @@ async function browse() {
   document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
   document.querySelector("#filetable tbody").dataset.loaded = "1";
+}
+async function openVscode() {
+  const server = document.getElementById("fsrv").value;
+  const path = document.getElementById("fpath").value.trim();
+  const r = await api("vscode.open", {server, path});
+  if (r.ok) toast(`VS Code 已启动：${r.alias} → ${r.path}（首次连接需在 VS Code 里确认一次）`, "ok");
 }
 const DU_CACHE = {};
 let DU_RUN = null;

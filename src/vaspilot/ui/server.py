@@ -244,6 +244,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 # Files view measures only rows the user clicks
                 self._send_json(client.du(str(body.get("path") or ""),
                                           server=body.get("server")))
+            elif action == "vscode.open":
+                self._open_vscode(body)
             elif action == "job.list":
                 document = client.jobs(server=body.get("server"))
                 self._job_ledger().observe(_server_name(body),
@@ -395,6 +397,31 @@ class UiHandler(BaseHTTPRequestHandler):
                 "default_provider": app.config.default_provider(),
                 "agent_submit_mode": app.config.agent_submit_mode(),
                 "websearch": app.config.websearch()}
+
+    def _open_vscode(self, body: dict) -> None:
+        """Open the server directory in VS Code via Remote-SSH riding the
+        existing mux on Vlab (no password prompts)."""
+        from ..core.errors import ValidationError
+        from ..ui import vscode as vs
+        app = self.state.app
+        client = app.client()
+        server = _server_or_default(body, app)
+        try:
+            connected = bool(client.status(server).get("connected"))
+        except Exception:
+            connected = False
+        if not connected:
+            raise ValidationError(
+                f"{server} 未连接：请先在侧栏连接服务器，再用 VS Code 打开")
+        entry = client.server_entry(server)
+        path = str(body.get("path") or "").strip() or entry.remote_root
+        vlab = app.config.load_settings().get("vlab") or {}
+        self._send_json(vs.launch_vscode(
+            server, path, target=entry.target, port=entry.port,
+            vlab_host=str(vlab.get("host") or ""),
+            vlab_user=str(vlab.get("user") or ""),
+            vlab_port=int(vlab.get("port") or 22),
+            identity_file=str(vlab.get("identity_file") or "")))
 
     def _add_server(self, body: dict) -> None:
         from ..core.errors import ValidationError
