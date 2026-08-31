@@ -1011,7 +1011,7 @@ async function browse() {
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
     <td class="mono">${e.type === "dir"
       ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" data-server="${esc(server)}" data-path="${esc(r.path)}/${esc(e.name)}" onclick="measureSize(this)">测量</span>`
-      : e.size}</td>
+      : fmtBytes(Number(e.size))}</td>
     <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
   document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
@@ -1080,7 +1080,8 @@ async function readFile(server, path) {
   const r = await api("remote.read", {server, path});
   if (!r.ok) return;
   document.getElementById("reader").style.display = "";
-  document.getElementById("readerpath").textContent = path + `  (${r.size} B)`;
+  document.getElementById("readerpath").textContent =
+    path + `  (${fmtBytes(Number(r.size))})`;
   document.getElementById("readerbody").textContent = r.content || "(空文件)";
 }
 function goUp() {
