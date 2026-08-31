@@ -84,5 +84,12 @@ class TestOpenConnectTerminal:
         joined = " ".join(cmd)
         assert flags == subprocess.CREATE_NEW_CONSOLE
         for opt in ("StrictHostKeyChecking=ask", "ControlMaster=yes",
-                    "NumberOfPasswordPrompts=3"):
+                    "NumberOfPasswordPrompts=3",
+                    "ServerAliveInterval=30", "ServerAliveCountMax=4"):
             assert opt in joined
+
+    def test_base_commands_carry_keepalives(self, transport):
+        """Every outer ssh op sends heartbeats so idle NAT paths survive."""
+        for cmd in (transport._base(), transport._base(batch=False, tty=True)):
+            assert "ServerAliveInterval=30" in cmd
+            assert "ServerAliveCountMax=4" in cmd

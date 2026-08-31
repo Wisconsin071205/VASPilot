@@ -81,6 +81,8 @@ class SshTransport:
             cmd += ["-o", "BatchMode=yes"]
         if tty:
             cmd += ["-tt"]
+        # heartbeat keepalives so idle NAT/firewall sessions survive
+        cmd += ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"]
         cmd += ["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
                 f"{self.user}@{self.host}"]
         return cmd
@@ -182,6 +184,7 @@ class SshTransport:
             f"else rm -f \"{sock}\"; "
             f'exec ssh -M -S "{sock}" -o ControlMaster=yes '
             f'-o "ControlPersist={persist}" '
+            f"-o ServerAliveInterval=30 -o ServerAliveCountMax=4 "
             f"-o StrictHostKeyChecking=ask -o UpdateHostKeys=no "
             f"-o NumberOfPasswordPrompts=3 -p {port} -fN \"{target}\"; fi"
         )

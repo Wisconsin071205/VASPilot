@@ -46,7 +46,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.3.0"
+GATEWAY_VERSION = "1.3.1"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -1644,6 +1644,10 @@ def op_connect(args) -> int:
         "ssh", "-M", "-S", str(sock),
         "-o", "ControlMaster=yes",
         "-o", f"ControlPersist={entry.get('persist') or '8h'}",
+        # heartbeat keepalives: NAT/firewall devices silently drop idle
+        # TCP sessions, which would defeat ControlPersist=yes
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=4",
         "-o", "StrictHostKeyChecking=ask",
         "-o", "UpdateHostKeys=no",
         "-o", "NumberOfPasswordPrompts=3",
