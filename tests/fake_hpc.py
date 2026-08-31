@@ -94,6 +94,9 @@ class FakeHpc:
         else:
             self.state = {"next_job_id": self.config.get("next_job_id", 1000),
                           "jobs": self.config.get("jobs", {})}
+        # failure injection: the config wins on every invocation so tests
+        # can flip it by rewriting the fake-hpc config file
+        self.state["sacct_fail"] = bool(self.config.get("sacct_fail"))
 
     # -- path mapping ---------------------------------------------------------
     def to_real(self, posix_path: str) -> Path:
@@ -249,6 +252,12 @@ class FakeHpc:
                         if state in ("RUNNING", "PENDING")]
                 return 0, ("\n".join(rows) + "\n") if rows else ""
             if command.startswith("sacct -u"):
+                if self.state.get("sacct_fail"):
+                    sys.stderr.write(
+                        "sacct: error: slurm_persist_conn_open_without_init: "
+                        "failed to open persistent connection to "
+                        "localhost:7031: Connection refused\n")
+                    return 1, ""
                 rows = [f"{jid}|job{jid}|cpu|{state}|00:01:00|0:0"
                         for jid, state in self.state["jobs"].items()]
                 return 0, ("\n".join(rows) + "\n") if rows else ""

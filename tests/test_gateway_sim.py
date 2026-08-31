@@ -276,7 +276,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.3.1"
+        assert result["gateway_version"] == "1.3.2"
 
     def test_exec_passthrough(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9",
@@ -295,6 +295,21 @@ class TestCatalogAndSessions:
     def test_exec_empty_command_rejected(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9", "--timeout", "5")
         assert result is None or not result.get("ok")
+
+    def test_recent_survives_sacct_outage(self, gateway_env):
+        """slurmdbd down must not fail the whole history op: empty jobs +
+        warning instead of remote_command_failed (v1.3.2)."""
+        import json
+        path = gateway_env["fake_config"]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["sacct_fail"] = True
+        path.write_text(json.dumps(data), encoding="utf-8")
+        result = gateway_env["run"]("recent", "--server", "cl9")
+        assert result["ok"] is True
+        assert result["jobs"] == []
+        assert "sacct unavailable" in result.get("warning", "")
+        data["sacct_fail"] = False
+        path.write_text(json.dumps(data), encoding="utf-8")
 
     def test_metrics_sections(self, gateway_env):
         result = gateway_env["run"]("metrics", "--server", "cl9")

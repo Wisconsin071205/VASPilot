@@ -46,7 +46,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.3.1"
+GATEWAY_VERSION = "1.3.2"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -1094,10 +1094,19 @@ def op_recent(args) -> int:
                  "nodes": j.get("exec_host", "")[:80]}
                 for j in mapped.values()]
     else:
-        raw = remote(
-            name,
-            'sacct -u "$(id -un)" --starttime today -X -P '
-            '-o JobID,JobName%24,Partition,State,Elapsed,ExitCode')
+        try:
+            raw = remote(
+                name,
+                'sacct -u "$(id -un)" --starttime today -X -P '
+                '-o JobID,JobName%24,Partition,State,Elapsed,ExitCode')
+        except GatewayError as exc:
+            # slurmdbd down (e.g. "Connection refused" on port 7031) must
+            # not break the history view: squeue-driven active jobs and
+            # the UI's local ledger keep working without accounting
+            out({"scheduler": scheduler, "jobs": [],
+                 "warning": f"sacct unavailable: {str(exc)[:180]}"})
+            audit("recent", "failed", "sacct unavailable", name)
+            return 0
         jobs = []
         for line in raw.splitlines():
             fields = [f.strip() for f in line.split("|")]
