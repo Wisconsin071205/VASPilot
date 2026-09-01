@@ -484,8 +484,8 @@ textarea:focus{outline:none;border-color:var(--acc)}
       </div>
     </div>
     <div class="card"><h2>目录内容</h2><table id="filetable">
-      <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th></tr></thead>
-      <tbody><tr><td colspan="4" class="empty">输入路径后点击浏览</td></tr></tbody></table></div>
+      <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
+      <tbody><tr><td colspan="5" class="empty">输入路径后点击浏览</td></tr></tbody></table></div>
     <div class="card" id="reader" style="display:none">
       <div class="row" style="justify-content:space-between"><h2 id="readerpath" style="margin:0"></h2>
         <button class="btn ghost" onclick="document.getElementById('reader').style.display='none'">关闭</button></div>
@@ -1009,11 +1009,15 @@ async function browse() {
   document.getElementById("fup").title = upAllowed
     ? `返回 ${parent}` : "已在服务器根目录";
   let rows = "";
+  const menuBtn = (p, t) =>
+    `<td class="mono" style="width:34px;cursor:pointer" title="更多操作"
+      onclick="rowMenu(event,'${esc(server)}','${esc(p)}','${t}')">⋯</td>`;
   if (upAllowed) {
     rows += `<tr oncontextmenu="rowMenu(event,'${esc(server)}','${esc(parent)}','dir')">
       <td class="mono" style="cursor:pointer;color:var(--acc)"
       onclick="document.getElementById('fpath').value='${esc(parent)}';browse()">..（上一级）</td>
-      <td>目录</td><td class="mono">—</td><td class="mono">—</td></tr>`;
+      <td>目录</td><td class="mono">—</td><td class="mono">—</td>
+      ${menuBtn(parent, "dir")}</tr>`;
   }
   rows += (r.entries || []).map(e => `
     <tr oncontextmenu="rowMenu(event,'${esc(server)}','${esc(r.path)}/${esc(e.name)}','${e.type}')">
@@ -1023,9 +1027,10 @@ async function browse() {
     <td class="mono">${e.type === "dir"
       ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" data-server="${esc(server)}" data-path="${esc(r.path)}/${esc(e.name)}" onclick="measureSize(this)">测量</span>`
       : fmtBytes(Number(e.size))}</td>
-    <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td></tr>`).join("");
+    <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td>
+    ${menuBtn(`${esc(r.path)}/${esc(e.name)}`, e.type)}</tr>`).join("");
   document.querySelector("#filetable tbody").innerHTML = rows
-    || `<tr><td colspan="4" class="empty">空目录</td></tr>`;
+    || `<tr><td colspan="5" class="empty">空目录</td></tr>`;
   document.querySelector("#filetable tbody").dataset.loaded = "1";
 }
 async function openVscode() {
@@ -1037,6 +1042,7 @@ async function openVscode() {
 function rowMenu(ev, server, path, type) {
   // 右键文件/文件夹：直接用 VS Code 打开这一项（不用整个主目录做工作区）
   ev.preventDefault();
+  ev.stopPropagation();  // 否则冒泡到 document 的 click 会立即关掉菜单
   const menu = document.getElementById("rowmenu");
   const items = type === "dir" ? [
     ["📂 在 VS Code 中打开此文件夹",
