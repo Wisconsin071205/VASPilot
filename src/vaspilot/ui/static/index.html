@@ -479,8 +479,6 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <button class="btn" onclick="browse()">浏览</button>
         <button class="btn ghost" id="duall" onclick="measureAll()"
           title="递归统计本列表中所有目录的真实大小（大目录耗时较长；再点一次停止）">测量全部</button>
-        <button class="btn ghost" onclick="openVscode()"
-          title="用 VS Code Remote-SSH 打开当前目录（借道 Vlab 已有会话，无需再输密码；二进制/大文件也可直接查看）">VS Code</button>
       </div>
     </div>
     <div class="card"><h2>目录内容</h2><table id="filetable">
@@ -1033,25 +1031,19 @@ async function browse() {
     || `<tr><td colspan="5" class="empty">空目录</td></tr>`;
   document.querySelector("#filetable tbody").dataset.loaded = "1";
 }
-async function openVscode() {
-  const server = document.getElementById("fsrv").value;
-  const path = document.getElementById("fpath").value.trim();
-  const r = await api("vscode.open", {server, path});
-  if (r.ok) toast(`VS Code 已启动：${r.alias} → ${r.path}（首次连接需在 VS Code 里确认一次）`, "ok");
-}
 function rowMenu(ev, server, path, type) {
-  // 右键文件/文件夹：直接用 VS Code 打开这一项（不用整个主目录做工作区）
+  // 右键文件/文件夹：安全编辑模式（经本地控制台按需读写，不装远端 server）
   ev.preventDefault();
   ev.stopPropagation();  // 否则冒泡到 document 的 click 会立即关掉菜单
   const menu = document.getElementById("rowmenu");
   const items = type === "dir" ? [
-    ["📂 在 VS Code 中打开此文件夹",
-     `openVscodePath('${esc(path)}','folder')`],
+    ["🗂 在 VS Code 中以虚拟目录打开",
+     `openSafeVscode('${esc(path)}','folder')`],
     ["↘ 进入此目录",
      `document.getElementById('fpath').value='${esc(path)}';browse()`],
   ] : [
-    ["📄 在 VS Code 中打开此文件",
-     `openVscodePath('${esc(path)}','file')`],
+    ["📝 在 VS Code 中安全编辑",
+     `openSafeVscode('${esc(path)}','file')`],
     ["👁 查看内容", `readFile('${esc(server)}','${esc(path)}')`],
   ];
   menu.innerHTML = items.map(([label, act]) =>
@@ -1063,10 +1055,12 @@ function rowMenu(ev, server, path, type) {
 function hideRowMenu() {
   document.getElementById("rowmenu").style.display = "none";
 }
-async function openVscodePath(path, kind) {
+function openSafeVscode(path, kind) {
   const server = document.getElementById("fsrv").value;
-  const r = await api("vscode.open", {server, path, kind});
-  if (r.ok) toast(`VS Code 已启动：${r.alias} → ${r.path}`, "ok");
+  const uri = `vscode://huwei-team.huwei-agent-vscode-bridge/open?server=${encodeURIComponent(server)}&path=${encodeURIComponent(path)}&kind=${encodeURIComponent(kind)}`;
+  const a = document.createElement("a");
+  a.href = uri; document.body.appendChild(a); a.click(); a.remove();
+  toast("已唤起 VS Code Bridge（首次请允许浏览器打开 VS Code）", "ok");
 }
 document.addEventListener("click", hideRowMenu);
 window.addEventListener("blur", hideRowMenu);

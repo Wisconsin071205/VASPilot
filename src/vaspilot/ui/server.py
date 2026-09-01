@@ -19,6 +19,7 @@ except /api/agent/chat, which streams Server-Sent-Events frames.
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import threading
 import webbrowser
@@ -244,6 +245,25 @@ class UiHandler(BaseHTTPRequestHandler):
                 # Files view measures only rows the user clicks
                 self._send_json(client.du(str(body.get("path") or ""),
                                           server=body.get("server")))
+            elif action == "remote.stat":
+                self._send_json(client.stat(str(body.get("path") or ""),
+                                            server=body.get("server")))
+            elif action == "remote.write":
+                self._write_remote(body)
+            elif action == "remote.remove":
+                # moves into the gateway trash (recoverable), never a
+                # permanent delete
+                self._send_json(client.remove(str(body.get("path") or ""),
+                                              server=body.get("server")))
+            elif action == "remote.mkdir":
+                self._send_json(client.mkdir(str(body.get("path") or ""),
+                                             server=body.get("server")))
+            elif action == "remote.move":
+                self._send_json(client.move(str(body.get("path") or ""),
+                                            str(body.get("destination") or ""),
+                                            server=body.get("server")))
+            elif action == "remote.trash.list":
+                self._send_json(client.trash_list(server=body.get("server")))
             elif action == "vscode.open":
                 self._open_vscode(body)
             elif action == "job.list":
@@ -397,6 +417,38 @@ class UiHandler(BaseHTTPRequestHandler):
                 "default_provider": app.config.default_provider(),
                 "agent_submit_mode": app.config.agent_submit_mode(),
                 "websearch": app.config.websearch()}
+
+    MAX_TEXT_WRITE = 64 * 1024 * 1024
+
+    def _write_remote(self, body: dict) -> None:
+        """Structured text save for the VS Code bridge: UTF-8 content plus
+        the baseline sha256 taken when the file was opened. Delegates to
+        the gateway's conflict-checked atomic write."""
+        import hashlib
+        import tempfile
+        from ..core.errors import ValidationError
+        app = self.state.app
+        client = app.client()
+        server = _server_or_default(body, app)
+        path = str(body.get("path") or "").strip()
+        if not path.startswith("/"):
+            raise ValidationError("remote path must be absolute")
+        content = str(body.get("content") or "").encode("utf-8")
+        if len(content) > self.MAX_TEXT_WRITE:
+            raise ValidationError("content exceeds the 64 MiB write cap")
+        expected = str(body.get("expected_sha256") or "").strip().lower()
+        handle, tmp = tempfile.mkstemp(suffix=".vaspilot-write")
+        try:
+            with os.fdopen(handle, "wb") as out_f:
+                out_f.write(content)
+            result = client.write_file(path, tmp, server=server,
+                                       expected_sha256=expected)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        self._send_json(result)
 
     def _open_vscode(self, body: dict) -> None:
         """Open the server directory in VS Code via Remote-SSH riding the
@@ -1098,6 +1150,18 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
         print(f"port {port} unavailable; using {bound_port} instead", flush=True)
     url = f"http://{host}:{bound_port}/t/{state.token}"
     print(f"VASPilot UI ready: {url}", flush=True)
+    try:
+        # machine-readable discovery for the VS Code bridge extension;
+        # VASPILOT_HOME keeps tests away from the real profile
+        import json as _json
+        home = Path(os.environ.get("VASPILOT_HOME")
+                    or (Path.home() / ".vaspilot"))
+        home.mkdir(parents=True, exist_ok=True)
+        (home / "ui.json").write_text(_json.dumps(
+            {"url": url, "token": state.token, "pid": os.getpid()}),
+            encoding="utf-8")
+    except OSError:
+        pass
     if open_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     if run_forever:

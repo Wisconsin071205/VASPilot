@@ -1,0 +1,75 @@
+{
+  "name": "huwei-agent-vscode-bridge",
+  "displayName": "胡伟团队专用智能体 VS Code Bridge",
+  "description": "经本地控制台按需读写远端服务器文件的虚拟工作区（不经 Remote-SSH、不在计算服务器安装任何组件）",
+  "version": "1.0.0",
+  "publisher": "huwei-team",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onUri",
+    "onFileSystem:huwei-agent-remote",
+    "onCommand:huwei-bridge.reconnect"
+  ],
+  "main": "./out/src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "huwei-bridge.reconnect",
+        "title": "Huwei Bridge：重新检测本地控制台"
+      },
+      {
+        "command": "huwei-bridge.refresh",
+        "title": "Huwei Bridge：刷新远端文件",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "huwei-bridge.refresh",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "胡伟团队智能体 Bridge",
+      "properties": {
+        "huwei-bridge.consoleUrl": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "控制台地址（留空则自动读取 %USERPROFILE%\\.vaspilot\\ui.json）"
+        },
+        "huwei-bridge.maxFileSizeMB": {
+          "type": "number",
+          "default": 32,
+          "minimum": 1,
+          "description": "允许以文本方式打开的最大文件（MiB）"
+        },
+        "huwei-bridge.maxEntries": {
+          "type": "number",
+          "default": 500,
+          "minimum": 1,
+          "description": "单个目录最多显示的条目数（按需读取，不递归）"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "test": "node --test",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.5.4"
+  }
+}

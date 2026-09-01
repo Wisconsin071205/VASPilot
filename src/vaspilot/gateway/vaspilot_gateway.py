@@ -43,10 +43,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.3.2"
+GATEWAY_VERSION = "1.3.3"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -69,7 +70,7 @@ STAGE_RE = re.compile(r"^/tmp/vaspilot-[0-9a-f]{8,32}$")
 SCHEDULERS = ("slurm", "pbs")
 TEXT_DENYLIST = {"POTCAR", "WAVECAR", "CHGCAR", "CHG", "LOCPOT", "PROCAR",
                  "PARCHG", "AECCAR0", "AECCAR1", "AECCAR2", "ELFCAR"}
-MAX_READ_BYTES = 2 * 1024 * 1024
+MAX_READ_BYTES = 32 * 1024 * 1024
 
 CFG: dict = {}
 
@@ -884,6 +885,92 @@ def op_du(args) -> int:
     human = remote(name, f"du -sh -- {q(path)} 2>/dev/null").strip() or raw.strip()
     out({"path": path, "bytes": size, "size_human": human})
     audit("du", "ok", path, name)
+    return 0
+
+
+MAX_WRITE_BYTES = 64 * 1024 * 1024
+
+
+def _sha256_local(path: str) -> str:
+    """Streaming sha256 of a Vlab-local file (the staged upload)."""
+    import hashlib
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def op_write(args) -> int:
+    """Structured text save: SHA-256 conflict check + same-directory temp
+    file + atomic rename. Never a free-form shell write."""
+    name, entry = resolve_server(args.server)
+    path = validated_remote_path(args.path, entry, name)
+    path = require_resolved_within_root(name, path, entry)
+    require_not_root(name, path, entry)
+    stage = validated_stage_path(args.stage)
+    expected = (getattr(args, "expected_sha", "") or "").strip().lower()
+    if expected and not re.fullmatch(r"[0-9a-f]{64}", expected):
+        raise ValueError("expected sha256 must be empty or 64 hex chars")
+    if os.path.basename(path).upper() in TEXT_DENYLIST:
+        raise GatewayError("text_denylist",
+                           f"{os.path.basename(path)} is not writable as text")
+    stage_fs = _stage_fs_path(stage)
+    if not stage_fs.is_file():
+        return fail("stage_missing", f"staged content missing: {stage}")
+    if stage_fs.stat().st_size > MAX_WRITE_BYTES:
+        return fail("too_large",
+                    f"content exceeds the {MAX_WRITE_BYTES // (1024*1024)} MiB write cap")
+    new_sha = _sha256_local(str(stage_fs))
+    new_size = stage_fs.stat().st_size
+
+    def _cleanup_stage() -> None:
+        try:
+            stage_fs.unlink()
+        except OSError:
+            pass
+
+    exists = remote(name, f"[ -e {q(path)} ] && echo yes || echo no").strip()
+    cur_sha = ""
+    if exists == "yes":
+        raw = remote(
+            name,
+            f"sha256sum -- {q(path)} 2>/dev/null || true").strip()
+        cur_sha = raw.split()[0] if raw and raw.split() else ""
+        if cur_sha == new_sha and cur_sha == expected:
+            audit("write", "unchanged", path, name)
+            _cleanup_stage()
+            mtime = remote(name, f"stat -c %Y -- {q(path)}").strip()
+            out({"path": path, "sha256": cur_sha, "size": new_size,
+                 "mtime_epoch": int(mtime) if mtime.isdigit() else 0})
+            return 0
+    if (expected or "") != cur_sha:
+        audit("write", "conflict", path, name)
+        _cleanup_stage()
+        return fail("remote_changed",
+                    "远端文件已被其他操作修改，请比较后再保存（已拒绝覆盖）")
+
+    tmp = f"{path}.vaspilot-write-{uuid.uuid4().hex[:12]}"
+    try:
+        # stream the staged content onto the server through the mux
+        stage_push(name, stage, tmp)
+        tmp_sha = remote(
+            name, f"sha256sum -- {q(tmp)} 2>/dev/null || true").strip()
+        if not tmp_sha or tmp_sha.split()[0] != new_sha:
+            _cleanup_stage()
+            remote(name, f"rm -f -- {q(tmp)} 2>/dev/null")
+            return fail("verify_failed",
+                        "temporary file verification failed")
+        if exists == "yes":
+            remote(name, f"chmod --reference={q(path)} -- {q(tmp)}")
+        remote(name, f"mv -f -- {q(tmp)} {q(path)}")
+    finally:
+        remote(name, f"rm -f -- {q(tmp)} 2>/dev/null")
+    _cleanup_stage()
+    mtime = remote(name, f"stat -c %Y -- {q(path)}").strip()
+    out({"path": path, "sha256": new_sha, "size": new_size,
+         "mtime_epoch": int(mtime) if mtime.isdigit() else 0})
+    audit("write", "ok", path, name)
     return 0
 
 
@@ -1971,6 +2058,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path")
     p = add("du", op_du)
     p.add_argument("path")
+    p = add("write", op_write)
+    p.add_argument("stage")
+    p.add_argument("path")
+    p.add_argument("--expected-sha", default="")
     p = add("mkdir", op_mkdir)
     p.add_argument("path")
     p = add("copy", op_copy)

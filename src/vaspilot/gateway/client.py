@@ -436,6 +436,26 @@ class GatewayClient:
                                       "got": str(result.get("sha256", ""))})
         return result
 
+    def write_file(self, remote_path_: str, local_path: str | Path, *,
+                   server: str | None = None,
+                   expected_sha256: str = "", timeout: int = 600) -> dict:
+        """Structured text save: stage the content, then the gateway checks
+        the remote file still matches expected_sha256 (empty string = the
+        file must not exist yet) and installs atomically."""
+        name = self._require(server)
+        target = self._resolve(name, remote_path_)
+        local = Path(local_path)
+        if not local.is_file() or local.is_symlink():
+            raise ValidationError(f"write source must be a regular file: {local}")
+        stage = self.transport.stage_path()
+        try:
+            self.transport.scp_to_stage(str(local), stage, timeout=timeout)
+            return self._call("remote.write", [
+                "write", "--server", name, "--expected-sha", expected_sha256,
+                stage, target], path=target, timeout=timeout)
+        finally:
+            self.transport.rm_stage(stage)
+
     def download(self, path: str, local_path: str | Path, *,
                  server: str | None = None, timeout: int = 600) -> dict:
         name = self._require(server)

@@ -282,6 +282,37 @@ class FakeTransport:
         self.state.dirs[server].add(path)
         return {"ok": True, "path": path, "created": True}
 
+    def op_write(self, args):
+        """Staged structured write mirroring the gateway's semantics:
+        expected-sha conflict check, then atomic replace."""
+        import hashlib
+        server = self._server(args)
+        sha_idx = args.index("--expected-sha")
+        expected = args[sha_idx + 1]
+        stage = args[sha_idx + 2]
+        path = args[sha_idx + 3]
+        if not self._in_root(server, path):
+            return {"ok": False, "error": {"code": "outside_root",
+                                           "message": "path outside root"}}
+        base = str(path).rsplit("/", 1)[-1].upper()
+        if base in ("WAVECAR", "CHGCAR", "AECCAR0", "AECCAR2"):
+            return {"ok": False, "error": {"code": "text_denylist",
+                    "message": f"{base} is not writable as text"}}
+        content = getattr(self, "_stage", b"")
+        new_sha = hashlib.sha256(content).hexdigest()
+        exists = path in self.state.files[server]
+        cur_sha = ""
+        if exists:
+            cur_sha = hashlib.sha256(
+                self.state.files[server][path]).hexdigest()
+        if (expected or "") != cur_sha:
+            return {"ok": False, "error": {"code": "remote_changed",
+                    "message": "远端文件已被其他操作修改，请比较后再保存"}}
+        self.state.files[server][path] = content
+        self.state.dirs[server].add(str(PurePosixPath(path).parent))
+        return {"ok": True, "path": path, "sha256": new_sha,
+                "size": len(content), "mtime_epoch": 1760000000}
+
     def op_remove(self, args):
         server = self._server(args)
         positional = [a for a in self._positionals(args)

@@ -276,7 +276,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.3.2"
+        assert result["gateway_version"] == "1.3.3"
 
     def test_exec_passthrough(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9",
@@ -295,6 +295,45 @@ class TestCatalogAndSessions:
     def test_exec_empty_command_rejected(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9", "--timeout", "5")
         assert result is None or not result.get("ok")
+
+    def test_structured_write_flow(self, gateway_env):
+        """v1.3.3 structured text save: new file, stale-sha conflict,
+        clean update, denylist refusal — all through the real gateway."""
+        import hashlib
+        stage = gateway_env["stage"]
+        stage_arg = "/tmp/vaspilot-aaaa1111"
+        target = f"{ROOT}/runs/written.txt"
+
+        content = b"hello structured write\n"
+        (stage / "vaspilot-aaaa1111").write_bytes(content)
+        doc = gateway_env["run"]("write", "--server", "cl9",
+                                 "--expected-sha", "",
+                                 stage_arg, target, check=True)
+        assert doc["sha256"] == hashlib.sha256(content).hexdigest()
+        baseline = doc["sha256"]
+        real = gateway_env["fs"] / "runs" / "written.txt"
+        assert real.read_bytes() == content
+
+        # stale baseline -> remote_changed, original file untouched
+        (stage / "vaspilot-aaaa1111").write_bytes(b"second attempt\n")
+        doc = gateway_env["run"]("write", "--server", "cl9",
+                                 "--expected-sha", "0" * 64,
+                                 stage_arg, target)
+        assert doc["ok"] is False and doc["error"]["code"] == "remote_changed"
+        assert real.read_bytes() == content
+
+        # clean update with the correct baseline (current remote sha)
+        (stage / "vaspilot-aaaa1111").write_bytes(b"second attempt\n")
+        doc = gateway_env["run"]("write", "--server", "cl9",
+                                 "--expected-sha", baseline,
+                                 stage_arg, target, check=True)
+        assert doc["sha256"] == hashlib.sha256(b"second attempt\n").hexdigest()
+
+        # text denylist refuses structured writes too
+        doc = gateway_env["run"]("write", "--server", "cl9",
+                                 "--expected-sha", "", stage_arg,
+                                 f"{ROOT}/runs/CHGCAR")
+        assert doc["ok"] is False and doc["error"]["code"] == "text_denylist"
 
     def test_recent_survives_sacct_outage(self, gateway_env):
         """slurmdbd down must not fail the whole history op: empty jobs +

@@ -31,7 +31,8 @@ def test_block_contents():
 def test_block_carries_vscode_identity():
     block = vs.ssh_config_block("minus", vscode_identity=r"C:\u\id_ed25519",
                                 **BLOCK_ARGS)
-    assert r"IdentityFile C:\u\id_ed25519" in block
+    # forward slashes: MSYS (Git) ssh mangles backslash key paths
+    assert "IdentityFile C:/u/id_ed25519" in block
 
 
 def test_install_command_is_idempotent():
