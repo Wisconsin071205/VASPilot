@@ -251,6 +251,12 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .hcell{width:20px;height:20px;border-radius:4px;background:var(--bg3);flex-shrink:0}
 #hmcols{white-space:nowrap}
 #hmcols span{display:inline-block;width:132px;text-align:center}
+#rowmenu{position:fixed;display:none;z-index:99;background:var(--bg2);
+  border:1px solid var(--line);border-radius:8px;padding:4px;
+  box-shadow:0 6px 18px rgba(0,0,0,.45)}
+#rowmenu div{padding:6px 14px;font-size:12.5px;cursor:pointer;
+  border-radius:6px;white-space:nowrap}
+#rowmenu div:hover{background:var(--bg3)}
 .ustrip{display:flex;height:18px;border-radius:5px;overflow:hidden;background:var(--bg3);margin:6px 0 2px}
 .useg{height:100%}
 .ukey{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--fg2);margin-top:6px}
@@ -816,6 +822,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 </div>
 
 <div id="toasts"></div>
+<div id="rowmenu"></div>
 
 <script>
 /* ===================== 基础 ===================== */
@@ -1003,12 +1010,14 @@ async function browse() {
     ? `返回 ${parent}` : "已在服务器根目录";
   let rows = "";
   if (upAllowed) {
-    rows += `<tr><td class="mono" style="cursor:pointer;color:var(--acc)"
+    rows += `<tr oncontextmenu="rowMenu(event,'${esc(server)}','${esc(parent)}','dir')">
+      <td class="mono" style="cursor:pointer;color:var(--acc)"
       onclick="document.getElementById('fpath').value='${esc(parent)}';browse()">..（上一级）</td>
       <td>目录</td><td class="mono">—</td><td class="mono">—</td></tr>`;
   }
   rows += (r.entries || []).map(e => `
-    <tr><td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
+    <tr oncontextmenu="rowMenu(event,'${esc(server)}','${esc(r.path)}/${esc(e.name)}','${e.type}')">
+      <td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
       ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
     <td class="mono">${e.type === "dir"
@@ -1025,6 +1034,36 @@ async function openVscode() {
   const r = await api("vscode.open", {server, path});
   if (r.ok) toast(`VS Code 已启动：${r.alias} → ${r.path}（首次连接需在 VS Code 里确认一次）`, "ok");
 }
+function rowMenu(ev, server, path, type) {
+  // 右键文件/文件夹：直接用 VS Code 打开这一项（不用整个主目录做工作区）
+  ev.preventDefault();
+  const menu = document.getElementById("rowmenu");
+  const items = type === "dir" ? [
+    ["📂 在 VS Code 中打开此文件夹",
+     `openVscodePath('${esc(path)}','folder')`],
+    ["↘ 进入此目录",
+     `document.getElementById('fpath').value='${esc(path)}';browse()`],
+  ] : [
+    ["📄 在 VS Code 中打开此文件",
+     `openVscodePath('${esc(path)}','file')`],
+    ["👁 查看内容", `readFile('${esc(server)}','${esc(path)}')`],
+  ];
+  menu.innerHTML = items.map(([label, act]) =>
+    `<div onclick="${act};hideRowMenu()">${label}</div>`).join("");
+  menu.style.display = "block";
+  menu.style.left = Math.max(4, Math.min(ev.clientX, innerWidth - 250)) + "px";
+  menu.style.top = Math.max(4, Math.min(ev.clientY, innerHeight - 100)) + "px";
+}
+function hideRowMenu() {
+  document.getElementById("rowmenu").style.display = "none";
+}
+async function openVscodePath(path, kind) {
+  const server = document.getElementById("fsrv").value;
+  const r = await api("vscode.open", {server, path, kind});
+  if (r.ok) toast(`VS Code 已启动：${r.alias} → ${r.path}`, "ok");
+}
+document.addEventListener("click", hideRowMenu);
+window.addEventListener("blur", hideRowMenu);
 const DU_CACHE = {};
 let DU_RUN = null;
 function fmtBytes(n) {

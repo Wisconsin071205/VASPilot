@@ -68,7 +68,8 @@ def upsert_managed_block(config_path: Path, block: str) -> None:
 def launch_vscode(server: str, path: str, *, target: str, port: int,
                   vlab_host: str, vlab_user: str, vlab_port: int,
                   identity_file: str,
-                  config_path: Path | None = None) -> dict:
+                  config_path: Path | None = None,
+                  is_file: bool = False) -> dict:
     if not identity_file or not Path(identity_file).is_file():
         raise ValidationError(
             "Vlab identity file is missing; cannot build the VS Code tunnel")
@@ -85,6 +86,9 @@ def launch_vscode(server: str, path: str, *, target: str, port: int,
         raise ValidationError(
             "VS Code CLI not found (install VS Code or add 'code' to PATH)")
     uri = f"vscode-remote://ssh-remote+{alias_for(server)}{path}"
-    subprocess.Popen(["cmd", "/c", code_cli, "--folder-uri", uri],
+    # a single file opens as an editor tab, a directory as the workspace
+    flag = "--file-uri" if is_file else "--folder-uri"
+    subprocess.Popen(["cmd", "/c", code_cli, flag, uri],
                      creationflags=subprocess.CREATE_NO_WINDOW)
-    return {"ok": True, "alias": alias_for(server), "path": path}
+    return {"ok": True, "alias": alias_for(server), "path": path,
+            "kind": "file" if is_file else "folder"}

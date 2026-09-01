@@ -62,6 +62,23 @@ def test_launch_writes_config_and_spawns(tmp_path, monkeypatch):
     assert uri == "vscode-remote://ssh-remote+vaspilot-minus/share/home/jlyang"
 
 
+def test_launch_file_uri(tmp_path, monkeypatch):
+    identity = tmp_path / "id.pem"
+    identity.write_text("FAKEPEM\n", encoding="utf-8")
+    spawned = []
+    monkeypatch.setattr(vs.shutil, "which", lambda name: "code.cmd")
+    monkeypatch.setattr(vs.subprocess, "Popen",
+                        lambda cmd, creationflags=0: spawned.append(cmd))
+    result = vs.launch_vscode(
+        "minus", "/share/home/jlyang/runs/case/OUTCAR", target="jlyang@h",
+        port=22, vlab_host="v", vlab_user="u", vlab_port=22,
+        identity_file=str(identity), config_path=tmp_path / "cfg",
+        is_file=True)
+    assert result["kind"] == "file"
+    assert spawned[0][3] == "--file-uri"
+    assert spawned[0][4].endswith("/share/home/jlyang/runs/case/OUTCAR")
+
+
 def test_missing_identity_rejected(tmp_path):
     with pytest.raises(ValidationError):
         vs.launch_vscode(

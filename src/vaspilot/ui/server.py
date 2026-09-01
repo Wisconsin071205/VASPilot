@@ -421,7 +421,8 @@ class UiHandler(BaseHTTPRequestHandler):
             vlab_host=str(vlab.get("host") or ""),
             vlab_user=str(vlab.get("user") or ""),
             vlab_port=int(vlab.get("port") or 22),
-            identity_file=str(vlab.get("identity_file") or "")))
+            identity_file=str(vlab.get("identity_file") or ""),
+            is_file=str(body.get("kind") or "") == "file"))
 
     def _add_server(self, body: dict) -> None:
         from ..core.errors import ValidationError
