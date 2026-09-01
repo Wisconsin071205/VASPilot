@@ -23,7 +23,7 @@ def test_block_contents():
     block = vs.ssh_config_block("minus", **BLOCK_ARGS)
     assert "Host vaspilot-minus" in block
     assert "User jlyang" in block
-    assert "ctl-minus.sock" in block
+    assert "/home/ubuntu/.cache/vaspilot/ctl-minus.sock" in block
     assert "-W 114.214.207.167:22 jlyang@114.214.207.167" in block
     assert "ServerAliveInterval" not in block  # tunnel, not a master
 

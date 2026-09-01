@@ -30,7 +30,10 @@ def ssh_config_block(server: str, *, target: str, port: int,
     if "@" not in target:
         raise ValidationError(f"server target {target!r} must be user@host")
     user, host = target.split("@", 1)
-    sock = f"$HOME/.cache/vaspilot/ctl-{server}.sock"
+    # literal remote socket path: $HOME would be expanded by the LOCAL
+    # shell of whichever ssh VS Code picks (Git's MSYS ssh expands it to
+    # the Windows home and the tunnel then misses the mux socket)
+    sock = f"/home/{vlab_user}/.cache/vaspilot/ctl-{server}.sock"
     proxy = (
         f'ssh -q -i "{identity_file}" -p {vlab_port} '
         f"-o BatchMode=yes -o StrictHostKeyChecking=yes "
