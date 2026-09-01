@@ -415,6 +415,14 @@ class UiHandler(BaseHTTPRequestHandler):
                 f"{server} 未连接：请先在侧栏连接服务器，再用 VS Code 打开")
         entry = client.server_entry(server)
         path = str(body.get("path") or "").strip() or entry.remote_root
+        # VS Code authenticates from this machine: make sure a local
+        # keypair exists and its public half is installed on the server
+        # through the already-authenticated gateway session
+        priv, pub = vs.local_public_key()
+        result = client.run_command(vs.install_command(pub), server=server)
+        if not result.get("ok"):
+            raise ValidationError(
+                "公钥安装失败：" + str(result.get("stderr") or "")[:200])
         vlab = app.config.load_settings().get("vlab") or {}
         self._send_json(vs.launch_vscode(
             server, path, target=entry.target, port=entry.port,
@@ -422,7 +430,8 @@ class UiHandler(BaseHTTPRequestHandler):
             vlab_user=str(vlab.get("user") or ""),
             vlab_port=int(vlab.get("port") or 22),
             identity_file=str(vlab.get("identity_file") or ""),
-            is_file=str(body.get("kind") or "") == "file"))
+            is_file=str(body.get("kind") or "") == "file",
+            vscode_identity=str(priv)))
 
     def _add_server(self, body: dict) -> None:
         from ..core.errors import ValidationError

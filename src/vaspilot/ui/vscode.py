@@ -26,7 +26,7 @@ def alias_for(server: str) -> str:
 
 def ssh_config_block(server: str, *, target: str, port: int,
                      vlab_host: str, vlab_user: str, vlab_port: int,
-                     identity_file: str) -> str:
+                     identity_file: str, vscode_identity: str = "") -> str:
     if "@" not in target:
         raise ValidationError(f"server target {target!r} must be user@host")
     user, host = target.split("@", 1)
@@ -42,9 +42,39 @@ def ssh_config_block(server: str, *, target: str, port: int,
         f"  HostName {host}\n"
         f"  User {user}\n"
         f"  Port {port}\n"
-        f"  StrictHostKeyChecking accept-new\n"
+        + (f"  IdentityFile {vscode_identity}\n" if vscode_identity else "")
+        + f"  StrictHostKeyChecking accept-new\n"
         f"  ProxyCommand {proxy}\n"
         f"{MARK_END}\n")
+
+
+def local_public_key() -> tuple[Path, str]:
+    """The local keypair VS Code will offer to the server: prefer an
+    existing id_ed25519/id_rsa, otherwise generate a dedicated one."""
+    ssh_dir = Path.home() / ".ssh"
+    for name in ("id_ed25519.pub", "id_rsa.pub", "vaspilot_vscode.pub"):
+        p = ssh_dir / name
+        if p.is_file():
+            pub = p.read_text(encoding="utf-8").strip()
+            if pub.startswith(("ssh-", "ecdsa-")):
+                return p.with_suffix(""), pub
+    ssh_dir.mkdir(parents=True, exist_ok=True)
+    priv = ssh_dir / "vaspilot_vscode"
+    subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "",
+                    "-C", "vaspilot-vscode", "-f", str(priv), "-q"],
+                   check=True)
+    pub = (ssh_dir / "vaspilot_vscode.pub").read_text(encoding="utf-8").strip()
+    return priv, pub
+
+
+def install_command(pubkey: str) -> str:
+    """Idempotent authorized_keys append, run through the gateway session."""
+    q = pubkey.replace("'", "'\\''")
+    return ("mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            "touch ~/.ssh/authorized_keys && "
+            "chmod 600 ~/.ssh/authorized_keys && "
+            "{ grep -qF '" + q + "' ~/.ssh/authorized_keys || "
+            "printf '%s\\n' '" + q + "' >> ~/.ssh/authorized_keys; }")
 
 
 def upsert_managed_block(config_path: Path, block: str) -> None:
@@ -69,16 +99,19 @@ def launch_vscode(server: str, path: str, *, target: str, port: int,
                   vlab_host: str, vlab_user: str, vlab_port: int,
                   identity_file: str,
                   config_path: Path | None = None,
-                  is_file: bool = False) -> dict:
+                  is_file: bool = False,
+                  vscode_identity: str = "") -> dict:
     if not identity_file or not Path(identity_file).is_file():
         raise ValidationError(
             "Vlab identity file is missing; cannot build the VS Code tunnel")
+    if vscode_identity and not Path(vscode_identity).is_file():
+        raise ValidationError("local VS Code key is missing")
     if not path.startswith("/"):
         raise ValidationError("remote path must be absolute")
     block = ssh_config_block(
         server, target=target, port=int(port), vlab_host=vlab_host,
         vlab_user=vlab_user, vlab_port=int(vlab_port),
-        identity_file=identity_file)
+        identity_file=identity_file, vscode_identity=vscode_identity)
     cfg = config_path or (Path.home() / ".ssh" / "config")
     upsert_managed_block(cfg, block)
     code_cli = shutil.which("code") or shutil.which("code.cmd")

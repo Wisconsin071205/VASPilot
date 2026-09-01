@@ -28,6 +28,30 @@ def test_block_contents():
     assert "ServerAliveInterval" not in block  # tunnel, not a master
 
 
+def test_block_carries_vscode_identity():
+    block = vs.ssh_config_block("minus", vscode_identity=r"C:\u\id_ed25519",
+                                **BLOCK_ARGS)
+    assert r"IdentityFile C:\u\id_ed25519" in block
+
+
+def test_install_command_is_idempotent():
+    cmd = vs.install_command("ssh-ed25519 AAAAKEY me@pc")
+    assert cmd.startswith("mkdir -p ~/.ssh")
+    assert "grep -qF 'ssh-ed25519 AAAAKEY me@pc'" in cmd
+    assert "printf '%s\\n' 'ssh-ed25519 AAAAKEY me@pc'" in cmd
+
+
+def test_local_public_key_prefers_existing(tmp_path, monkeypatch):
+    monkeypatch.setattr(vs.Path, "home", lambda: tmp_path)
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    (ssh_dir / "id_ed25519.pub").write_text(
+        "ssh-ed25519 AAAAEXISTING me@pc\n", encoding="utf-8")
+    priv, pub = vs.local_public_key()
+    assert priv.name == "id_ed25519"
+    assert "AAAAEXISTING" in pub
+
+
 def test_upsert_is_idempotent(tmp_path):
     cfg = tmp_path / ".ssh" / "config"
     vs.upsert_managed_block(cfg, vs.ssh_config_block("minus", **BLOCK_ARGS))
