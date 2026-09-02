@@ -479,11 +479,17 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <button class="btn" onclick="browse()">浏览</button>
         <button class="btn ghost" id="duall" onclick="measureAll()"
           title="递归统计本列表中所有目录的真实大小（大目录耗时较长；再点一次停止）">测量全部</button>
+        <button class="btn ghost" onclick="refreshWorkspacePanel()">Vlab 工作区</button>
       </div>
     </div>
     <div class="card"><h2>目录内容</h2><table id="filetable">
       <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
       <tbody><tr><td colspan="5" class="empty">输入路径后点击浏览</td></tr></tbody></table></div>
+    <div class="card" id="workspacecard">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Vlab 工作区空间</h2>
+        <button class="btn ghost" onclick="refreshWorkspacePanel()">刷新</button></div>
+      <div id="workspaceout" class="empty" style="margin-top:10px">尚未检测。完整工作区只在 Vlab 挂载当前选定目录。</div>
+    </div>
     <div class="card" id="reader" style="display:none">
       <div class="row" style="justify-content:space-between"><h2 id="readerpath" style="margin:0"></h2>
         <button class="btn ghost" onclick="document.getElementById('reader').style.display='none'">关闭</button></div>
@@ -859,8 +865,10 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "flow") refreshProjects();
-  if (t.dataset.v === "files" && !document.getElementById("fpath").value)
-    pickFileServer();
+  if (t.dataset.v === "files") {
+    if (!document.getElementById("fpath").value) pickFileServer();
+    refreshWorkspacePanel();
+  }
 });
 document.getElementById("ver").textContent = "v" + (location.search.includes("debug") ? "?" : "");
 document.getElementById("chatinput").addEventListener("keydown", e => {
@@ -1037,14 +1045,20 @@ function rowMenu(ev, server, path, type) {
   ev.stopPropagation();  // 否则冒泡到 document 的 click 会立即关掉菜单
   const menu = document.getElementById("rowmenu");
   const items = type === "dir" ? [
+    ["☁ 通过 Vlab 打开完整工作区",
+     `openFullWorkspace('${esc(path)}')`],
     ["🗂 在 VS Code 中以虚拟目录打开",
      `openSafeVscode('${esc(path)}','folder')`],
+    ["📋 复制远端路径", `copyRemotePath('${esc(path)}')`],
+    ["📏 查看目录大小", `showDirectorySize('${esc(server)}','${esc(path)}')`],
     ["↘ 进入此目录",
      `document.getElementById('fpath').value='${esc(path)}';browse()`],
   ] : [
     ["📝 在 VS Code 中安全编辑",
      `openSafeVscode('${esc(path)}','file')`],
-    ["👁 查看内容", `readFile('${esc(server)}','${esc(path)}')`],
+    ["👁 在 VS Code 中只读查看", `readFile('${esc(server)}','${esc(path)}')`],
+    ["⬇ 下载", `downloadRemoteFile('${esc(server)}','${esc(path)}')`],
+    ["📋 复制远端路径", `copyRemotePath('${esc(path)}')`],
   ];
   menu.innerHTML = items.map(([label, act]) =>
     `<div onclick="${act};hideRowMenu()">${label}</div>`).join("");
@@ -1061,6 +1075,67 @@ function openSafeVscode(path, kind) {
   const a = document.createElement("a");
   a.href = uri; document.body.appendChild(a); a.click(); a.remove();
   toast("已唤起 VS Code Bridge（首次请允许浏览器打开 VS Code）", "ok");
+}
+async function copyRemotePath(path) {
+  try {
+    await navigator.clipboard.writeText(path);
+    toast("已复制远端路径", "ok");
+  } catch (_) {
+    toast("浏览器未允许复制；路径为：" + path);
+  }
+}
+function downloadRemoteFile(server, path) {
+  const url = `/t/${encodeURIComponent(TOKEN)}/download?server=${encodeURIComponent(server)}&path=${encodeURIComponent(path)}`;
+  window.location.assign(url);
+}
+async function showDirectorySize(server, path) {
+  const r = await api("remote.du", {server, path});
+  if (r.ok) toast(`${path}：${r.size_human || fmtBytes(Number(r.bytes))}`, "ok");
+}
+async function openFullWorkspace(path) {
+  const server = document.getElementById("fsrv").value;
+  toast("正在 Vlab 创建指定目录工作区并唤起最新版 VS Code…");
+  const r = await api("workspace.open", {server, path, mode:"full"});
+  if (!r.ok) return;
+  toast(`已创建 ${r.workspace_id}：VS Code 只会连接 Vlab，目标服务器不安装 VS Code Server。`, "ok");
+  refreshWorkspacePanel();
+}
+async function refreshWorkspacePanel() {
+  const out = document.getElementById("workspaceout");
+  if (!out) return;
+  const r = await api("workspace.list", {}, true);
+  if (!r.ok) {
+    out.innerHTML = `<span style="color:var(--fg2)">Vlab Workspace Gateway 未就绪：${esc(r.error?.message || "请先运行工作区检测")}</span>`;
+    return;
+  }
+  const space = r.space || {};
+  const rows = r.workspaces || [];
+  const level = Number(space.used_percent || 0) >= 90 ? "#f08b7d" :
+    Number(space.used_percent || 0) >= 80 ? "#e8bf65" : "var(--ok)";
+  out.innerHTML = `<div class="row" style="gap:20px;align-items:baseline">
+    <span>已用：<b style="color:${level}">${esc(space.used_percent ?? "—")}%</b></span>
+    <span>可用：<b>${fmtBytes(Number(space.free_bytes))}</b></span>
+    <span>缓存：<b>${fmtBytes(rows.reduce((n,w) => n + Number(w.cache_bytes || 0), 0))}</b></span>
+    <span>活动工作区：<b>${rows.filter(w => ["open","recovering","sync_pending","sync_unknown"].includes(w.status)).length}</b></span>
+    <span>待同步文件：<b>${rows.reduce((n,w) => n + Number(w.pending_sync_files || 0), 0)}</b></span>
+    <button class="btn ghost" style="padding:4px 9px" onclick="workspaceDoctor()">检测</button></div>` +
+    (rows.length ? `<table style="margin-top:10px"><thead><tr><th>ID</th><th>服务器 · 路径</th><th>状态</th><th>缓存</th><th>待同步</th><th></th></tr></thead><tbody>${rows.map(w =>
+      `<tr><td class="mono">${esc(w.workspace_id)}</td><td class="mono">${esc(w.server)} · ${esc(w.remote_path)}</td>
+       <td>${esc(w.status)}${w.mode === "read-only" ? " · 只读" : ""}</td><td>${fmtBytes(Number(w.cache_bytes))}</td>
+       <td>${esc(w.pending_sync_files)}</td><td>${['open', 'recovering', 'sync_pending', 'sync_unknown'].includes(w.status) ? `<button class="mini" title="安全关闭" onclick="closeWorkspace('${esc(w.workspace_id)}')">关闭</button>` : '—'}</td></tr>`).join("")}</tbody></table>` :
+      `<div class="empty" style="margin-top:10px">暂无完整工作区；右击一个计算目录后选择“通过 Vlab 打开完整工作区”。</div>`);
+}
+async function workspaceDoctor() {
+  const server = document.getElementById("fsrv").value;
+  const path = document.getElementById("fpath").value.trim();
+  const r = await api("workspace.doctor", {server, path});
+  if (r.ok) toast(r.ok ? "Vlab 工作区检测完成" : "检测发现问题", r.ok ? "ok" : "err");
+  refreshWorkspacePanel();
+}
+async function closeWorkspace(workspaceId) {
+  const r = await api("workspace.close", {workspace_id:workspaceId});
+  if (r.ok) toast("工作区已关闭；Vlab 缓存仍保留，可通过清理命令处理。", "ok");
+  refreshWorkspacePanel();
 }
 document.addEventListener("click", hideRowMenu);
 window.addEventListener("blur", hideRowMenu);

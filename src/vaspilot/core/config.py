@@ -237,6 +237,8 @@ class Config:
             "port": int(data.get("port", 22) or 22),
             "identity_file": str(data.get("identity_file", "") or ""),
             "gateway_path": str(data.get("gateway_path", "~/bin/vaspilot-gateway")),
+            "workspace_gateway_path": str(data.get(
+                "workspace_gateway_path", "~/bin/huwei-workspace-gateway")),
         }
 
     def set_vlab(self, **changes) -> dict:

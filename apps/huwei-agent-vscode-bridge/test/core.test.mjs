@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   openRefusal,
+  parseWakeQuery,
   sha256Hex,
   sliceEntries,
   wakeUri,
@@ -42,4 +43,18 @@ test("wakeUri matches the console-side launcher format", () => {
     "vscode://huwei-team.huwei-agent-vscode-bridge/open" +
       "?server=minus&path=%2Fshare%2Fhome%2Fjlyang%2Fmy+dir%2Fa.txt&kind=file"
   );
+});
+
+test("folder context menu URI is accepted by the UriHandler parser", () => {
+  const uri = new URL(wakeUri("cl12", "/share/home/user/calc", "folder"));
+  assert.deepEqual(parseWakeQuery(uri.search.slice(1)), {
+    server: "cl12",
+    path: "/share/home/user/calc",
+    kind: "folder",
+  });
+});
+
+test("UriHandler parser refuses incomplete or unsafe wake requests", () => {
+  assert.throws(() => parseWakeQuery("server=cl12&path=%2Ftmp&kind=unknown"));
+  assert.throws(() => parseWakeQuery("server=cl12&path=relative&kind=file"));
 });

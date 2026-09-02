@@ -21,18 +21,26 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import tempfile
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 
 from .. import __version__
 from ..core.errors import VaspilotError
 
 STATIC_DIR = Path(__file__).parent / "static"
-MAX_BODY = 1 << 20  # 1 MiB request cap
+# A bridge save may contain a 32 MiB text document; JSON escaping can make
+# the request larger. Keep an explicit, finite cap for all localhost calls.
+MAX_BODY = 64 * 1024 * 1024
+MAX_UI_DOWNLOAD = 1024 * 1024 * 1024
+
+
+class RequestTooLargeError(ValueError):
+    """Raised before parsing a localhost request that exceeds its cap."""
 
 _EXPIRED_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <title>会话已过期 — 胡伟团队专用智能体</title><style>
@@ -120,23 +128,37 @@ class UiHandler(BaseHTTPRequestHandler):
             payload.setdefault("ok", True)
         self._send(status, _json_bytes(payload), "application/json; charset=utf-8")
 
+    def _send_file(self, path: Path, filename: str) -> None:
+        """Stream one user-requested remote download without logging content
+        or materializing it again in web-server memory."""
+        size = path.stat().st_size
+        safe_name = quote(filename or "download", safe="")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition",
+                         f"attachment; filename*=UTF-8''{safe_name}")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        with open(path, "rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length <= 0:
             return {}
         if length > MAX_BODY:
-            # drain so keep-alive reuse cannot parse leftover bytes as a
-            # new request line (the 501 '{"json"}GET' failure mode)
-            remaining = min(length, 16 * 1024 * 1024)
-            try:
-                while remaining > 0:
-                    chunk = self.rfile.read(min(remaining, 65536))
-                    if not chunk:
-                        break
-                    remaining -= len(chunk)
-            except OSError:
-                self.close_connection = True
-            return {}
+            # Do not leave a partial oversized JSON document on a persistent
+            # connection; closing is safer than trying to drain an arbitrary
+            # amount of locally supplied data.
+            self.close_connection = True
+            raise RequestTooLargeError(
+                f"request exceeds the {MAX_BODY // (1024 * 1024)} MiB cap")
         try:
             data = json.loads(self.rfile.read(length).decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
@@ -155,6 +177,12 @@ class UiHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == f"/t/{self.state.token}/download":
+            query = parse_qs(parsed.query)
+            self._download_remote(
+                str((query.get("server") or [""])[0]),
+                str((query.get("path") or [""])[0]))
+            return
         if path.startswith("/t/"):
             token = path[len("/t/"):]
             if token != self.state.token:
@@ -188,6 +216,39 @@ class UiHandler(BaseHTTPRequestHandler):
             "code": "not_found", "message": path}}),
             "application/json; charset=utf-8")
 
+    def _download_remote(self, server: str, remote_path: str) -> None:
+        """Explicit browser download through the existing structured client.
+        The capability URL is under the already-random UI token path; the
+        server still validates server/path and enforces a finite stream cap.
+        """
+        from ..core.errors import ValidationError
+        from ..core.validation import valid_server_name
+        from pathlib import PurePosixPath
+        local = None
+        try:
+            name = valid_server_name(server)
+            if not remote_path.startswith("/"):
+                raise ValidationError("remote path must be absolute")
+            stat = self.state.app.client().stat(remote_path, server=name)
+            if int(stat.get("size") or 0) > MAX_UI_DOWNLOAD:
+                raise ValidationError("浏览器下载上限为 1 GiB；请使用 huwei remote download")
+            filename = PurePosixPath(remote_path).name or "download"
+            local = Path(tempfile.gettempdir()) / (
+                "huwei-download-" + secrets.token_hex(12) + "-" + filename)
+            self.state.app.client().download(remote_path, local, server=name)
+            self._send_file(local, filename)
+        except VaspilotError as exc:
+            self._send_json({"ok": False, "error": exc.to_dict()}, status=400)
+        except Exception as exc:
+            self._send_json({"ok": False, "error": {
+                "code": "download_failed", "message": str(exc)[:300]}}, status=400)
+        finally:
+            if local is not None:
+                try:
+                    Path(local).unlink(missing_ok=True)
+                except OSError:
+                    pass
+
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         if not parsed.path.startswith("/api/"):
@@ -198,7 +259,12 @@ class UiHandler(BaseHTTPRequestHandler):
                 "code": "unauthorized", "message": "missing or wrong token"}},
                 status=403)
             return
-        body = self._read_json()
+        try:
+            body = self._read_json()
+        except RequestTooLargeError as exc:
+            self._send_json({"ok": False, "error": {
+                "code": "request_too_large", "message": str(exc)}}, status=413)
+            return
         if parsed.path == "/api/agent/chat":
             self._chat_stream(body)
             return
@@ -231,7 +297,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(client.status(str(body.get("server") or "")))
             elif action == "remote.list":
                 self._send_json(client.list_dir(str(body.get("path") or ""),
-                                                server=body.get("server")))
+                                                server=body.get("server"),
+                                                limit=body.get("limit") or 500))
             elif action == "remote.read":
                 self._send_json(client.read(str(body.get("path") or ""),
                                             server=body.get("server")))
@@ -262,8 +329,39 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(client.move(str(body.get("path") or ""),
                                             str(body.get("destination") or ""),
                                             server=body.get("server")))
+            elif action == "remote.find":
+                self._send_json(client.find(
+                    str(body.get("path") or ""),
+                    pattern=str(body.get("pattern") or "*"),
+                    max_depth=body.get("max_depth") or 2,
+                    limit=body.get("limit") or 200,
+                    server=body.get("server")))
             elif action == "remote.trash.list":
                 self._send_json(client.trash_list(server=body.get("server")))
+            elif action == "workspace.doctor":
+                self._send_json(client.workspace_doctor(
+                    server=str(body.get("server") or ""),
+                    path=str(body.get("path") or "")))
+            elif action == "workspace.open":
+                self._open_workspace(body)
+            elif action == "workspace.status":
+                self._send_json(client.workspace_status(
+                    str(body.get("workspace_id") or "")))
+            elif action == "workspace.list":
+                self._send_json(client.workspace_list())
+            elif action == "workspace.close":
+                self._send_json(client.workspace_close(
+                    str(body.get("workspace_id") or ""),
+                    wait_seconds=int(body.get("wait_seconds") or 60)))
+            elif action == "workspace.recover":
+                self._send_json(client.workspace_recover(
+                    workspace_id=str(body.get("workspace_id") or ""),
+                    action=str(body.get("action") or "list"),
+                    confirm_workspace_id=str(body.get("confirm_workspace_id") or "")))
+            elif action == "workspace.cleanup":
+                self._send_json(client.workspace_cleanup(
+                    apply=bool(body.get("apply")),
+                    confirm=str(body.get("confirm") or "")))
             elif action == "vscode.open":
                 self._open_vscode(body)
             elif action == "job.list":
@@ -418,7 +516,7 @@ class UiHandler(BaseHTTPRequestHandler):
                 "agent_submit_mode": app.config.agent_submit_mode(),
                 "websearch": app.config.websearch()}
 
-    MAX_TEXT_WRITE = 64 * 1024 * 1024
+    MAX_TEXT_WRITE = 32 * 1024 * 1024
 
     def _write_remote(self, body: dict) -> None:
         """Structured text save for the VS Code bridge: UTF-8 content plus
@@ -435,7 +533,7 @@ class UiHandler(BaseHTTPRequestHandler):
             raise ValidationError("remote path must be absolute")
         content = str(body.get("content") or "").encode("utf-8")
         if len(content) > self.MAX_TEXT_WRITE:
-            raise ValidationError("content exceeds the 64 MiB write cap")
+            raise ValidationError("content exceeds the 32 MiB write cap")
         expected = str(body.get("expected_sha256") or "").strip().lower()
         handle, tmp = tempfile.mkstemp(suffix=".vaspilot-write")
         try:
@@ -451,39 +549,39 @@ class UiHandler(BaseHTTPRequestHandler):
         self._send_json(result)
 
     def _open_vscode(self, body: dict) -> None:
-        """Open the server directory in VS Code via Remote-SSH riding the
-        existing mux on Vlab (no password prompts)."""
+        """Retired direct-target entry point.
+
+        A prior interface created a Remote-SSH tunnel all the way to the
+        target server.  That would install a VS Code Server on old clusters,
+        so the single-version architecture deliberately blocks it.  The
+        retained function keeps old external callers from silently taking
+        the wrong path; they receive a clear migration error instead.
+        """
+        from ..core.errors import ValidationError
+        raise ValidationError(
+            "已禁止 VS Code 直连目标服务器；文件请用“安全编辑”，目录请用“通过 Vlab 打开完整工作区”"
+        )
+
+    def _open_workspace(self, body: dict) -> None:
+        """Create a selected-directory Vlab workspace and open VS Code on
+        Vlab only.  No Remote-SSH alias is created for the target cluster."""
         from ..core.errors import ValidationError
         from ..ui import vscode as vs
         app = self.state.app
         client = app.client()
         server = _server_or_default(body, app)
-        try:
-            connected = bool(client.status(server).get("connected"))
-        except Exception:
-            connected = False
-        if not connected:
-            raise ValidationError(
-                f"{server} 未连接：请先在侧栏连接服务器，再用 VS Code 打开")
-        entry = client.server_entry(server)
-        path = str(body.get("path") or "").strip() or entry.remote_root
-        # VS Code authenticates from this machine: make sure a local
-        # keypair exists and its public half is installed on the server
-        # through the already-authenticated gateway session
-        priv, pub = vs.local_public_key()
-        result = client.run_command(vs.install_command(pub), server=server)
-        if not result.get("ok"):
-            raise ValidationError(
-                "公钥安装失败：" + str(result.get("stderr") or "")[:200])
-        vlab = app.config.load_settings().get("vlab") or {}
-        self._send_json(vs.launch_vscode(
-            server, path, target=entry.target, port=entry.port,
-            vlab_host=str(vlab.get("host") or ""),
-            vlab_user=str(vlab.get("user") or ""),
-            vlab_port=int(vlab.get("port") or 22),
-            identity_file=str(vlab.get("identity_file") or ""),
-            is_file=str(body.get("kind") or "") == "file",
-            vscode_identity=str(priv)))
+        path = str(body.get("path") or "").strip()
+        if not path.startswith("/"):
+            raise ValidationError("完整工作区需要一个绝对的目标计算目录")
+        mode = str(body.get("mode") or "full")
+        result = client.workspace_open(path, server=server, mode=mode)
+        vlab = app.config.vlab
+        opened = vs.launch_vlab_workspace(
+            str(result.get("vscode_workspace_path") or ""),
+            vlab_host=str(vlab["host"]), vlab_user=str(vlab["user"]),
+            vlab_port=int(vlab["port"]),
+            identity_file=str(vlab["identity_file"]))
+        self._send_json({**result, "vscode": opened})
 
     def _add_server(self, body: dict) -> None:
         from ..core.errors import ValidationError
@@ -1152,13 +1250,16 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
     print(f"VASPilot UI ready: {url}", flush=True)
     try:
         # machine-readable discovery for the VS Code bridge extension;
-        # VASPILOT_HOME keeps tests away from the real profile
+        # VASPILOT_HOME keeps tests away from the real profile.
+        # url is the BASE address (no /t/token) — the extension appends
+        # /api/<action> and authenticates with the separate token field.
         import json as _json
         home = Path(os.environ.get("VASPILOT_HOME")
                     or (Path.home() / ".vaspilot"))
         home.mkdir(parents=True, exist_ok=True)
         (home / "ui.json").write_text(_json.dumps(
-            {"url": url, "token": state.token, "pid": os.getpid()}),
+            {"url": f"http://{host}:{bound_port}", "token": state.token,
+             "pid": os.getpid()}),
             encoding="utf-8")
     except OSError:
         pass

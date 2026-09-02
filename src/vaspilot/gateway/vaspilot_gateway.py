@@ -786,10 +786,14 @@ def op_list(args) -> int:
     path = validated_remote_path(args.path or str(effective_root(name, entry)),
                                  entry, name)
     require_resolved_within_root(name, path, entry)
+    # A directory view must remain non-recursive and bounded. Sorting before
+    # applying a limit would enumerate a huge directory, so let `head` stop
+    # the producer and request one extra entry to report truncation.
+    limit = max(1, min(int(getattr(args, "limit", 500)), 2000))
     listing = remote(
         name,
         f"if [ -d {q(path)} ]; then find {q(path)} -maxdepth 1 -mindepth 1 "
-        f"-printf '%y|%f|%s|%TY-%Tm-%TdT%TH:%TM:%TS\\n' | sort; "
+        f"-printf '%y|%f|%s|%TY-%Tm-%TdT%TH:%TM:%TS\\n' | head -n {limit + 1}; "
         f"else echo NOTDIR; fi")
     entries = []
     if listing.strip() == "NOTDIR":
@@ -805,7 +809,9 @@ def op_list(args) -> int:
                                                 "l": "symlink"}.get(kind, kind),
                         "size": int(size) if size.isdigit() else 0,
                         "mtime": mtime.strip()})
-    out({"path": path, "entries": entries})
+    truncated = len(entries) > limit
+    out({"path": path, "entries": entries[:limit], "truncated": truncated,
+         "limit": limit})
     audit("list", "ok", path, name)
     return 0
 
@@ -2044,6 +2050,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("pwd", op_pwd)
     p = add("list", op_list)
     p.add_argument("path", nargs="?")
+    p.add_argument("--limit", type=int, default=500)
     p = add("read", op_read)
     p.add_argument("path")
     p = add("tail", op_tail)

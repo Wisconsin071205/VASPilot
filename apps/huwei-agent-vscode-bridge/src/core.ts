@@ -54,3 +54,21 @@ export function wakeUri(server: string, p: string, kind: "file" | "folder") {
   });
   return `vscode://huwei-team.huwei-agent-vscode-bridge/open?${q.toString()}`;
 }
+
+/** URI Handler 的输入校验；保持为纯函数，避免误把不完整链接打开成目录。 */
+export interface WakeRequest {
+  server: string;
+  path: string;
+  kind: "file" | "folder";
+}
+
+export function parseWakeQuery(query: string): WakeRequest {
+  const q = new URLSearchParams(query);
+  const server = q.get("server") ?? "";
+  const path = q.get("path") ?? "";
+  const kind = q.get("kind") ?? "";
+  if (!server || !path.startsWith("/") || (kind !== "file" && kind !== "folder")) {
+    throw new Error("唤起链接不完整或 kind 无效：需要 server、绝对 path 和 file/folder");
+  }
+  return { server, path, kind };
+}

@@ -185,7 +185,9 @@ class FakeHpc:
             if "cp --" in command and "rm -f" in command:
                 return self._special(command, paths)
             if "find" in command and "-printf '%y|" in command:
-                return self._list_dir(paths[0])
+                match = re.search(r"head -n (\d+)", command)
+                limit = int(match.group(1)) if match else None
+                return self._list_dir(paths[0], limit=limit)
             if command.startswith("size=$(wc -c"):
                 return self._read_file(paths[0])
             if command.startswith("tail -n"):
@@ -237,7 +239,32 @@ class FakeHpc:
                 return 0, ""
             if command.startswith("sha256sum --"):
                 return 0, hashlib.sha256(
-                    self.to_real(paths[0]).read_bytes()).hexdigest() + "\n"
+                    self.to_real(path_tokens(command)[0]).read_bytes()).hexdigest() + "\n"
+            if command.startswith("[ -e "):
+                pt = path_tokens(command)
+                exists = bool(pt) and self.to_real(pt[0]).exists()
+                return 0, ("yes" if exists else "no") + "\n"
+            if command.startswith("mv -f -- "):
+                pt = path_tokens(command)
+                dst_real = self.to_real(pt[1])
+                dst_real.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(self.to_real(pt[0]), dst_real)
+                return 0, ""
+            if command.startswith("rm -f -- "):
+                for pt in path_tokens(command):
+                    try:
+                        self.to_real(pt).unlink()
+                    except FileNotFoundError:
+                        pass
+                return 0, ""
+            if command.startswith("chmod --reference="):
+                return 0, ""
+            if command.startswith("stat -c %Y"):
+                try:
+                    return 0, str(int(
+                        self.to_real(path_tokens(command)[0]).stat().st_mtime)) + "\n"
+                except (FileNotFoundError, IndexError):
+                    return 1, ""
             if command.startswith("stat -c %s"):
                 return 0, str(self.to_real(paths[0]).stat().st_size) + "\n"
             if command.startswith("rm -rf --"):
@@ -344,7 +371,7 @@ class FakeHpc:
             return (0, "YES\n") if target.is_file() else (0, "NO\n")
         return (0, "YES\n") if target.exists() else (0, "NO\n")
 
-    def _list_dir(self, posix_path: str) -> tuple[int, str]:
+    def _list_dir(self, posix_path: str, limit: int | None = None) -> tuple[int, str]:
         real = self.to_real(posix_path)
         if not real.is_dir():
             return 0, "NOTDIR\n"
@@ -353,14 +380,17 @@ class FakeHpc:
             kind = "d" if child.is_dir() else "f"
             size = 0 if child.is_dir() else child.stat().st_size
             rows.append(f"{kind}|{child.name}|{size}|2026-01-01T00:00:00")
-        return 0, "\n".join(sorted(rows)) + ("\n" if rows else "")
+        rows = sorted(rows)
+        if limit is not None:
+            rows = rows[:limit]
+        return 0, "\n".join(rows) + ("\n" if rows else "")
 
     def _read_file(self, posix_path: str) -> tuple[int, str]:
         real = self.to_real(posix_path)
         if not real.is_file():
             return 1, f"cat: {posix_path}: No such file\n"
         data = real.read_bytes()
-        cap = 2 * 1024 * 1024
+        cap = 32 * 1024 * 1024
         if len(data) > cap:
             return 0, data[-cap:].decode("utf-8", "replace")
         return 0, data.decode("utf-8", "replace")
@@ -438,6 +468,9 @@ def main() -> int:
             src.read_bytes()))
         return 0
     code, out = FakeHpc(server).execute(command)
+    if os.environ.get("VASPILOT_FAKE_DEBUG"):
+        with open(os.environ["VASPILOT_FAKE_DEBUG"], "a", encoding="utf-8") as d:
+            d.write(f"rc={code} cmd={command[:160]}\n")
     sys.stdout.write(out)
     return code
 

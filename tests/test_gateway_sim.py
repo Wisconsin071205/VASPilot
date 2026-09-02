@@ -113,6 +113,18 @@ class TestFileOperations:
         assert result is not None and not result["ok"]
         assert "may not be read" in result["error"]["message"]
 
+    def test_list_is_non_recursive_and_reports_truncation(self, gateway_env):
+        run, fs = gateway_env["run"], gateway_env["fs"]
+        directory = fs / "runs" / "many"
+        directory.mkdir(parents=True)
+        for index in range(4):
+            (directory / f"entry-{index}.txt").write_text("x", encoding="utf-8")
+        result = run("list", "--server", "cl9", f"{ROOT}/runs/many",
+                     "--limit", "3", check=True)
+        assert len(result["entries"]) == 3
+        assert result["truncated"] is True
+        assert result["limit"] == 3
+
     def test_upload_verifies_sha(self, gateway_env):
         run, stage, fs = gateway_env["run"], gateway_env["stage"], gateway_env["fs"]
         local = stage / "staged-file"

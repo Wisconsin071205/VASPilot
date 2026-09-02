@@ -20,7 +20,8 @@ from ..core.validation import (confirm_match, remote_path, scheduler_kind,
                                valid_server_name, valid_trash_id)
 from .transport import SshTransport
 
-_TEXT_CAP_BYTES = 2 * 1024 * 1024
+# Align the local console with the bridge's 32 MiB text-open limit.
+_TEXT_CAP_BYTES = 32 * 1024 * 1024
 
 
 class GatewayClient:
@@ -51,6 +52,21 @@ class GatewayClient:
         if not name:
             raise ValidationError("no server given and no default server set")
         return name
+
+    def _workspace_call(self, event: str, args: list[str], *, timeout: int = 180,
+                        **audit_fields) -> dict:
+        """Workspace Gateway runs only on Vlab.  It receives fixed arguments
+        from this facade and never gets a model-authored shell command."""
+        try:
+            document = self.transport.run_workspace_gateway(args, timeout=timeout)
+        except RemoteError as exc:
+            if self.audit:
+                self.audit.record(event, outcome="failed", error=exc.to_dict(),
+                                  **audit_fields)
+            raise
+        if self.audit:
+            self.audit.record(event, outcome="ok", **audit_fields)
+        return document
 
     def server_entry(self, server: str) -> ServerEntry:
         for entry in self.config.load_servers():
@@ -309,24 +325,85 @@ class GatewayClient:
         name = self._require(server)
         return self._call("server.whoami", ["whoami", "--server", name])
 
+    # ---------------------------------------------------------- workspaces
+    def workspace_doctor(self, *, server: str | None = None,
+                         path: str = "") -> dict:
+        args = ["doctor"]
+        if server:
+            name = self._require(server)
+            args += ["--server", name]
+            if path:
+                args += ["--path", self._resolve(name, path)]
+        return self._workspace_call("workspace.doctor", args, timeout=90,
+                                    server=server or "")
+
+    def workspace_open(self, path: str, *, server: str | None = None,
+                       mode: str = "full") -> dict:
+        name = self._require(server)
+        if mode not in ("full", "read-only"):
+            raise ValidationError("workspace mode must be full or read-only")
+        target = self._resolve(name, path)
+        return self._workspace_call("workspace.open", [
+            "open", "--server", name, "--path", target, "--mode", mode],
+            timeout=120, server=name, path=target, mode=mode)
+
+    def workspace_status(self, workspace_id: str = "") -> dict:
+        args = ["status"] + (["--workspace", workspace_id] if workspace_id else [])
+        return self._workspace_call("workspace.status", args, timeout=45,
+                                    workspace_id=workspace_id)
+
+    def workspace_list(self) -> dict:
+        return self._workspace_call("workspace.list", ["list"], timeout=45)
+
+    def workspace_close(self, workspace_id: str, *, wait_seconds: int = 60) -> dict:
+        if not workspace_id.startswith("ws-"):
+            raise ValidationError("workspace id is invalid")
+        return self._workspace_call("workspace.close", [
+            "close", "--workspace", workspace_id, "--wait",
+            str(max(1, min(int(wait_seconds), 300)))], timeout=360,
+            workspace_id=workspace_id)
+
+    def workspace_recover(self, *, workspace_id: str = "", action: str = "list",
+                          confirm_workspace_id: str = "") -> dict:
+        if action not in ("list", "retry", "keep", "discard"):
+            raise ValidationError("workspace recovery action is invalid")
+        args = ["recover", "--action", action]
+        if workspace_id:
+            args += ["--workspace", workspace_id]
+        if confirm_workspace_id:
+            args += ["--confirm-workspace-id", confirm_workspace_id]
+        return self._workspace_call("workspace.recover", args, timeout=120,
+                                    workspace_id=workspace_id, action=action)
+
+    def workspace_cleanup(self, *, apply: bool = False, confirm: str = "") -> dict:
+        args = ["cleanup"]
+        if apply:
+            args += ["--apply", "--confirm", confirm]
+        return self._workspace_call("workspace.cleanup", args, timeout=120,
+                                    apply=apply)
+
     # ------------------------------------------------------------- remote fs
     def pwd(self, server: str | None = None) -> dict:
         return self._call("remote.pwd", ["pwd", "--server", self._require(server)])
 
-    def list_dir(self, path: str, *, server: str | None = None) -> dict:
+    def list_dir(self, path: str, *, server: str | None = None,
+                 limit: int = 500) -> dict:
         name = self._require(server)
+        limit = max(1, min(int(limit), 2000))
         return self._call("remote.list",
-                          ["list", "--server", name, self._resolve(name, path)],
+                          ["list", "--server", name, self._resolve(name, path),
+                           "--limit", str(limit)],
                           path=path)
 
     def read(self, path: str, *, server: str | None = None,
-             max_bytes: int = 262144) -> dict:
+             max_bytes: int = _TEXT_CAP_BYTES) -> dict:
         name = self._require(server)
+        cap = max(1, min(int(max_bytes), _TEXT_CAP_BYTES))
         result = self._call("remote.read",
                             ["read", "--server", name, self._resolve(name, path)],
                             path=path)
         content = str(result.get("content", ""))
-        if len(content.encode("utf-8", "replace")) > _TEXT_CAP_BYTES:
+        if len(content.encode("utf-8", "replace")) > cap:
             raise RemoteError("file exceeds the readable text cap")
         return result
 

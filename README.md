@@ -1,4 +1,7 @@
-# VASPilot
+# 胡伟团队专用智能体
+
+> 技术包名与兼容命令仍为 `VASPilot` / `vaspilot`；面向用户的产品名称统一为
+> 「胡伟团队专用智能体」。也可使用更简短的 `huwei` 命令。
 
 CLI-first, multi-model VASP/HPC agent: after the user completes SSH
 authentication by hand, it performs **restricted, auditable** file transfer,
@@ -19,7 +22,7 @@ an arbitrary remote shell — every action is a named, validated tool.
 
 ```powershell
 py -3.12 -m pip install -e .[dev]
-vaspilot --help            # 或: py -3.12 -m vaspilot --help
+huwei --help               # 兼容命令: vaspilot --help
 py -3.12 -m pytest         # 134 tests, fully offline
 ```
 
@@ -89,6 +92,19 @@ re-authenticate visibly via `server connect`.
 必须携带；UI 不接触密码/TOTP/API Key——交互式登录通过「连接」按钮在**独立的
 可见系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
 桌面快捷方式「VASPilot 控制台」或 `%USERPROFILE%\bin\vaspilot-ui.cmd` 一键启动。
+
+## VS Code 安全编辑（单一最新版 VS Code）
+
+仓库附带“胡伟团队专用智能体 VS Code Bridge”扩展。它经本地控制台按需访问
+`Windows → Vlab → HPC`，不通过 Remote-SSH 直接连接计算服务器，因此不会在
+CentOS 7 等老集群安装 VS Code Server。先运行
+`apps\huwei-agent-vscode-bridge\install-windows.ps1` 安装仓库内的 VSIX，随后在
+控制台“文件”页右击文件或文件夹，选择“在 VS Code 中安全编辑”或“以虚拟目录打开”。
+详细说明见 [docs/VSCode安全编辑.md](docs/VSCode安全编辑.md)。
+
+需要终端、语言服务或完整目录时，可启用 Vlab 完整工作区模式：VS Code 只连接
+Vlab，rclone 在 Vlab 映射一个明确选定的计算目录。安装、空间限制、写入租约和
+断线恢复说明见 [docs/VSCode远端工作区使用说明.md](docs/VSCode远端工作区使用说明.md)。
 
 ## Approval model (immutable plan, one approval, unattended inside the plan)
 

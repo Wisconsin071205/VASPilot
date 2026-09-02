@@ -137,6 +137,9 @@ class TestTokenGuard:
         assert "measureSize" in html
         # one-click batch measurement for every directory in the listing
         assert "measureAll" in html
+        assert "通过 Vlab 打开完整工作区" in html
+        assert "在 VS Code 中安全编辑" in html
+        assert "downloadRemoteFile" in html
 
 
 class TestPortFallback:
@@ -209,6 +212,28 @@ class TestViews:
         assert doc["ok"]
         assert doc["bytes"] > 0
         assert doc["size_human"].endswith("B")
+
+    def test_explicit_file_download_uses_token_capability_path(self, ui):
+        from urllib.parse import urlencode
+        path = f"{ROOT}/runs/good/INCAR"
+        url = f"{ui['base']}/t/{ui['token']}/download?" + urlencode(
+            {"server": "cl9", "path": path})
+        with urllib.request.urlopen(url, timeout=30) as response:
+            content = response.read().decode("utf-8")
+            assert "attachment" in response.headers["Content-Disposition"]
+        assert "SYSTEM=good" in content
+
+    def test_workspace_gateway_list_and_doctor_are_exposed(self, ui):
+        listing = call(ui, "workspace.list")
+        assert listing["ok"] and listing["workspaces"] == []
+        doctor = call(ui, "workspace.doctor", {"server": "cl9", "path": ROOT})
+        assert doctor["ok"] and doctor["checks"][0]["name"] == "rclone"
+
+    def test_direct_target_vscode_open_is_blocked(self, ui):
+        payload = call(ui, "vscode.open", {"server": "cl9", "path": ROOT})
+        assert payload["ok"] is False
+        assert "禁止 VS Code 直连目标服务器" in payload["error"]["message"]
+        assert not any(call[0] == "run" for call in ui["app"].transport().calls)
 
     def test_outside_root_rejected_as_json(self, ui):
         payload = call(ui, "remote.list", {"server": "cl9", "path": "/etc"})

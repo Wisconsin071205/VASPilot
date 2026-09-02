@@ -5,8 +5,13 @@ $ErrorActionPreference = "Stop"
 
 $extDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $extDir)
-$vsix = Get-ChildItem -Path (Join-Path $extDir "*.vsix") |
-        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$repoPackage = Join-Path $repoRoot "dist\huwei-agent-vscode-bridge.vsix"
+$vsix = if (Test-Path -LiteralPath $repoPackage) {
+    Get-Item -LiteralPath $repoPackage
+} else {
+    Get-ChildItem -Path (Join-Path $extDir "*.vsix") |
+      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
 
 if (-not $vsix) {
     Write-Host "[错误] 未找到 .vsix 安装包。请先在本目录执行:" -ForegroundColor Red

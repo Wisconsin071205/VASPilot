@@ -48,7 +48,8 @@ class App:
             self._transport = SshTransport(
                 host=vlab["host"], user=vlab["user"], port=vlab["port"],
                 identity_file=self.config.identity_file(),
-                gateway_path=vlab["gateway_path"])
+                gateway_path=vlab["gateway_path"],
+                workspace_gateway_path=vlab["workspace_gateway_path"])
         return self._transport
 
     def client(self) -> GatewayClient:
@@ -108,12 +109,14 @@ def build_parser() -> argparse.ArgumentParser:
     from .workflow import register as register_workflow
     from .monitor import register as register_monitor
     from .agent import register as register_agent
+    from .workspace import register as register_workspace
     register_server(sub)
     register_remote(sub)
     register_job(sub)
     register_workflow(sub)
     register_monitor(sub)
     register_agent(sub)
+    register_workspace(sub)
 
     ui = sub.add_parser("ui", help="local web console (chat + fleet + workflow)")
     ui.add_argument("--host", default="127.0.0.1")

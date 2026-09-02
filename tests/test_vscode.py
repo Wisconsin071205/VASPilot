@@ -14,110 +14,42 @@ if str(SRC) not in sys.path:
 import vaspilot.ui.vscode as vs
 from vaspilot.core.errors import ValidationError
 
-BLOCK_ARGS = dict(target="jlyang@114.214.207.167", port=22,
-                  vlab_host="vlab.ustc.edu.cn", vlab_user="ubuntu",
-                  vlab_port=22, identity_file=r"C:\u\vlab.pem")
+def test_workspace_alias_terminates_on_vlab_only():
+    block = vs.workspace_vlab_ssh_config_block(
+        vlab_host="vlab.ustc.edu.cn", vlab_user="ubuntu", vlab_port=22,
+        identity_file=r"C:\keys\vlab.pem")
+    assert "Host huwei-vlab" in block
+    assert "HostName vlab.ustc.edu.cn" in block
+    assert "StrictHostKeyChecking yes" in block
+    assert "ProxyCommand" not in block
+    assert "cl12" not in block and "minus" not in block
 
 
-def test_block_contents():
-    block = vs.ssh_config_block("minus", **BLOCK_ARGS)
-    assert "Host vaspilot-minus" in block
-    assert "User jlyang" in block
-    assert "/home/ubuntu/.cache/vaspilot/ctl-minus.sock" in block
-    assert "-W 114.214.207.167:22 jlyang@114.214.207.167" in block
-    assert "ServerAliveInterval" not in block  # tunnel, not a master
+def test_direct_target_launcher_is_not_exported():
+    assert not hasattr(vs, "launch_vscode")
+    assert not hasattr(vs, "ssh_config_block")
 
-
-def test_block_carries_vscode_identity():
-    block = vs.ssh_config_block("minus", vscode_identity=r"C:\u\id_ed25519",
-                                **BLOCK_ARGS)
-    # forward slashes: MSYS (Git) ssh mangles backslash key paths
-    assert "IdentityFile C:/u/id_ed25519" in block
-
-
-def test_install_command_is_idempotent():
-    cmd = vs.install_command("ssh-ed25519 AAAAKEY me@pc")
-    assert cmd.startswith("mkdir -p ~/.ssh")
-    assert "grep -qF 'ssh-ed25519 AAAAKEY me@pc'" in cmd
-    assert "printf '%s\\n' 'ssh-ed25519 AAAAKEY me@pc'" in cmd
-
-
-def test_local_public_key_prefers_existing(tmp_path, monkeypatch):
-    monkeypatch.setattr(vs.Path, "home", lambda: tmp_path)
-    ssh_dir = tmp_path / ".ssh"
-    ssh_dir.mkdir()
-    (ssh_dir / "id_ed25519.pub").write_text(
-        "ssh-ed25519 AAAAEXISTING me@pc\n", encoding="utf-8")
-    priv, pub = vs.local_public_key()
-    assert priv.name == "id_ed25519"
-    assert "AAAAEXISTING" in pub
-
-
-def test_upsert_is_idempotent(tmp_path):
-    cfg = tmp_path / ".ssh" / "config"
-    vs.upsert_managed_block(cfg, vs.ssh_config_block("minus", **BLOCK_ARGS))
-    cfg.write_text(cfg.read_text(encoding="utf-8")
-                   + "Host my-own-box\n  HostName 1.2.3.4\n", encoding="utf-8")
-    vs.upsert_managed_block(cfg, vs.ssh_config_block("minus", **BLOCK_ARGS))
-    text = cfg.read_text(encoding="utf-8")
-    assert text.count("Host vaspilot-minus") == 1
-    assert "Host my-own-box" in text            # user content preserved
-    assert text.index("vaspilot-minus") < text.index("my-own-box")
-
-
-def test_launch_writes_config_and_spawns(tmp_path, monkeypatch):
-    identity = tmp_path / "id.pem"
-    identity.write_text("FAKEPEM\n", encoding="utf-8")
-    spawned = []
-
-    monkeypatch.setattr(vs.shutil, "which",
-                        lambda name: r"C:\code\bin\code.cmd")
-    monkeypatch.setattr(vs.subprocess, "Popen",
-                        lambda cmd, creationflags=0: spawned.append(cmd))
-    cfg = tmp_path / "ssh-config"
-    result = vs.launch_vscode(
-        "minus", "/share/home/jlyang", target="jlyang@114.214.207.167",
-        port=22, vlab_host="vlab.ustc.edu.cn", vlab_user="ubuntu",
-        vlab_port=22, identity_file=str(identity), config_path=cfg)
-    assert result["alias"] == "vaspilot-minus"
-    text = cfg.read_text(encoding="utf-8")
-    assert "vaspilot-minus" in text
-    assert spawned and spawned[0][2].endswith("code.cmd")
-    uri = spawned[0][4]
-    assert uri == "vscode-remote://ssh-remote+vaspilot-minus/share/home/jlyang"
-
-
-def test_launch_file_uri(tmp_path, monkeypatch):
-    identity = tmp_path / "id.pem"
+def test_launch_workspace_opens_vlab_uri_not_target(tmp_path, monkeypatch):
+    identity = tmp_path / "vlab.pem"
     identity.write_text("FAKEPEM\n", encoding="utf-8")
     spawned = []
     monkeypatch.setattr(vs.shutil, "which", lambda name: "code.cmd")
     monkeypatch.setattr(vs.subprocess, "Popen",
                         lambda cmd, creationflags=0: spawned.append(cmd))
-    result = vs.launch_vscode(
-        "minus", "/share/home/jlyang/runs/case/OUTCAR", target="jlyang@h",
-        port=22, vlab_host="v", vlab_user="u", vlab_port=22,
-        identity_file=str(identity), config_path=tmp_path / "cfg",
-        is_file=True)
-    assert result["kind"] == "file"
+    result = vs.launch_vlab_workspace(
+        "/home/ubuntu/.huwei-agent/workspaces/cl12/ws-a13f/workspace.code-workspace",
+        vlab_host="vlab.ustc.edu.cn", vlab_user="ubuntu", vlab_port=22,
+        identity_file=str(identity), config_path=tmp_path / "cfg")
+    assert result["alias"] == "huwei-vlab"
     assert spawned[0][3] == "--file-uri"
-    assert spawned[0][4].endswith("/share/home/jlyang/runs/case/OUTCAR")
+    assert "ssh-remote+huwei-vlab" in spawned[0][4]
+    text = (tmp_path / "cfg").read_text(encoding="utf-8")
+    assert "Host huwei-vlab" in text and "cl12" not in text
 
 
-def test_missing_identity_rejected(tmp_path):
-    with pytest.raises(ValidationError):
-        vs.launch_vscode(
-            "minus", "/share", target="j@h", port=22,
-            vlab_host="v", vlab_user="u", vlab_port=22,
-            identity_file=str(tmp_path / "nope.pem"),
-            config_path=tmp_path / "cfg")
-
-
-def test_relative_path_rejected(tmp_path):
-    identity = tmp_path / "id.pem"
-    identity.write_text("FAKEPEM\n", encoding="utf-8")
-    with pytest.raises(ValidationError):
-        vs.launch_vscode(
-            "minus", "share/rel", target="j@h", port=22,
-            vlab_host="v", vlab_user="u", vlab_port=22,
-            identity_file=str(identity), config_path=tmp_path / "cfg")
+def test_workspace_launch_requires_local_vlab_identity(tmp_path):
+    with pytest.raises(ValidationError, match="Vlab identity"):
+        vs.launch_vlab_workspace(
+            "/home/ubuntu/.huwei-agent/workspaces/cl12/ws-a13f/workspace.code-workspace",
+            vlab_host="vlab.ustc.edu.cn", vlab_user="ubuntu", vlab_port=22,
+            identity_file=str(tmp_path / "missing.pem"), config_path=tmp_path / "cfg")

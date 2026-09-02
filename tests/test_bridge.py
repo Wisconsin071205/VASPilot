@@ -56,6 +56,23 @@ class TestBridgeWrite:
 
 
 class TestBridgeStatRemove:
+    def test_list_is_limited_and_remote_find_is_available(self, ui):
+        state = ui["state"]
+        for index in range(3):
+            state.files["cl9"][f"{ROOT}/runs/limited-{index}.txt"] = b"x"
+        listing = call(ui, "remote.list", {"server": "cl9",
+                                             "path": f"{ROOT}/runs",
+                                             "limit": 2})
+        assert len(listing["entries"]) == 2
+        assert listing["truncated"] is True
+        found = call(ui, "remote.find", {"server": "cl9",
+                                          "path": f"{ROOT}/runs",
+                                          "pattern": "*.txt",
+                                          "max_depth": 2,
+                                          "limit": 10})
+        assert found["ok"] is True
+        assert found["root"] == f"{ROOT}/runs"
+
     def test_stat_reports_size_and_kind(self, ui):
         doc = call(ui, "remote.stat", {"server": "cl9",
                                        "path": f"{ROOT}/runs/good/INCAR"})

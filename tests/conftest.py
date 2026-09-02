@@ -75,6 +75,49 @@ class FakeTransport:
             raise AuthRequiredError(document["error"]["message"])
         return document
 
+    def run_workspace_gateway(self, args, *, timeout=180):
+        """Minimal Vlab Workspace Gateway double.  It is intentionally a
+        separate channel from run_gateway: complete workspaces must not reuse
+        arbitrary target-server operations in tests or production."""
+        call = list(args)
+        self.calls.append(["workspace"] + call)
+        if not hasattr(self.state, "workspaces"):
+            self.state.workspaces = {}
+        op = call[0]
+        if op == "doctor":
+            return {"ok": True, "checks": [{"name": "rclone", "ok": True}],
+                    "space": {"free_bytes": 8 * 1024**3, "used_percent": 20}}
+        if op == "open":
+            server = call[call.index("--server") + 1]
+            path = call[call.index("--path") + 1]
+            wid = "ws-1234abcd"
+            mode = "read-only" if call[call.index("--mode") + 1] == "read-only" else "read-write"
+            item = {"workspace_id": wid, "server": server, "remote_path": path,
+                    "mode": mode, "status": "open", "cache_bytes": 0,
+                    "pending_sync_files": 0, "uploads_in_progress": 0,
+                    "vscode_workspace_path": f"/home/vlab/.huwei-agent/workspaces/{server}/{wid}/workspace.code-workspace",
+                    "vlab_space": {"free_bytes": 8 * 1024**3, "used_percent": 20}}
+            self.state.workspaces[wid] = item
+            return {"ok": True, **item}
+        if op == "status":
+            wid = call[call.index("--workspace") + 1] if "--workspace" in call else ""
+            if wid:
+                return {"ok": True, **self.state.workspaces[wid]}
+            return {"ok": True, "workspaces": list(self.state.workspaces.values()),
+                    "space": {"free_bytes": 8 * 1024**3, "used_percent": 20}}
+        if op == "list":
+            return {"ok": True, "workspaces": list(self.state.workspaces.values()),
+                    "space": {"free_bytes": 8 * 1024**3, "used_percent": 20}}
+        if op == "close":
+            wid = call[call.index("--workspace") + 1]
+            self.state.workspaces[wid]["status"] = "closed"
+            return {"ok": True, "workspace_id": wid, "closed": True}
+        if op == "recover":
+            return {"ok": True, "recoverable": []}
+        if op == "cleanup":
+            return {"ok": True, "dry_run": True, "candidates": []}
+        return {"ok": False, "error": {"code": "unknown", "message": op}}
+
     def stage_path(self):
         return "/tmp/vaspilot-deadbeef"
 
@@ -197,6 +240,9 @@ class FakeTransport:
         server = self._server(args)
         positional = [a for a in self._positionals(args) if not a.startswith("--")]
         path = positional[0] if positional else self.state.servers[server]["root"]
+        limit = int(args[args.index("--limit") + 1]) \
+            if "--limit" in args else 500
+        limit = max(1, min(limit, 2000))
         if not self._in_root(server, path):
             return {"ok": False, "error": {"code": "outside_root",
                                            "message": "path outside root"}}
@@ -221,7 +267,8 @@ class FakeTransport:
                                    "size": len(content)}
         entries = [{"name": n, "mtime": "2026-01-01T00:00:00", **meta}
                    for n, meta in sorted(children.items())]
-        return {"ok": True, "path": path, "entries": entries}
+        return {"ok": True, "path": path, "entries": entries[:limit],
+                "truncated": len(entries) > limit, "limit": limit}
 
     def op_read(self, args):
         server = self._server(args)

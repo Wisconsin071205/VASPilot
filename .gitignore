@@ -7,3 +7,6 @@ dist/
 
 build_ppt/
 *.pptx
+apps/huwei-agent-vscode-bridge/node_modules/
+apps/huwei-agent-vscode-bridge/out/
+artifacts/vaspilot_manual/render*/

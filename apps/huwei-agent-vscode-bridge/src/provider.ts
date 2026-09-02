@@ -15,6 +15,9 @@ interface Baseline {
 export class RemoteWorkspaceProvider implements vscode.FileSystemProvider {
   private emitter = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
   readonly onDidChangeFile = this.emitter.event;
+  log: (msg: string) => void = () => {};
+  warn: (msg: string) => void = () => {};
+  private warnedDirectories = new Set<string>();
   /** 打开（读取）文件时的基线：保存时用于冲突检测。 */
   private baselines = new Map<string, Baseline>();
 
@@ -53,9 +56,20 @@ export class RemoteWorkspaceProvider implements vscode.FileSystemProvider {
 
   async readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {
     try {
-      const doc = await this.getClient().list(uri.authority, uri.path);
-      const capped = doc.entries.slice(0, this.maxEntries());
-      return capped.map((e) => [
+      const limit = Math.max(1, Math.min(Math.floor(this.maxEntries()), 2000));
+      const doc = await this.getClient().list(uri.authority, uri.path, limit);
+      const key = this.key(uri);
+      if (doc.truncated) {
+        const message =
+          `目录 ${uri.path} 项目过多，仅显示前 ${doc.limit ?? limit} 项；` +
+          "请缩小路径或使用‘胡伟团队专用智能体：在远端路径中搜索’。";
+        if (!this.warnedDirectories.has(key)) this.warn(message);
+        this.warnedDirectories.add(key);
+        this.log(`readDirectory 截断: ${uri.path} limit=${doc.limit ?? limit}`);
+      } else {
+        this.warnedDirectories.delete(key);
+      }
+      return doc.entries.map((e) => [
         e.name,
         e.type === "dir" ? vscode.FileType.Directory : vscode.FileType.File,
       ]);
@@ -72,6 +86,7 @@ export class RemoteWorkspaceProvider implements vscode.FileSystemProvider {
       const refusal = openRefusal(name, st.size ?? 0, this.capBytes());
       if (refusal) throw vscode.FileSystemError.NoPermissions(refusal);
       const doc = await client.read(uri.authority, uri.path);
+      this.log(`readFile ${uri.path}: ${doc.content?.length ?? 0} chars`);
       const content = Buffer.from(doc.content ?? "", "utf-8");
       this.baselines.set(this.key(uri), {
         sha: sha256Hex(content),
@@ -80,6 +95,7 @@ export class RemoteWorkspaceProvider implements vscode.FileSystemProvider {
       });
       return content;
     } catch (err) {
+      this.log(`readFile ${uri.path} 失败: ${describe(err)}`);
       if (err instanceof vscode.FileSystemError) throw err;
       throw this.asFsError(err, uri);
     }
@@ -105,6 +121,8 @@ export class RemoteWorkspaceProvider implements vscode.FileSystemProvider {
         size: result.size,
         mtimeEpoch: result.mtime_epoch,
       });
+      this.emitter.fire([{ type: vscode.FileChangeType.Changed, uri }]);
+      this.log(`writeFile ${uri.path}: ${result.size} bytes`);
     } catch (err) {
       // 冲突属于权限语义：拒绝覆盖并保留远端原文件
       if (

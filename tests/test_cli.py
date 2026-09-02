@@ -139,6 +139,30 @@ class TestRemoteCommands:
         assert document["purged"] == trash_id
 
 
+class TestWorkspaceCommands:
+    def test_open_uses_vlab_workspace_gateway_not_remote_ssh(self, cli, monkeypatch):
+        path = "/hpc/home/tester/vaspilot-root/runs/relax"
+        code, document, _, _ = run_cli(
+            ["workspace", "open", "--server", "cl9", "--path", path], monkeypatch)
+        assert code == 0
+        assert document["workspace_id"] == "ws-1234abcd"
+        assert document["mode"] == "read-write"
+        assert ["workspace", "open", "--server", "cl9", "--path", path,
+                "--mode", "full"] in cli.calls
+
+    def test_status_and_close_are_structured(self, cli, monkeypatch):
+        run_cli(["workspace", "open", "--server", "cl9", "--path",
+                 "/hpc/home/tester/vaspilot-root/runs/relax"], monkeypatch)
+        code, document, _, _ = run_cli(
+            ["workspace", "status", "--workspace", "ws-1234abcd"], monkeypatch)
+        assert code == 0
+        assert document["status"] == "open"
+        code, document, _, _ = run_cli(
+            ["workspace", "close", "--workspace", "ws-1234abcd"], monkeypatch)
+        assert code == 0
+        assert document["closed"] is True
+
+
 class TestJobCommands:
     def test_progress_reports_science_only(self, cli, monkeypatch):
         code, document, _, _ = run_cli(

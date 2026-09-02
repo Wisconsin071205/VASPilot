@@ -62,6 +62,7 @@ class SshTransport:
 
     def __init__(self, *, host: str, user: str, port: int = 22,
                  identity_file: str = "", gateway_path: str = "~/bin/vaspilot-gateway",
+                 workspace_gateway_path: str = "~/bin/huwei-workspace-gateway",
                  runner: Runner | None = None) -> None:
         if not host or not user:
             raise ValidationError("vlab host and user are required")
@@ -70,6 +71,7 @@ class SshTransport:
         self.port = int(port)
         self.identity_file = identity_file
         self.gateway_path = gateway_path
+        self.workspace_gateway_path = workspace_gateway_path
         self.runner = runner or default_runner
 
     # -- command construction -----------------------------------------------
@@ -117,6 +119,18 @@ class SshTransport:
         self._classify(rc, stdout, stderr)
         if not capture:
             return {"ok": True}
+        return self.parse_gateway_document(stdout, stderr)
+
+    def run_workspace_gateway(self, args: list[str], *, timeout: int = 180) -> dict:
+        """Call the Vlab-only Workspace Gateway using the same verified outer
+        SSH route as ordinary gateway operations.  The workspace component
+        owns rclone/FUSE; this transport never opens a target-HPC SSH route.
+        """
+        import shlex
+        quoted = " ".join(shlex.quote(str(a)) for a in args)
+        cmd = self._base() + [f"{self.workspace_gateway_path} {quoted}"]
+        rc, stdout, stderr = self.runner(cmd, timeout=timeout, capture=True)
+        self._classify(rc, stdout, stderr)
         return self.parse_gateway_document(stdout, stderr)
 
     @staticmethod

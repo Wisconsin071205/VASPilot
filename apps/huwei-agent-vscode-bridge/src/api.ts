@@ -30,6 +30,13 @@ export interface Entry {
   mtime?: string;
 }
 
+export interface ListResult {
+  path: string;
+  entries: Entry[];
+  truncated?: boolean;
+  limit?: number;
+}
+
 export interface StatInfo {
   path: string;
   kind?: string;
@@ -42,6 +49,21 @@ export interface WriteResult {
   sha256: string;
   size: number;
   mtime_epoch: number;
+}
+
+export interface WorkspaceStatus {
+  workspace_id: string;
+  server: string;
+  remote_path: string;
+  mount_path: string;
+  mode: "read-write" | "read-only";
+  status: "open" | "sync_pending" | "needs_recovery" | "recovering" | "closed" | string;
+  cache_bytes: number;
+  pending_sync_files: number;
+  uploads_in_progress: number;
+  last_sync_at?: string;
+  last_error?: string;
+  vlab_space?: { free_bytes: number; used_percent: number };
 }
 
 export function discoveryFilePath(): string {
@@ -118,10 +140,11 @@ export class ConsoleClient {
     }>("state", {});
   }
 
-  list(server: string, p: string) {
-    return this.call<{ path: string; entries: Entry[] }>("remote.list", {
+  list(server: string, p: string, limit = 500) {
+    return this.call<ListResult>("remote.list", {
       server,
       path: p,
+      limit,
     });
   }
 
@@ -154,5 +177,39 @@ export class ConsoleClient {
 
   mkdir(server: string, p: string) {
     return this.call<{ path: string }>("remote.mkdir", { server, path: p });
+  }
+
+  find(server: string, p: string, pattern: string, maxDepth = 2, limit = 200) {
+    return this.call<{
+      root: string;
+      pattern: string;
+      files: Array<{ path: string; size: number }>;
+      truncated?: boolean;
+    }>("remote.find", {
+      server,
+      path: p,
+      pattern,
+      max_depth: maxDepth,
+      limit,
+    });
+  }
+
+  workspaceStatus(workspaceId: string) {
+    return this.call<WorkspaceStatus>("workspace.status", {
+      workspace_id: workspaceId,
+    });
+  }
+
+  workspaceClose(workspaceId: string) {
+    return this.call<{ workspace_id: string; closed: boolean }>("workspace.close", {
+      workspace_id: workspaceId,
+    });
+  }
+
+  workspaceRecover(workspaceId: string) {
+    return this.call<WorkspaceStatus>("workspace.recover", {
+      workspace_id: workspaceId,
+      action: "retry",
+    });
   }
 }
