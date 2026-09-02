@@ -6,7 +6,7 @@ import * as path from "path";
 export class ConsoleUnavailableError extends Error {
   constructor() {
     super(
-      "本地控制台未运行或无法访问：请先启动「胡伟团队专用智能体」控制台" +
+      "本地控制台未运行或无法访问：请先启动「远端控制智能体」控制台" +
         "（桌面快捷方式），或在扩展设置 huwei-bridge.consoleUrl 填写控制台地址"
     );
   }

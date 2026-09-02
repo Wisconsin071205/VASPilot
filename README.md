@@ -1,7 +1,7 @@
-# 胡伟团队专用智能体
+# 远端控制智能体
 
 > 技术包名与兼容命令仍为 `VASPilot` / `vaspilot`；面向用户的产品名称统一为
-> 「胡伟团队专用智能体」。也可使用更简短的 `huwei` 命令。
+> 「远端控制智能体」。也可使用更简短的 `huwei` 命令。
 
 CLI-first, multi-model VASP/HPC agent: after the user completes SSH
 authentication by hand, it performs **restricted, auditable** file transfer,
@@ -95,7 +95,7 @@ re-authenticate visibly via `server connect`.
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 
-仓库附带“胡伟团队专用智能体 VS Code Bridge”扩展。它经本地控制台按需访问
+仓库附带“远端控制智能体 VS Code Bridge”扩展。它经本地控制台按需访问
 `Windows → Vlab → HPC`，不通过 Remote-SSH 直接连接计算服务器，因此不会在
 CentOS 7 等老集群安装 VS Code Server。先运行
 `apps\huwei-agent-vscode-bridge\install-windows.ps1` 安装仓库内的 VSIX，随后在

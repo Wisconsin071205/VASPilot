@@ -1,13 +1,13 @@
 # VS Code 安全编辑远端文件
 
-“胡伟团队专用智能体 VS Code Bridge”让一个最新版 VS Code 按需打开远端计算目录中的文本文件。它不会通过 Remote-SSH 登录 `cl12`、`minus` 等老集群，因此不会向这些服务器安装 VS Code Server，也不受 CentOS 7 的 glibc 限制。
+“远端控制智能体 VS Code Bridge”让一个最新版 VS Code 按需打开远端计算目录中的文本文件。它不会通过 Remote-SSH 登录 `cl12`、`minus` 等老集群，因此不会向这些服务器安装 VS Code Server，也不受 CentOS 7 的 glibc 限制。
 
 ## 一次安装
 
-1. 启动「胡伟团队专用智能体」并完成 Vlab 与目标服务器连接。
+1. 启动「远端控制智能体」并完成 Vlab 与目标服务器连接。
 2. 在 Windows 上安装最新版 VS Code。
 3. 运行 [install-windows.ps1](../apps/huwei-agent-vscode-bridge/install-windows.ps1)。脚本会安装仓库内的 `.vsix` 扩展包。
-4. 重启 VS Code 一次；扩展会出现在扩展列表中，名称为“胡伟团队专用智能体 VS Code Bridge”。
+4. 重启 VS Code 一次；扩展会出现在扩展列表中，名称为“远端控制智能体 VS Code Bridge”。
 
 每一台新电脑都需重复以上安装，并配置该电脑自己的 Vlab PEM 路径和服务器目录；不共享私钥或本机绝对路径。
 
@@ -29,7 +29,7 @@
 ## 保护范围和限制
 
 - 单目录默认只显示前 500 项；达到上限时 VS Code 会提示缩小路径或使用受限远端搜索。
-- 在 VS Code 命令面板运行“胡伟团队专用智能体：在远端路径中搜索”，只会搜索当前虚拟目录的两层内容，最多返回 200 项。
+- 在 VS Code 命令面板运行“远端控制智能体：在远端路径中搜索”，只会搜索当前虚拟目录的两层内容，最多返回 200 项。
 - 只允许打开不超过 32 MiB 的 UTF-8 文本。
 - `WAVECAR`、`CHGCAR`、`AECCAR0`、`AECCAR2` 及网关拒绝的其他 VASP 二进制数据不能作为文本编辑。
 - 若控制台未启动、服务器未连接或 Vlab 会话过期，扩展会提示重新启动控制台或重新连接服务器。
@@ -43,7 +43,7 @@
 
 **提示“本地控制台未运行或无法访问”**
 
-启动“胡伟团队专用智能体”控制台。扩展通过 `%USERPROFILE%\.vaspilot\ui.json` 自动发现本机控制台地址和临时令牌。
+启动“远端控制智能体”控制台。扩展通过 `%USERPROFILE%\.vaspilot\ui.json` 自动发现本机控制台地址和临时令牌。
 
 **提示“远端文件已被其他操作修改”**
 

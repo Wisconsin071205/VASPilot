@@ -1,4 +1,4 @@
-﻿# 胡伟团队专用智能体 —— 点击直达控制台
+# 远端控制智能体 —— 点击直达控制台
 # 已有实例 -> 直接打开最近就绪地址；没有 -> 启动服务（自带自动开浏览器）
 $ErrorActionPreference = 'SilentlyContinue'
 $log = Join-Path $env:USERPROFILE '.vaspilot\ui.log'

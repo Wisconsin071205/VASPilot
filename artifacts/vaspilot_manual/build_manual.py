@@ -13,7 +13,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 
-ROOT = Path(r"C:\Users\weikx\Documents\ChatGPT\VASP_new")
+ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "VASPilot_详细使用手册.docx"
 UI = ROOT / "artifacts" / "vaspilot_manual" / "ui"
 VLAB = ROOT / "artifacts" / "vaspilot_manual" / "vlab"

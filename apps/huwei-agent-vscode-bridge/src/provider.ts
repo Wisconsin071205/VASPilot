@@ -62,7 +62,7 @@ export class RemoteWorkspaceProvider implements vscode.FileSystemProvider {
       if (doc.truncated) {
         const message =
           `目录 ${uri.path} 项目过多，仅显示前 ${doc.limit ?? limit} 项；` +
-          "请缩小路径或使用‘胡伟团队专用智能体：在远端路径中搜索’。";
+          "请缩小路径或使用‘远端控制智能体：在远端路径中搜索’。";
         if (!this.warnedDirectories.has(key)) this.warn(message);
         this.warnedDirectories.add(key);
         this.log(`readDirectory 截断: ${uri.path} limit=${doc.limit ?? limit}`);

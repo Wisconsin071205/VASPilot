@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>胡伟团队专用智能体</title>
+<title>远端控制智能体</title>
 <style>
 :root{
   --bg:#0d1117; --bg2:#161b22; --bg3:#1c2330; --line:#2d3644;
@@ -285,7 +285,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 <body>
 
 <aside id="side">
-  <div id="brand"><h1><span class="logo"></span>胡伟团队专用智能体 <span class="v" id="ver"></span></h1></div>
+  <div id="brand"><h1><span class="logo"></span>远端控制智能体 <span class="v" id="ver"></span></h1></div>
   <div class="side-h">项目
     <button title="新建项目" onclick="openProjectModal()">＋ 新建</button></div>
   <div id="projects"><div class="empty" style="padding:10px">暂无项目</div></div>
@@ -323,13 +323,13 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <span id="sesshint" style="font-size:11px;color:var(--fg2)"></span>
     </div>
     <div id="chatlog">
-      <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">胡伟团队专用智能体</div>
+      <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">远端控制智能体</div>
         <div class="bubble">你好。我可以管理本地项目（写 INCAR/KPOINTS/POSCAR）、上传到服务器、跟踪 VASP 计算的科学收敛，也能执行本地/远端命令（全程审计）。
 提交作业默认需要你在聊天里点「批准」确认。试试：「新建项目 Fe-relax 并帮我写好参数」「查看 cl9 的作业」「cl9 服务器现在负载怎么样」。</div></div></div>
     </div>
     <div id="chatbar">
       <div id="chatbox">
-        <textarea id="chatinput" placeholder="向 胡伟团队专用智能体 提问（Enter 发送，Shift+Enter 换行）"></textarea>
+        <textarea id="chatinput" placeholder="向 远端控制智能体 提问（Enter 发送，Shift+Enter 换行）"></textarea>
         <button class="btn" id="sendbtn" onclick="sendChat()">发送</button>
       </div>
       <div id="chathint">对话有记忆（按会话保存） · 提交作业默认需确认 · 调度器完成 ≠ 科学收敛 · 全部操作留审计</div>
@@ -720,10 +720,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
 
       <!-- ---- 关于 ---- -->
       <div class="cfghan" id="c-about" style="display:none">
-        <h2>关于 胡伟团队专用智能体</h2>
+        <h2>关于 远端控制智能体</h2>
         <div class="card">
           <div class="row" style="gap:20px;margin-bottom:10px">
-            <span class="logo"></span><b>胡伟团队专用智能体 <span class="mono" id="aboutver"></span></b>
+            <span class="logo"></span><b>远端控制智能体 <span class="mono" id="aboutver"></span></b>
           </div>
           <table><tbody>
             <tr><th>工具面</th><td>命名工具注册表 + 本地/远端 shell（仅全量审计，无拦截）</td></tr>
@@ -1630,7 +1630,7 @@ function addMsg(role, text) {
   const div = document.createElement("div");
   div.className = "msg " + role;
   div.innerHTML = `<div class="av">${role === "user" ? "你" : "V"}</div>
-    <div class="bd"><div class="who">${role === "user" ? "你" : "胡伟团队专用智能体"}</div>
+    <div class="bd"><div class="who">${role === "user" ? "你" : "远端控制智能体"}</div>
     <div class="bubble"></div></div>`;
   if (text) {
     const bubble = div.querySelector(".bubble");

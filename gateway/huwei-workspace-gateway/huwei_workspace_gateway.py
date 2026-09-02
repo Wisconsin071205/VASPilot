@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""胡伟团队专用智能体 Workspace Gateway（部署在 Vlab）。
+"""远端控制智能体 Workspace Gateway（部署在 Vlab）。
 
 此程序是“完整工作区模式”的唯一控制面。它只接受结构化子命令，使用
 Vlab 上已登记的服务器、每服务器专用 SSH 密钥和严格的 known_hosts，
@@ -502,7 +502,7 @@ class WorkspaceGateway:
                 server_report = {"server": name, "key_ready": False,
                                  "error": {"code": exc.code, "message": exc.message}}
                 check("target_sftp", False, exc.message)
-        return {"gateway": "胡伟团队专用智能体 Workspace Gateway", "version": VERSION,
+        return {"gateway": "远端控制智能体 Workspace Gateway", "version": VERSION,
                 "checks": checks, "ok": all(row["ok"] or not row.get("required", True)
                                                  for row in checks
                                                  if row["name"] != "target_write"),
@@ -827,7 +827,7 @@ def main(argv: list[str] | None = None) -> int:
     gateway = WorkspaceGateway()
     try:
         if args.operation == "version":
-            return emit({"gateway": "胡伟团队专用智能体 Workspace Gateway",
+            return emit({"gateway": "远端控制智能体 Workspace Gateway",
                          "version": VERSION})
         if args.operation == "doctor":
             return emit(gateway.doctor(server=args.server, path=args.path))

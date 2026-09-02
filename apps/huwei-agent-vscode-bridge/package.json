@@ -1,6 +1,6 @@
 {
   "name": "huwei-agent-vscode-bridge",
-  "displayName": "胡伟团队专用智能体 VS Code Bridge",
+  "displayName": "远端控制智能体 VS Code Bridge",
   "description": "经本地控制台按需读写远端服务器文件的虚拟工作区（不经 Remote-SSH、不在计算服务器安装任何组件）",
   "version": "1.0.0",
   "publisher": "huwei-team",
@@ -35,11 +35,11 @@
       },
       {
         "command": "huwei-bridge.find",
-        "title": "胡伟团队专用智能体：在远端路径中搜索"
+        "title": "远端控制智能体：在远端路径中搜索"
       },
       {
         "command": "huwei-bridge.workspaceStatus",
-        "title": "胡伟团队专用智能体：查看 Vlab 工作区状态"
+        "title": "远端控制智能体：查看 Vlab 工作区状态"
       }
     ],
     "menus": {

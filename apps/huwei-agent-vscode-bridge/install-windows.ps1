@@ -1,4 +1,4 @@
-# 一键安装「胡伟团队专用智能体 VS Code Bridge」扩展（Windows）
+# 一键安装「远端控制智能体 VS Code Bridge」扩展（Windows）
 # 用法：右键"使用 PowerShell 运行"，或在仓库根目录执行：
 #   powershell -ExecutionPolicy Bypass -File apps\huwei-agent-vscode-bridge\install-windows.ps1
 $ErrorActionPreference = "Stop"
@@ -34,7 +34,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 安装失败" -ForegroundColor R
 
 Write-Host ""
 Write-Host "安装完成。使用前请确认：" -ForegroundColor Green
-Write-Host "  1. 「胡伟团队专用智能体」控制台已在本机启动；"
+Write-Host "  1. 「远端控制智能体」控制台已在本机启动；"
 Write-Host "  2. 目标服务器在控制台中处于「已连接」状态；"
 Write-Host "  3. 回到控制台的「文件」页，右键文件或文件夹，"
 Write-Host "     选择「在 VS Code 中安全编辑 / 以虚拟目录打开」。"

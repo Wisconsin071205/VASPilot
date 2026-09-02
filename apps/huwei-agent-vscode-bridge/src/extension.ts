@@ -100,7 +100,7 @@ async function findInCurrentRemoteFolder(): Promise<void> {
     return;
   }
   const pattern = await vscode.window.showInputBox({
-    title: "胡伟团队专用智能体：在远端路径中搜索",
+    title: "远端控制智能体：在远端路径中搜索",
     prompt: `仅搜索当前目录 ${folder.uri.path}（最多两层、200 个结果）`,
     value: "*",
     validateInput: (value) =>
@@ -163,7 +163,7 @@ function workspaceLabel(status: WorkspaceStatus): {
   text: string; tooltip: string; tone: StatusTone;
 } {
   const leaf = status.remote_path.split("/").filter(Boolean).pop() ?? status.server;
-  const base = `胡伟团队专用智能体: ${status.server} · ${leaf}`;
+  const base = `远端控制智能体: ${status.server} · ${leaf}`;
   const detail = `Vlab 缓存 ${prettyBytes(status.cache_bytes)} · ` +
     `待同步 ${status.pending_sync_files} · 可用 ${prettyBytes(status.vlab_space?.free_bytes)}`;
   if (status.mode === "read-only") {
@@ -213,7 +213,7 @@ async function refreshWorkspaceStatus(showDetails = false): Promise<void> {
   } catch (err) {
     // 只有完整工作区已声明时才显示故障，避免安全编辑模式在控制台
     // 未启动时产生误导性的启动错误。
-    setStatus("$(error) 胡伟团队专用智能体: 工作区不可用", describe(err), "error");
+    setStatus("$(error) 远端控制智能体: 工作区不可用", describe(err), "error");
     if (showDetails) vscode.window.showErrorMessage(`工作区状态读取失败：${describe(err)}`);
   }
 }

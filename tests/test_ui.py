@@ -124,13 +124,13 @@ class TestTokenGuard:
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "胡伟团队专用智能体" in body and "vaspilot ui" in body
+        assert "远端控制智能体" in body and "vaspilot ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "胡伟团队专用智能体" in html and "chatinput" in html
+        assert "远端控制智能体" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
