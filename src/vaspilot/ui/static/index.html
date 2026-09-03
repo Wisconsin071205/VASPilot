@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>胡伟团队专用智能体</title>
+<title>vasp 调度计算智能体</title>
 <style>
 :root{
   --bg:#0d1117; --bg2:#161b22; --bg3:#1c2330; --line:#2d3644;
@@ -70,6 +70,10 @@ td.wrap{white-space:normal}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .fg{display:flex;flex-direction:column;gap:4px;margin-right:8px}
 .fg label{font-size:11px;color:var(--fg2)}
+.path-actions{display:flex;gap:6px;align-items:center;min-width:0}
+.path-actions input{min-width:0;flex:1}
+.path-actions .path-btn{white-space:nowrap;padding:6px 10px}
+.path-input[readonly]{cursor:pointer;color:var(--fg)}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-family:var(--mono);font-size:12px}
 #toasts{position:fixed;right:18px;bottom:18px;z-index:99;display:flex;flex-direction:column;gap:8px}
 
@@ -116,6 +120,22 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .modalwrap .modal h2{font-size:18px;margin-bottom:14px}
 .modalwrap label{display:block;font-size:12px;color:var(--fg2);margin:10px 0 4px}
 .modalwrap input,.modalwrap select{width:100%}
+.pathpick-modal{width:min(760px,94vw)!important}
+.pathpick-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.pathpick-head h2{margin:0}
+.pathpick-toolbar{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
+.pathpick-toolbar .fg{flex:1;min-width:180px}
+.pathpick-toolbar .path-actions{width:100%}
+.pathpick-toolbar .path-actions input{font-family:var(--mono)}
+.pathpick-hint{font-size:12px;color:var(--fg2);margin-top:10px;min-height:18px}
+.pathpick-list{border:1px solid var(--line);border-radius:8px;background:var(--bg);max-height:360px;overflow:auto;margin-top:8px}
+.pathpick-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.pathpick-row:last-child{border-bottom:0}
+.pathpick-row:hover{background:var(--bg2)}
+.pathpick-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12px;background:none;border:0;color:var(--acc);cursor:pointer;text-align:left;padding:0}
+.pathpick-kind{color:var(--fg2);font-size:11px;min-width:38px}
+.pathpick-row button{flex-shrink:0}
+.pathpick-empty{padding:24px 12px;text-align:center;color:var(--fg2);font-size:12px}
 
 /* ---------- chat session bar & confirm cards ---------- */
 #sessbar{display:flex;gap:8px;align-items:center;padding:8px 22px;border-bottom:1px solid var(--line);background:var(--bg2)}
@@ -285,7 +305,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 <body>
 
 <aside id="side">
-  <div id="brand"><h1><span class="logo"></span>胡伟团队专用智能体 <span class="v" id="ver"></span></h1></div>
+  <div id="brand"><h1><span class="logo"></span>vasp 调度计算智能体 <span class="v" id="ver"></span></h1></div>
   <div class="side-h">项目
     <button title="新建项目" onclick="openProjectModal()">＋ 新建</button></div>
   <div id="projects"><div class="empty" style="padding:10px">暂无项目</div></div>
@@ -323,13 +343,13 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <span id="sesshint" style="font-size:11px;color:var(--fg2)"></span>
     </div>
     <div id="chatlog">
-      <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">胡伟团队专用智能体</div>
+      <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">vasp 调度计算智能体</div>
         <div class="bubble">你好。我可以管理本地项目（写 INCAR/KPOINTS/POSCAR）、上传到服务器、跟踪 VASP 计算的科学收敛，也能执行本地/远端命令（全程审计）。
 提交作业默认需要你在聊天里点「批准」确认。试试：「新建项目 Fe-relax 并帮我写好参数」「查看 cl9 的作业」「cl9 服务器现在负载怎么样」。</div></div></div>
     </div>
     <div id="chatbar">
       <div id="chatbox">
-        <textarea id="chatinput" placeholder="向 胡伟团队专用智能体 提问（Enter 发送，Shift+Enter 换行）"></textarea>
+        <textarea id="chatinput" placeholder="向 vasp 调度计算智能体 提问（Enter 发送，Shift+Enter 换行）"></textarea>
         <button class="btn" id="sendbtn" onclick="sendChat()">发送</button>
       </div>
       <div id="chathint">对话有记忆（按会话保存） · 提交作业默认需确认 · 调度器完成 ≠ 科学收敛 · 全部操作留审计</div>
@@ -473,10 +493,12 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div class="card">
       <div class="row">
         <div class="fg"><label>服务器</label><select id="fsrv" onchange="pickFileServer(true)"></select></div>
-        <div class="fg" style="flex:1"><label>远端路径（须在服务器根内）</label>
-          <input id="fpath" style="width:420px" placeholder="/public/home/…"></div>
+        <div class="fg path-field" style="flex:1"><label>远端路径（须在服务器根内）</label>
+          <div class="path-actions"><input id="fpath" class="path-input" style="width:420px" placeholder="请选择远端目录" readonly
+            title="通过弹窗选择远端目录" onclick="openRemotePathPicker({targetId:'fpath',server:document.getElementById('fsrv').value,kind:'directory',title:'选择文件页目录'})">
+            <button class="btn ghost path-btn" onclick="openRemotePathPicker({targetId:'fpath',server:document.getElementById('fsrv').value,kind:'directory',title:'选择文件页目录'})">选择目录</button></div></div>
         <button class="btn ghost" id="fup" onclick="goUp()" disabled title="已在服务器根目录">上一级</button>
-        <button class="btn" onclick="browse()">浏览</button>
+        <button class="btn" onclick="browse()">刷新</button>
         <button class="btn ghost" id="duall" onclick="measureAll()"
           title="递归统计本列表中所有目录的真实大小（大目录耗时较长；再点一次停止）">测量全部</button>
         <button class="btn ghost" onclick="refreshWorkspacePanel()">Vlab 工作区</button>
@@ -513,8 +535,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div class="card">
       <h2>VASP 科学进度（区别于调度器状态）</h2>
       <div class="row">
-        <div class="fg" style="flex:1"><label>计算目录</label>
-          <input id="progdir" style="width:420px" placeholder="/public/home/…/runs/case-1"></div>
+        <div class="fg path-field" style="flex:1"><label>计算目录</label>
+          <div class="path-actions"><input id="progdir" class="path-input" style="width:420px" placeholder="请选择远端计算目录" readonly
+            title="通过弹窗选择远端计算目录" onclick="openRemotePathPicker({targetId:'progdir',server:document.getElementById('jsrv').value,kind:'directory',title:'选择 VASP 计算目录'})">
+            <button class="btn ghost path-btn" onclick="openRemotePathPicker({targetId:'progdir',server:document.getElementById('jsrv').value,kind:'directory',title:'选择 VASP 计算目录'})">选择目录</button></div></div>
         <button class="btn" onclick="loadProgress()">查询</button>
       </div>
       <div id="progout"></div>
@@ -534,9 +558,15 @@ textarea:focus{outline:none;border-color:var(--acc)}
             <button class="btn ghost" onclick="validateProject()" style="padding:5px 10px">校验</button>
           </div>
         </div>
-        <div class="fg"><label>或本地输入目录</label><input id="wfrom" style="width:230px" placeholder="C:\...\case-01"></div>
+        <div class="fg path-field"><label>或本地输入目录</label>
+          <div class="path-actions"><input id="wfrom" class="path-input" style="width:230px" placeholder="请选择本地目录" readonly
+            title="通过系统弹窗选择本地输入目录" onclick="pickLocalPath('wfrom','directory','选择 VASP 输入目录')">
+            <button class="btn ghost path-btn" onclick="pickLocalPath('wfrom','directory','选择 VASP 输入目录')">选择目录</button></div></div>
         <div class="fg"><label>服务器</label><select id="wsrv"></select></div>
-        <div class="fg"><label>远端目录</label><input id="wremote" style="width:260px" placeholder="/public/home/…/runs/case-01"></div>
+        <div class="fg path-field"><label>远端目录</label>
+          <div class="path-actions"><input id="wremote" class="path-input" style="width:260px" placeholder="请选择远端目录" readonly
+            title="通过弹窗选择远端运行目录" onclick="openRemotePathPicker({targetId:'wremote',server:document.getElementById('wsrv').value,kind:'directory',title:'选择远端运行目录'})">
+            <button class="btn ghost path-btn" onclick="openRemotePathPicker({targetId:'wremote',server:document.getElementById('wsrv').value,kind:'directory',title:'选择远端运行目录'})">选择目录</button></div></div>
       </div>
       <div class="row" style="margin-top:8px">
         <div class="fg"><label>作业名</label><input id="wname" value="vaspilot"></div>
@@ -613,7 +643,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
             <b>Vlab PEM 私钥路径</b>
             <div style="font-size:12px;color:var(--fg2)">SSH 连接 Vlab 计算集群（vlab.ustc.edu.cn）用</div>
           </div>
-          <input id="cfgidentity" style="flex:1.4;min-width:300px;font-family:var(--mono)">
+            <div class="path-actions" style="flex:1.4;min-width:300px"><input id="cfgidentity" class="path-input" style="font-family:var(--mono)" readonly
+              placeholder="请选择 PEM 私钥文件" title="通过系统弹窗选择 PEM 私钥文件"
+              onclick="pickLocalPath('cfgidentity','file','选择 Vlab PEM 私钥文件')">
+              <button class="btn ghost path-btn" onclick="pickLocalPath('cfgidentity','file','选择 Vlab PEM 私钥文件')">选择文件</button></div>
         </div>
         <div class="row" style="margin-top:10px">
           <div class="fg"><label>主机</label><input id="cfghost" style="width:200px"></div>
@@ -621,12 +654,19 @@ textarea:focus{outline:none;border-color:var(--acc)}
           <div class="fg"><label>端口</label><input id="cfgport" type="number" style="width:90px"></div>
           <div id="identbadge" style="margin-left:auto"></div>
         </div>
+        <div class="row" style="margin-top:10px;align-items:flex-start">
+          <label style="display:flex;gap:8px;align-items:center">
+            <input id="cfgautodeploy" type="checkbox">
+            <span>网关缺失时自动部署</span>
+          </label>
+          <span style="font-size:12px;color:var(--fg2)">首次使用 Vlab 时自动上传、校验并安装受限网关；关闭后需手动运行部署脚本。</span>
+        </div>
         <div class="row" style="margin-top:10px"><button class="btn" onclick="saveConn()">保存连接设置</button></div>
         </div>
         <div class="card"><div class="row">
           <div style="flex:1">
             <b>远端服务器</b>
-            <div style="font-size:12px;color:var(--fg2)">在左侧「服务器」面板添加与连接；密码与六位验证码只在连接时于独立 SSH 窗口输入，凭据不会保存在任何地方。</div>
+            <div style="font-size:12px;color:var(--fg2)">在左侧「服务器」面板添加与连接；直连服务器可在编辑窗口选择加密保存密码和 Google 验证密钥，按周期确认后自动连接。</div>
           </div>
         </div></div>
       </div>
@@ -720,10 +760,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
 
       <!-- ---- 关于 ---- -->
       <div class="cfghan" id="c-about" style="display:none">
-        <h2>关于 胡伟团队专用智能体</h2>
+        <h2>关于 vasp 调度计算智能体</h2>
         <div class="card">
           <div class="row" style="gap:20px;margin-bottom:10px">
-            <span class="logo"></span><b>胡伟团队专用智能体 <span class="mono" id="aboutver"></span></b>
+            <span class="logo"></span><b>vasp 调度计算智能体 <span class="mono" id="aboutver"></span></b>
           </div>
           <table><tbody>
             <tr><th>工具面</th><td>命名工具注册表 + 本地/远端 shell（仅全量审计，无拦截）</td></tr>
@@ -755,9 +795,34 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <option value="slurm">Slurm</option>
       <option value="pbs">PBS/Torque</option>
     </select>
+    <label>连接方式</label>
+    <select id="mroute">
+      <option value="vlab">通过 Vlab 中转（默认）</option>
+      <option value="direct">直接连接目标服务器</option>
+    </select>
+    <div id="mcredentialwrap" style="display:none">
+      <label>服务器登录密码（留空 = 保持已保存密码）</label>
+      <input id="mcredentialpassword" type="password" autocomplete="new-password"
+             placeholder="仅本机加密保存，不会写入日志">
+      <label>Google 验证密钥（TOTP 种子或 otpauth:// URI，可留空）</label>
+      <input id="mcredentialtotp" type="password" autocomplete="new-password"
+             placeholder="例如 JBSWY3DPEHPK3PXP；不是当前 6 位验证码">
+      <div class="mrow">
+        <div><label>凭据复核周期（天）</label>
+          <input id="mcredentialdays" type="number" min="1" max="30" value="3"></div>
+        <label class="checkline" style="align-self:end;padding-bottom:9px">
+          <input id="mcredentialclear" type="checkbox" style="width:auto">
+          清除已保存凭据
+        </label>
+      </div>
+      <div class="note">凭据使用 Windows DPAPI 按当前用户加密，自动连接时仅在本机 SSH 子进程内短暂解密。目标 SSH 服务需允许密码/keyboard-interactive 认证。每到复核周期会要求你点击“确认仍保留”，确认前不会使用保存的密码。</div>
+    </div>
     <label>远端根路径（留空 = 登录用户主目录；工具只能在此边界内操作）</label>
-    <input id="mroot" placeholder="/public/home/…">
-    <div class="note">改名称或地址端口需要先断开该服务器；根路径与保持时长可随时修改。</div>
+    <div class="path-actions"><input id="mroot" class="path-input" placeholder="保存服务器后通过弹窗选择"
+      readonly
+      title="新服务器首次添加请先保存；已有服务器可通过弹窗选择">
+      <button class="btn ghost path-btn" onclick="pickServerRoot()">选择目录</button></div>
+    <div class="note">直连要求目标服务器可从本机访问并提供 Python 3。可配置 SSH 密钥/代理，也可在本机加密保存密码和 TOTP 种子用于自动连接；密码不会上传到 Vlab。新服务器可先留空保存，连接后再编辑并通过弹窗选择根路径。</div>
     <div class="mbtns">
       <button class="btn ghost" onclick="document.getElementById('modalback').classList.remove('on')">取消</button>
       <button class="btn" onclick="saveServerModal()">保存修改</button>
@@ -777,9 +842,13 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <label>POSCAR（粘贴你的结构）</label><textarea id="pmposcar"></textarea>
     <div class="mrow">
       <div><label>本地 POTCAR 路径（可选；仅逐字节复制）</label>
-        <input id="pmpotcar" placeholder="C:\potcar-lib\POTCAR.Fe"></div>
+        <div class="path-actions"><input id="pmpotcar" class="path-input" placeholder="请选择本地 POTCAR 文件" readonly
+          title="通过系统弹窗选择本地 POTCAR 文件" onclick="pickLocalPath('pmpotcar','file','选择本地 POTCAR 文件')">
+          <button class="btn ghost path-btn" onclick="pickLocalPath('pmpotcar','file','选择本地 POTCAR 文件')">选择文件</button></div></div>
       <div><label>或远端 POTCAR 库路径（可选；提交前由智能体在服务器上组装）</label>
-        <input id="pmremotepotcar" placeholder="/home/you/potcar/POTCAR.Fe"></div>
+        <div class="path-actions"><input id="pmremotepotcar" class="path-input" placeholder="请选择远端 POTCAR 文件" readonly
+          title="通过弹窗选择远端 POTCAR 文件" onclick="openRemotePathPicker({targetId:'pmremotepotcar',server:document.getElementById('wsrv').value,kind:'file',title:'选择远端 POTCAR 文件'})">
+          <button class="btn ghost path-btn" onclick="openRemotePathPicker({targetId:'pmremotepotcar',server:document.getElementById('wsrv').value,kind:'file',title:'选择远端 POTCAR 文件'})">选择文件</button></div></div>
       <div style="flex:.7"><label>同时创建会话（在项目下开始对话）</label>
         <select id="pmsession"><option value="yes">是</option><option value="no">否</option></select></div>
     </div>
@@ -825,6 +894,29 @@ textarea:focus{outline:none;border-color:var(--acc)}
   </div>
 </div>
 
+<div id="pathpickmodalback" class="modalwrap" onclick="if(event.target===this)closePathPicker()">
+  <div class="modal pathpick-modal">
+    <div class="pathpick-head">
+      <h2 id="pathpicktitle">选择远端路径</h2>
+      <button class="x" title="关闭" onclick="closePathPicker()">×</button>
+    </div>
+    <div class="pathpick-toolbar">
+      <div class="fg"><label>服务器</label><select id="pathpickserver" onchange="resetRemotePickerServer()"></select></div>
+      <div class="fg" style="flex:3"><label>当前目录</label>
+        <div class="path-actions"><input id="pathpickpath" class="path-input" readonly>
+          <button class="btn ghost path-btn" onclick="remotePickerUp()">上一级</button>
+          <button class="btn ghost path-btn" onclick="loadRemotePickerPath()">刷新</button></div>
+      </div>
+    </div>
+    <div id="pathpickhint" class="pathpick-hint"></div>
+    <div id="pathpickentries" class="pathpick-list"></div>
+    <div class="mbtns">
+      <button class="btn ghost" onclick="closePathPicker()">取消</button>
+      <button class="btn" id="pathpickuse" onclick="useRemotePickerSelection()">使用当前目录</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts"></div>
 <div id="rowmenu"></div>
 
@@ -853,9 +945,207 @@ function toast(text, kind = "") {
   document.getElementById("toasts").appendChild(el);
   setTimeout(() => el.remove(), 6000);
 }
+async function pollServerAfterLogin(name) {
+  // The visible SSH terminal authenticates asynchronously.  Give Vlab's
+  // ControlMaster a few seconds to appear before leaving the status stale.
+  for (let i = 0; i < 20; i++) {
+    await new Promise(resolve => setTimeout(resolve, i ? 1500 : 800));
+    await refreshServers();
+    const current = (STATE.servers || []).find(s => s.name === name);
+    if (current?.connected) return;
+  }
+}
 const esc = s => String(s ?? "").replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const badge = (t, cls) => `<span class="badge b-${cls}">${esc(t)}</span>`;
+
+/* ===================== 路径选择器 ===================== */
+let REMOTE_PICKER = null;
+
+async function pickLocalPath(targetId, kind, title) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  const r = await api("local.pick", {
+    kind, title, initial: target.value.trim()
+  });
+  if (!r.ok) return;
+  if (!r.path) return toast("已取消路径选择", "");
+  target.value = r.path;
+  target.dispatchEvent(new Event("change", {bubbles: true}));
+}
+
+function pickerServerOptions(selected) {
+  const sel = document.getElementById("pathpickserver");
+  const servers = STATE.servers || [];
+  sel.innerHTML = servers.map(s =>
+    `<option value="${esc(s.name)}">${esc(s.name)}${s.connected ? " · 已连接" : " · 未连接"}</option>`
+  ).join("");
+  if (selected && servers.some(s => s.name === selected)) sel.value = selected;
+  else if (servers.length) sel.value = servers[0].name;
+  else if (selected) {
+    const opt = document.createElement("option");
+    opt.value = selected; opt.textContent = selected;
+    sel.appendChild(opt); sel.value = selected;
+  }
+}
+
+async function openRemotePathPicker({targetId, server = "", kind = "directory",
+                                     title = "选择远端路径", initialPath = ""}) {
+  const target = document.getElementById(targetId);
+  const requestedServer = server || document.getElementById("fsrv")?.value || "";
+  if (!requestedServer) return toast("请先选择服务器", "err");
+  REMOTE_PICKER = {
+    targetId, kind, title, server: requestedServer,
+    initialPath: initialPath || target?.value?.trim() || "",
+    root: "", path: "", selectedPath: ""
+  };
+  document.getElementById("pathpicktitle").textContent = title;
+  document.getElementById("pathpickuse").textContent =
+    kind === "file" ? "使用已选文件" : "使用当前目录";
+  pickerServerOptions(requestedServer);
+  document.getElementById("pathpickmodalback").classList.add("on");
+  await resetRemotePickerServer(true);
+}
+
+function closePathPicker() {
+  document.getElementById("pathpickmodalback").classList.remove("on");
+  REMOTE_PICKER = null;
+}
+
+async function resetRemotePickerServer(firstOpen = false) {
+  if (!REMOTE_PICKER) return;
+  const server = document.getElementById("pathpickserver").value;
+  REMOTE_PICKER.server = server;
+  REMOTE_PICKER.selectedPath = "";
+  let root = remoteRootOf(server);
+  if (!root) {
+    const r = await api("remote.pwd", {server}, true);
+    if (r.ok) root = String(r.root || r.pwd || "").trim();
+  }
+  REMOTE_PICKER.root = root;
+  if (!root) {
+    document.getElementById("pathpickhint").textContent =
+      "无法取得服务器根目录，请先连接该服务器。";
+    document.getElementById("pathpickentries").innerHTML =
+      `<div class="pathpick-empty">服务器未连接或根目录不可用</div>`;
+    document.getElementById("pathpickpath").value = "";
+    return;
+  }
+  const initial = firstOpen && REMOTE_PICKER.initialPath
+    ? REMOTE_PICKER.initialPath : root;
+  REMOTE_PICKER.initialPath = "";
+  await loadRemotePickerPath(initial);
+}
+
+async function loadRemotePickerPath(path = "") {
+  if (!REMOTE_PICKER) return;
+  const requested = String(path || REMOTE_PICKER.path || REMOTE_PICKER.root || "").trim();
+  if (!requested) return;
+  const hint = document.getElementById("pathpickhint");
+  hint.textContent = "正在读取远端目录…";
+  const r = await api("remote.list", {server: REMOTE_PICKER.server, path: requested}, true);
+  if (!r.ok) {
+    hint.textContent = r.error?.message || "无法读取远端目录";
+    document.getElementById("pathpickentries").innerHTML =
+      `<div class="pathpick-empty">请选择可访问的目录，或先完成服务器连接</div>`;
+    return;
+  }
+  REMOTE_PICKER.path = String(r.path || requested);
+  REMOTE_PICKER.selectedPath = "";
+  document.getElementById("pathpickpath").value = REMOTE_PICKER.path;
+  hint.textContent = REMOTE_PICKER.kind === "file"
+    ? "进入目录后，在文件行点击“选择文件”；文件夹可继续下钻。"
+    : "进入目录后点击“选择此目录”，或使用底部的“使用当前目录”。";
+  renderRemotePickerEntries(r.entries || []);
+}
+
+function remotePickerUp() {
+  if (!REMOTE_PICKER) return;
+  const parent = parentDir(REMOTE_PICKER.path);
+  if (!parent || (REMOTE_PICKER.root && parent.length < REMOTE_PICKER.root.length))
+    return toast("已到服务器根目录边界", "");
+  loadRemotePickerPath(parent);
+}
+
+function remotePickerChoose(path, kind) {
+  if (!REMOTE_PICKER) return;
+  if (kind === "directory") {
+    REMOTE_PICKER.selectedPath = path;
+    REMOTE_PICKER.path = path;
+    document.getElementById("pathpickpath").value = path;
+    document.getElementById("pathpickhint").textContent =
+      "已选目录：点击底部“使用当前目录”完成选择。";
+  } else {
+    REMOTE_PICKER.selectedPath = path;
+    document.getElementById("pathpickhint").textContent =
+      "已选文件：点击底部“使用已选文件”完成选择。";
+  }
+}
+
+function useRemotePickerSelection() {
+  if (!REMOTE_PICKER) return;
+  const selected = REMOTE_PICKER.kind === "file"
+    ? REMOTE_PICKER.selectedPath : (REMOTE_PICKER.selectedPath || REMOTE_PICKER.path);
+  if (!selected) return toast("请先选择路径", "err");
+  const target = document.getElementById(REMOTE_PICKER.targetId);
+  if (!target) return closePathPicker();
+  target.value = selected;
+  const targetId = REMOTE_PICKER.targetId;
+  closePathPicker();
+  if (targetId === "fpath") browse();
+}
+
+function renderRemotePickerEntries(entries) {
+  const list = document.getElementById("pathpickentries");
+  list.innerHTML = "";
+  if (!entries.length) {
+    list.innerHTML = `<div class="pathpick-empty">当前目录为空</div>`;
+    return;
+  }
+  for (const entry of entries) {
+    const isDir = entry.type === "dir";
+    const full = `${REMOTE_PICKER.path.replace(/\/$/, "")}/${entry.name}`;
+    const row = document.createElement("div");
+    row.className = "pathpick-row";
+    const name = document.createElement("button");
+    name.className = "pathpick-name";
+    name.textContent = `${isDir ? "目录" : "文件"} · ${entry.name}`;
+    name.title = isDir ? "进入目录" : full;
+    name.onclick = () => isDir ? loadRemotePickerPath(full) : remotePickerChoose(full, "file");
+    const kind = document.createElement("span");
+    kind.className = "pathpick-kind";
+    kind.textContent = isDir ? "目录" : "文件";
+    row.appendChild(name);
+    row.appendChild(kind);
+    if (isDir) {
+      const enter = document.createElement("button");
+      enter.className = "btn ghost path-btn";
+      enter.textContent = "进入";
+      enter.onclick = () => loadRemotePickerPath(full);
+      row.appendChild(enter);
+      const choose = document.createElement("button");
+      choose.className = "btn ghost path-btn";
+      choose.textContent = "选择此目录";
+      choose.onclick = () => remotePickerChoose(full, "directory");
+      row.appendChild(choose);
+    } else if (REMOTE_PICKER.kind === "file") {
+      const choose = document.createElement("button");
+      choose.className = "btn ghost path-btn";
+      choose.textContent = "选择文件";
+      choose.onclick = () => remotePickerChoose(full, "file");
+      row.appendChild(choose);
+    }
+    list.appendChild(row);
+  }
+}
+
+function pickServerRoot() {
+  const server = document.getElementById("mname").dataset.orig || "";
+  if (!server) return toast("新服务器请先保存，再编辑并选择远端根目录", "warn");
+  openRemotePathPicker({targetId: "mroot", server, kind: "directory",
+    title: "选择服务器远端根目录",
+    initialPath: document.getElementById("mroot").value.trim()});
+}
 
 /* ===================== 初始化 ===================== */
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
@@ -886,9 +1176,16 @@ async function refreshServers() {
   for (const s of st.servers) {
     const div = document.createElement("div");
     div.className = "srv" + (s.connected ? " on" : "");
-    div.innerHTML = `<span class="dot" title="${s.connected ? "已连接" : "未连接"}"></span>
+    const statusTitle = s.connected ? "后台连接可用" :
+      (s.route === "direct" && s.credential_confirmation_due
+        ? "已到凭据复核时间，请先确认仍保留密码"
+        : (s.route === "direct" && !s.credential_saved
+          ? "未连接：请配置 SSH 密钥/代理，或在编辑窗口保存加密凭据"
+          : "未连接"));
+    div.innerHTML = `<span class="dot" title="${statusTitle}"></span>
       <span class="nm">${esc(s.name)}${s.is_default ? "<small>默认</small>" : ""}
-        <small>${esc(s.scheduler)}</small></span>`;
+        <small>${s.route === "direct" ? "直连" : "Vlab 中转"} · ${esc(s.scheduler)}${
+          s.credential_saved ? (s.credential_confirmation_due ? " · 凭据待确认" : " · 凭据已保存") : ""}</small></span>`;
     const edit = document.createElement("button");
     edit.className = "mini"; edit.title = "编辑服务器";
     edit.textContent = "✎";
@@ -899,11 +1196,46 @@ async function refreshServers() {
       if (s.connected) { await api("server.disconnect", {server: s.name}); refreshServers(); }
       else {
         const r = await api("server.connect", {server: s.name});
-        if (r.ok) toast(`已弹出「${s.name}」的登录窗口：请在其提示处输入该服务器的密码和动态验证码`, "ok");
+        if (r.ok) {
+          if (r.automatic) {
+            toast(`「${s.name}」已使用本机加密凭据自动连接`, "ok");
+            await refreshServers();
+          } else {
+            toast(`已弹出「${s.name}」的登录窗口：${r.note || "请按窗口提示完成登录"}`,
+                  r.interactive_only ? "warn" : "ok");
+            refreshServers();
+            pollServerAfterLogin(s.name);
+          }
+        }
       }
     };
     div.appendChild(edit);
     div.appendChild(btn);
+    if (s.route === "direct") {
+      if (s.credential_saved && s.credential_confirmation_due) {
+        const confirmBtn = document.createElement("button");
+        confirmBtn.className = "mini";
+        confirmBtn.textContent = "确认凭据";
+        confirmBtn.title = `确认仍保留本机加密密码（每 ${s.credential_confirm_interval_days || 3} 天一次）`;
+        confirmBtn.onclick = async () => {
+          const r = await api("server.credentials_confirm", {server: s.name});
+          if (r.ok) { toast("已确认保留加密凭据", "ok"); await refreshServers(); }
+        };
+        div.appendChild(confirmBtn);
+      }
+      const keyBtn = document.createElement("button");
+      keyBtn.className = "mini";
+      keyBtn.textContent = "配钥";
+      keyBtn.title = "在可见终端安装本机 SSH 公钥（密码和验证码只在终端输入）";
+      keyBtn.onclick = async () => {
+        const r = await api("server.direct_key_setup", {server: s.name});
+        if (r.ok) {
+          toast(`已弹出「${s.name}」的直连密钥配置窗口：${r.note || "请按窗口提示完成"}`, "ok");
+          pollServerAfterLogin(s.name);
+        }
+      };
+      div.appendChild(keyBtn);
+    }
     box.appendChild(div);
   }
   connFlips();
@@ -1044,9 +1376,11 @@ function rowMenu(ev, server, path, type) {
   ev.preventDefault();
   ev.stopPropagation();  // 否则冒泡到 document 的 click 会立即关掉菜单
   const menu = document.getElementById("rowmenu");
+  const viaVlab = (STATE.servers || []).some(s => s.name === server &&
+    s.route !== "direct");
   const items = type === "dir" ? [
-    ["☁ 通过 Vlab 打开完整工作区",
-     `openFullWorkspace('${esc(path)}')`],
+    ...(viaVlab ? [["☁ 通过 Vlab 打开完整工作区",
+      `openFullWorkspace('${esc(path)}')`]] : []),
     ["🗂 在 VS Code 中以虚拟目录打开",
      `openSafeVscode('${esc(path)}','folder')`],
     ["📋 复制远端路径", `copyRemotePath('${esc(path)}')`],
@@ -1630,7 +1964,7 @@ function addMsg(role, text) {
   const div = document.createElement("div");
   div.className = "msg " + role;
   div.innerHTML = `<div class="av">${role === "user" ? "你" : "V"}</div>
-    <div class="bd"><div class="who">${role === "user" ? "你" : "胡伟团队专用智能体"}</div>
+    <div class="bd"><div class="who">${role === "user" ? "你" : "vasp 调度计算智能体"}</div>
     <div class="bubble"></div></div>`;
   if (text) {
     const bubble = div.querySelector(".bubble");
@@ -1663,6 +1997,7 @@ async function loadSettings() {
   document.getElementById("cfghost").value = v.host || "";
   document.getElementById("cfguser").value = v.user || "";
   document.getElementById("cfgport").value = v.port || 22;
+  document.getElementById("cfgautodeploy").checked = v.auto_deploy_gateway !== false;
   document.getElementById("identbadge").innerHTML =
     v.identity_file_exists ? badge("密钥文件存在", "ok")
                            : badge("密钥文件缺失", "err");
@@ -1806,6 +2141,7 @@ async function saveConn() {
     host: document.getElementById("cfghost").value.trim(),
     user: document.getElementById("cfguser").value.trim(),
     port: parseInt(document.getElementById("cfgport").value || "22"),
+    auto_deploy_gateway: document.getElementById("cfgautodeploy").checked,
   });
   if (r.ok) { toast("连接设置已保存", "ok"); await loadSettings(); }
 }
@@ -1825,11 +2161,22 @@ function openServerModal(entry) {
     ? (entry.scheduler === "pbs" ? "pbs"
        : entry.scheduler === "slurm" ? "slurm" : "auto")
     : "auto";
+  document.getElementById("mroute").value = entry?.route === "direct" ? "direct" : "vlab";
   document.getElementById("mroot").value = entry ? entry.remote_root : "";
+  document.getElementById("mcredentialpassword").value = "";
+  document.getElementById("mcredentialtotp").value = "";
+  document.getElementById("mcredentialdays").value = entry?.credential_confirm_interval_days || 3;
+  document.getElementById("mcredentialclear").checked = false;
+  toggleCredentialFields();
   back.classList.add("on");
   setTimeout(() => document.getElementById(
     entry ? "mtarget" : "mname").focus(), 60);
 }
+function toggleCredentialFields() {
+  const direct = document.getElementById("mroute").value === "direct";
+  document.getElementById("mcredentialwrap").style.display = direct ? "" : "none";
+}
+document.getElementById("mroute").addEventListener("change", toggleCredentialFields);
 async function saveServerModal() {
   const orig = document.getElementById("mname").dataset.orig;
   const body = {
@@ -1839,14 +2186,19 @@ async function saveServerModal() {
     port: parseInt(document.getElementById("mport").value || "22"),
     persist: document.getElementById("mpersist").value.trim() || "8h",
     scheduler: document.getElementById("msched").value,
+    route: document.getElementById("mroute").value,
     remote_root: document.getElementById("mroot").value.trim(),
+    credential_password: document.getElementById("mcredentialpassword").value,
+    credential_totp_seed: document.getElementById("mcredentialtotp").value,
+    credential_confirm_days: parseInt(document.getElementById("mcredentialdays").value || "3"),
+    clear_credentials: document.getElementById("mcredentialclear").checked,
   };
   let r;
   if (!orig) {
     if (!body.new_name || !body.target) return toast("名称与目标地址必填", "err");
     r = await api("server.add", {...body, name: body.new_name});
     if (!r.ok) return;
-    toast(`已添加 ${body.new_name}。点其「连接」并在弹窗输入密码/验证码`, "ok");
+    toast(`已添加 ${body.new_name}（${body.route === "direct" ? "直连" : "Vlab 中转"}）。点其「连接」完成登录`, "ok");
   } else {
     r = await api("server.edit", body);
     if (!r.ok) return;

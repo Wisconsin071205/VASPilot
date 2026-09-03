@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """VASPilot gateway — restricted operations broker deployed on the Vlab host.
 
-Invoked over SSH from the local CLI:
+Invoked over SSH from the local CLI (on Vlab by default, or on a selected
+target in direct mode):
 
     vaspilot-gateway <operation> [flags...]
 
@@ -73,6 +74,7 @@ TEXT_DENYLIST = {"POTCAR", "WAVECAR", "CHGCAR", "CHG", "LOCPOT", "PROCAR",
 MAX_READ_BYTES = 32 * 1024 * 1024
 
 CFG: dict = {}
+DIRECT_MODE = os.environ.get("VASPILOT_DIRECT_MODE", "") == "1"
 
 
 # ---------------------------------------------------------------- utilities
@@ -136,6 +138,19 @@ def validate_server(name: str, entry: dict) -> None:
 
 
 def load_config() -> dict:
+    if DIRECT_MODE:
+        name = str(os.environ.get("VASPILOT_DIRECT_SERVER", "")).strip()
+        entry = {
+            "target": str(os.environ.get("VASPILOT_DIRECT_TARGET", "")),
+            "port": int(os.environ.get("VASPILOT_DIRECT_PORT", "22") or 22),
+            "remote_root": str(os.environ.get("VASPILOT_DIRECT_ROOT", "")),
+            "persist": str(os.environ.get("VASPILOT_DIRECT_PERSIST", "8h") or "8h"),
+            "scheduler": str(os.environ.get("VASPILOT_DIRECT_SCHEDULER", "auto") or "auto"),
+            "auth_mode": str(os.environ.get("VASPILOT_DIRECT_AUTH_MODE", "interactive") or "interactive"),
+            "auto_connect": os.environ.get("VASPILOT_DIRECT_AUTO_CONNECT", "0") == "1",
+        }
+        validate_server(name, entry)
+        return {"servers": {name: entry}, "default_server": name}
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8-sig") as handle:
             data = json.load(handle)
@@ -151,6 +166,10 @@ def load_config() -> dict:
 
 
 def save_config(config: dict) -> None:
+    if DIRECT_MODE:
+        # Direct routing supplies a one-server catalog through environment
+        # variables. Never persist a second catalog on the target host.
+        return
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".servers-", dir=str(CONFIG_DIR))
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -179,6 +198,9 @@ def socket_path(name: str) -> Path:
 # ---------------------------------------------------------------- transport
 def _remote_runner(server: str, target: str, command: str, sock: Path,
                    timeout: int = 180) -> subprocess.CompletedProcess:
+    if DIRECT_MODE:
+        return subprocess.run(command, shell=True, capture_output=True,
+                              text=True, timeout=timeout)
     fake = os.environ.get("VASPILOT_FAKE_HPC", "")
     if fake:
         proc = subprocess.run([sys.executable, fake, server, command],
@@ -230,6 +252,15 @@ STAGE_PULL_MARKER = "__VP_STAGE_PULL__"
 def stage_push(name: str, stage_path_local_to_gateway: str,
                dest_resolved: str) -> None:
     """Move the gateway-local staged file onto the HPC target path."""
+    if DIRECT_MODE:
+        import shutil
+        try:
+            shutil.copyfile(_stage_fs_path(stage_path_local_to_gateway),
+                            dest_resolved)
+        except OSError as exc:
+            raise GatewayError("stage_push_failed",
+                               f"could not place the staged file: {exc}") from exc
+        return
     with open(_stage_fs_path(stage_path_local_to_gateway), "rb") as handle:
         payload = handle.read()
     if os.environ.get("VASPILOT_FAKE_HPC"):
@@ -247,6 +278,14 @@ def stage_push(name: str, stage_path_local_to_gateway: str,
 def stage_pull(name: str, src_resolved: str,
                stage_path_local_to_gateway: str) -> None:
     """Copy a file from the HPC into a gateway-local staged file."""
+    if DIRECT_MODE:
+        import shutil
+        try:
+            shutil.copyfile(src_resolved, _stage_fs_path(stage_path_local_to_gateway))
+        except OSError as exc:
+            raise GatewayError("stage_pull_failed",
+                               f"could not fetch the remote file: {exc}") from exc
+        return
     if os.environ.get("VASPILOT_FAKE_HPC"):
         argv = [f"{STAGE_PULL_MARKER} {shlex.quote(src_resolved)}"]
         rc, out_bytes = _ssh_runner_raw(name, argv)
@@ -294,6 +333,8 @@ def _stage_fs_path(stage: str) -> Path:
 
 
 def connected(name: str, timeout: int = 4) -> bool:
+    if DIRECT_MODE:
+        return name == str(os.environ.get("VASPILOT_DIRECT_SERVER", "")).strip()
     sock = socket_path(name)
     if os.environ.get("VASPILOT_FAKE_HPC"):
         # offline test seam: the marker file stands in for the ControlMaster
@@ -320,6 +361,8 @@ def require_connection(name: str, *, manual: bool = False) -> None:
     servers transparently rebuild their ControlMaster with the per-server
     key (subject to the reconnect backoff unless ``manual``).
     """
+    if DIRECT_MODE:
+        return
     if connected(name):
         record_reconnect(name, ok=True)
         return
@@ -1580,6 +1623,7 @@ def op_servers(args) -> int:
             "scheduler": entry.get("scheduler", "auto"),
             "auth_mode": entry.get("auth_mode", "interactive"),
             "auto_connect": bool(entry.get("auto_connect", False)),
+            "route": "direct" if DIRECT_MODE else "vlab",
             "connected": connected(name),
             "reconnect_state": (
                 "online" if connected(name) else
@@ -1720,6 +1764,10 @@ def op_connect(args) -> int:
     via ``ensure_session``; ``--manual`` bypasses the reconnect backoff.
     """
     name, entry = resolve_server(args.server)
+    if DIRECT_MODE:
+        out({"server": name, "connected": True, "already": True,
+             "route": "direct"})
+        return 0
     manual = bool(getattr(args, "manual", False))
     if connected(name):
         record_reconnect(name, ok=True)
@@ -1767,6 +1815,10 @@ def op_connect(args) -> int:
 
 def op_disconnect(args) -> int:
     name, entry = resolve_server(args.server)
+    if DIRECT_MODE:
+        out({"server": name, "connected": False, "already": True,
+             "route": "direct"})
+        return 0
     if not connected(name):
         out({"server": name, "connected": False, "already": True})
         return 0

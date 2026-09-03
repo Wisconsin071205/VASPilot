@@ -46,9 +46,10 @@ class UsageError(VaspilotError):
 class AuthRequiredError(VaspilotError):
     """The reusable SSH session expired or was never established.
 
-    The CLI must surface ``auth_required`` and never attempt to fill in a
-    password or TOTP itself; the user re-authenticates in a visible terminal
-    via ``vaspilot server connect``.
+    The CLI surfaces ``auth_required``. Direct-route servers may use a
+    user-authorized DPAPI credential until its periodic retention confirmation
+    is due; otherwise the user re-authenticates in a visible terminal via
+    ``vaspilot server connect``.
     """
 
     exit_code = EXIT_AUTH_REQUIRED

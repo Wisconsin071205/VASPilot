@@ -1,10 +1,11 @@
-"""Windows DPAPI (CurrentUser) secret protection for provider API keys.
+"""Windows DPAPI (CurrentUser) secret protection for local credentials.
 
-The web console lets the user paste an API key once; it is encrypted with
-CryptProtectData (user scope + an application entropy string) and persisted
-as base64 inside ``~/.vaspilot/settings.json``. Plaintext exists only in
-memory during decryption for an outgoing request. Same-user processes can
-decrypt — identical to the previous desktop app's behaviour.
+The web console can save an API key or an explicitly opted-in server
+credential. It is encrypted with CryptProtectData (user scope + an
+application entropy string) and persisted as base64 inside
+``~/.vaspilot/settings.json``. Plaintext exists only in memory during
+decryption for one outgoing request. Same-user processes can decrypt — the
+normal Windows DPAPI CurrentUser boundary.
 
 Non-Windows platforms: this module refuses; users configure ``api_key_env``
 instead.
@@ -17,6 +18,7 @@ import ctypes
 from ctypes import wintypes
 
 APP_ENTROPY = b"VASPilot-provider-key/v1"
+SERVER_CREDENTIAL_ENTROPY = b"VASPilot-server-credential/v1"
 
 
 class _DATA_BLOB(ctypes.Structure):
@@ -75,10 +77,20 @@ def unprotect(data: bytes, entropy: bytes = APP_ENTROPY) -> bytes:
         _local_free(dout.pbData)
 
 
-def protect_b64(text: str) -> str:
-    return base64.b64encode(protect(text.encode("utf-8"))).decode("ascii")
+def protect_b64(text: str, *, entropy: bytes = APP_ENTROPY) -> str:
+    return base64.b64encode(
+        protect(text.encode("utf-8"), entropy=entropy)).decode("ascii")
 
 
-def unprotect_b64(encoded: str) -> str:
-    raw = unprotect(base64.b64decode(encoded))
+def unprotect_b64(encoded: str, *, entropy: bytes = APP_ENTROPY) -> str:
+    raw = unprotect(base64.b64decode(encoded), entropy=entropy)
     return raw.decode("utf-8")
+
+
+def server_credential_entropy(server: str) -> bytes:
+    """Bind a server credential blob to its local server name.
+
+    This does not replace DPAPI's user binding; it also prevents an encrypted
+    entry being copied to a different server name and silently reused there.
+    """
+    return SERVER_CREDENTIAL_ENTROPY + b":" + str(server).encode("utf-8")

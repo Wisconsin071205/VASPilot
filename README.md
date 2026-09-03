@@ -1,21 +1,23 @@
-# 胡伟团队专用智能体
+# vasp 调度计算智能体
 
 > 技术包名与兼容命令仍为 `VASPilot` / `vaspilot`；面向用户的产品名称统一为
-> 「胡伟团队专用智能体」。也可使用更简短的 `huwei` 命令。
+> 「vasp 调度计算智能体」。也可使用更简短的 `huwei` 命令。
 
 CLI-first, multi-model VASP/HPC agent: after the user completes SSH
 authentication by hand, it performs **restricted, auditable** file transfer,
 job submission, status monitoring and VASP workflows across
-`Windows → USTC Vlab → multiple remote HPC servers`. No model is ever given
-an arbitrary remote shell — every action is a named, validated tool.
+`Windows → USTC Vlab → multiple remote HPC servers` is the default route;
+each server can also opt into `Windows → remote HPC` direct SSH when it is
+reachable from the workstation. No model is ever given an arbitrary remote
+shell — every action is a named, validated tool.
 
 ```
-本地 CLI / 智能体层        Vlab 网关层                HPC 适配层
-────────────────          ─────────────              ─────────────
-模型调用 (3 协议)    SSH   服务器目录(非敏感)     mux  Slurm/PBS 查询/提交/取消
-工作流规划 + 审批    ───>  每服务器 SSH 复用       ───> 文件与目录操作
-审计 / 多服务器监测        转发固定操作                   VASP 验证/进度/解析
-                          不存密码/TOTP/私钥
+本地 CLI / 智能体层       可选路由                     HPC 适配层
+────────────────         ─────────────                ─────────────
+模型调用 (3 协议)   SSH   Vlab 网关（默认）       mux  Slurm/PBS 查询/提交/取消
+工作流规划 + 审批   ───>   或目标服务器直连       ───> 文件与目录操作
+审计 / 多服务器监测       固定操作 + 根路径校验       VASP 验证/进度/解析
+                          可选凭据仅本机 DPAPI 加密
 ```
 
 ## Install (development)
@@ -23,7 +25,7 @@ an arbitrary remote shell — every action is a named, validated tool.
 ```powershell
 py -3.12 -m pip install -e .[dev]
 huwei --help               # 兼容命令: vaspilot --help
-py -3.12 -m pytest         # 134 tests, fully offline
+py -3.12 -m pytest         # offline test suite
 ```
 
 **Note:** an older `vaspilot` 0.3.0 may be installed globally on this machine
@@ -42,9 +44,15 @@ set PYTHONPATH=src && py -3.12 -m vaspilot --help
 # 1) Vlab identity (PEM from the portal) — path only, never the key body
 setx VASPILOT_IDENTITY_FILE "C:\path\to\vlab.pem"
 
-# 2) deploy the gateway helper onto Vlab (one command, see below), then:
-vaspilot server add cl9 --target user@cl9.ustc.edu.cn --root /public/home/you/vaspilot --scheduler slurm
-vaspilot server connect cl9        # YOU type the password + TOTP here
+# 2) for Vlab-routed servers, the first operation automatically checks and,
+#    by default, deploys the gateway helper onto Vlab; the one-shot manual
+#    command is still available (see below), then:
+vaspilot server add cl9 --target user@cl9.ustc.edu.cn --root /public/home/you/vaspilot --scheduler slurm --route vlab
+# 目标可从本机直接访问时，可改用：--route direct
+vaspilot server connect cl9        # 无加密凭据时在可见终端输入密码 + TOTP
+
+# Web 控制台中也可编辑直连服务器：输入密码与 TOTP 种子，选择“保存并加密”；
+# 之后点击“连接”会自动认证。每 3 天在服务器卡片点击“确认凭据”即可继续使用。
 
 # 3) model providers (keys stay in environment variables)
 vaspilot agent provider add --id ds --name DeepSeek --protocol openai-chat-compatible `
@@ -53,11 +61,23 @@ vaspilot agent provider probe ds   # capability probe; failures degrade to analy
 ```
 
 Gateway deployment onto Vlab (runs `scp` + `ssh`, CRLF→LF + py_compile
-validation, atomic replace):
+validation, atomic replace). This is normally automatic when a Vlab operation
+finds `~/bin/vaspilot-gateway` missing; the command below is useful for a
+manual install or repair:
 
 ```powershell
 py -3.12 scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
 ```
+
+The gateway is a small, restricted helper stored in the Vlab user's
+`~/bin/vaspilot-gateway`. It is the only component that talks from Vlab to the
+registered HPC targets; the model never receives an arbitrary remote shell.
+Automatic deployment first checks for an executable helper, then uploads the
+local helper to a random `/tmp` staging name, byte-compiles it on Vlab, and
+atomically replaces the destination only after validation. Disable it in
+“配置 → 连接设置 → 网关缺失时自动部署” when deployments must be managed
+manually. The separate Workspace Gateway (rclone/FUSE) remains a manual,
+explicit install because it has additional Vlab-side prerequisites.
 
 ## Command map
 
@@ -73,7 +93,8 @@ py -3.12 scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
 
 Every command prints one stable JSON document and uses documented exit codes:
 `0` ok · `1` error · `2` usage · `3 auth_required` · `4 approval` · `5 validation`.
-`auth_required` is never auto-filled — the CLI opens no hidden prompt; you
+`auth_required` never opens a hidden prompt. Direct-route credentials are used
+only when explicitly saved and within the confirmation window; otherwise you
 re-authenticate visibly via `server connect`.
 
 ## 统一 Web 控制台（`vaspilot ui`）
@@ -89,13 +110,17 @@ re-authenticate visibly via `server connect`.
   （在页面输入 `approve <plan_id>` 确认短语）→ 无人值守执行 + 尝试时间线。
 
 安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
-必须携带；UI 不接触密码/TOTP/API Key——交互式登录通过「连接」按钮在**独立的
-可见系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
-桌面快捷方式「VASPilot 控制台」或 `%USERPROFILE%\bin\vaspilot-ui.cmd` 一键启动。
+必须携带。直连服务器可以在编辑窗口保存登录密码和 Google Authenticator 的
+TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
+`~/.vaspilot/settings.json`，只在本机 SSH 子进程中短暂解密，绝不上传到
+Vlab、审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
+自动连接会暂停；未保存凭据时仍通过「连接」按钮在**独立可见系统终端**中手工输入。
+审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「VASPilot 控制台」
+或 `%USERPROFILE%\bin\vaspilot-ui.cmd` 一键启动。
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 
-仓库附带“胡伟团队专用智能体 VS Code Bridge”扩展。它经本地控制台按需访问
+仓库附带“vasp 调度计算智能体 VS Code Bridge”扩展。它经本地控制台按需访问
 `Windows → Vlab → HPC`，不通过 Remote-SSH 直接连接计算服务器，因此不会在
 CentOS 7 等老集群安装 VS Code Server。先运行
 `apps\huwei-agent-vscode-bridge\install-windows.ps1` 安装仓库内的 VSIX，随后在
@@ -161,10 +186,16 @@ carries credentials or approval references through MCP.
 
 ## Security invariants
 
+本机直连凭据的字段、周期确认和失败语义见
+[spec/local-credential-requirements.md](spec/local-credential-requirements.md)。
+
 - no shell tool; no `bash -c`/`sh -c`/PowerShell string concatenation anywhere
 - strict validation of server names, paths (lexical + `realpath`), job ids,
   trash ids and local project roots
 - SSH host-key changes fail closed; `known_hosts` is never auto-modified
+- Direct-route passwords and TOTP seeds are optional, DPAPI-encrypted CurrentUser
+  blobs; only a short-lived `SSH_ASKPASS` child environment can read them, and
+  periodic retention confirmation (default 3 days) gates automatic use
 - SHA-256 recorded for every upload/download/analysis artifact
 - POTCAR readable only as metadata (TITEL/ENMAX/size/SHA-256) from an
   authorized library
@@ -189,8 +220,17 @@ recipes/ spec/  migrated workflow recipes and specifications
 
 ## Known limitations
 
-- the Vlab-side gateway must be deployed manually the first time
-  (`scripts/install_vlab_gateway.py`);
+- Vlab-routed servers require the Vlab-side gateway to be deployed manually
+  the first time (`scripts/install_vlab_gateway.py`), unless the Web/CLI
+  setting “网关缺失时自动部署” is enabled (the default);
+- direct-route servers need Python 3 and the helper is installed under the
+  target user's `~/.cache/vaspilot/` on first use. Native Windows OpenSSH
+  does not support `ControlMaster`/`ControlPath`; direct operations use a
+  short-lived `SSH_ASKPASS` helper when an encrypted password/TOTP seed is
+  present, or an SSH key/agent. Credentials are withheld after the periodic
+  confirmation deadline until the user confirms retention.
+  Vlab complete-workspace mode remains available only for Vlab-routed
+  servers;
 - `server doctor` probes DNS/reachability/identity/gateway/scheduler but
   cannot fix anything by design;
 - Codex-provider probing without the SDK falls back to the `codex` CLI and an

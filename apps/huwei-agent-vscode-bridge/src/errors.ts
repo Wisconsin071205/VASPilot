@@ -6,7 +6,7 @@ export function describe(err: unknown): string {
   if (err instanceof ApiError) {
     switch (err.code) {
       case "auth_required":
-        return "服务器会话未连接：请在「胡伟团队专用智能体」控制台左侧" +
+        return "服务器会话未连接：请在「vasp 调度计算智能体」控制台左侧" +
           "点击该服务器的「连接」并输入密码后重试";
       case "remote_changed":
         return "远端文件已被其他操作修改，请比较后再保存（本次保存已拒绝覆盖）";

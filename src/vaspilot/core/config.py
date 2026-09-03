@@ -3,7 +3,8 @@
 Layout under ``~/.vaspilot`` (override with ``VASPILOT_HOME``):
 
   settings.json     vlab endpoint, identity-file path, default server,
-                    provider list (id/name/protocol/base_url/model/api_key_env)
+                    provider list (id/name/protocol/base_url/model/api_key_env),
+                    optional DPAPI-encrypted direct-server credentials
   servers.json      local mirror of the gateway server catalog (metadata only)
   approval.key      HMAC signing key for approval tokens (0600, auto-created)
   approvals.json    issued approvals + consumed token ids
@@ -11,7 +12,8 @@ Layout under ``~/.vaspilot`` (override with ``VASPILOT_HOME``):
   audit/*.jsonl     append-only audit rows
 
 Invariants:
-  - no API key plaintext, password, TOTP seed or private key is ever stored
+  - API keys and optional server passwords/TOTP seeds are DPAPI-encrypted
+    before persistence; plaintext secrets are never serialized
   - ``api_key_env`` names an environment variable; the key itself is read
     from the process environment at call time only
   - writes are atomic (tempfile + os.replace)
@@ -25,7 +27,7 @@ import re
 import secrets
 import stat
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .errors import ConfigError, ValidationError
@@ -73,15 +75,17 @@ class ServerEntry:
     ``auth_mode``: 'interactive' (default, password+TOTP in a visible
     terminal) or 'key' (per-server Ed25519 key on the gateway host, enabling
     unattended auto-reconnect). ``auto_connect`` gates that reconnect.
+    ``route`` selects Vlab routing (the default) or direct workstation SSH.
+    Optional direct-route credentials live separately in the local DPAPI vault.
     """
 
     __slots__ = ("name", "target", "port", "remote_root", "persist",
-                 "scheduler", "auth_mode", "auto_connect")
+                 "scheduler", "auth_mode", "auto_connect", "route")
 
     def __init__(self, name: str, target: str, port: int = 22,
                  remote_root: str = "", persist: str = "",
                  scheduler: str = "slurm", auth_mode: str = "interactive",
-                 auto_connect: bool = False) -> None:
+                 auto_connect: bool = False, route: str = "vlab") -> None:
         self.name = name
         self.target = target
         self.port = int(port)
@@ -91,6 +95,7 @@ class ServerEntry:
         self.auth_mode = auth_mode if auth_mode in ("interactive", "key") \
             else "interactive"
         self.auto_connect = bool(auto_connect)
+        self.route = route if route in ("vlab", "direct") else "vlab"
 
     def to_dict(self) -> dict:
         return {
@@ -102,6 +107,7 @@ class ServerEntry:
             "scheduler": self.scheduler,
             "auth_mode": self.auth_mode,
             "auto_connect": self.auto_connect,
+            "route": self.route,
         }
 
     @classmethod
@@ -116,6 +122,7 @@ class ServerEntry:
             scheduler=str(data.get("scheduler", "slurm") or "slurm"),
             auth_mode=str(data.get("auth_mode", "interactive") or "interactive"),
             auto_connect=bool(data.get("auto_connect", False)),
+            route=str(data.get("route", "vlab") or "vlab"),
         )
 
 
@@ -239,6 +246,10 @@ class Config:
             "gateway_path": str(data.get("gateway_path", "~/bin/vaspilot-gateway")),
             "workspace_gateway_path": str(data.get(
                 "workspace_gateway_path", "~/bin/huwei-workspace-gateway")),
+            # Missing core gateways are installed lazily on the first Vlab
+            # operation.  Users can turn this off when their Vlab account is
+            # managed centrally and deployments must be manual.
+            "auto_deploy_gateway": bool(data.get("auto_deploy_gateway", True)),
         }
 
     def set_vlab(self, **changes) -> dict:
@@ -374,10 +385,167 @@ class Config:
     def remove_server(self, name: str) -> None:
         servers = [s for s in self.load_servers() if s.name != name]
         self.save_servers(servers)
+        self.remove_server_credentials(name)
         if self.default_server() == name:
             data = _load_json(self.servers_path, {})
             data["default"] = ""
             _atomic_write_json(self.servers_path, data)
+
+    # -- server credential vault (DPAPI ciphertext, never plaintext) ---------
+    CREDENTIAL_CONFIRM_DAYS_DEFAULT = 3
+    CREDENTIAL_CONFIRM_DAYS_MIN = 1
+    CREDENTIAL_CONFIRM_DAYS_MAX = 30
+
+    @classmethod
+    def _credential_days(cls, value) -> int:
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            days = cls.CREDENTIAL_CONFIRM_DAYS_DEFAULT
+        return max(cls.CREDENTIAL_CONFIRM_DAYS_MIN,
+                   min(cls.CREDENTIAL_CONFIRM_DAYS_MAX, days))
+
+    def server_credentials_status(self, name: str) -> dict:
+        """Return credential metadata only; never return a secret."""
+        if not SERVER_NAME_RE.fullmatch(str(name or "")):
+            return {"saved": False, "confirmation_due": False,
+                    "confirm_interval_days": self.CREDENTIAL_CONFIRM_DAYS_DEFAULT}
+        data = self.load_settings().get("server_credentials")
+        entry = data.get(name) if isinstance(data, dict) else None
+        if not isinstance(entry, dict) or not entry.get("password"):
+            return {"saved": False, "confirmation_due": False,
+                    "confirm_interval_days": self.CREDENTIAL_CONFIRM_DAYS_DEFAULT}
+        days = self._credential_days(entry.get("confirm_interval_days"))
+        confirmed = str(entry.get("confirmed_at") or entry.get("saved_at") or "")
+        due = True
+        stamp = None
+        try:
+            stamp = datetime.fromisoformat(confirmed.replace("Z", "+00:00"))
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            due = datetime.now(timezone.utc) >= stamp + timedelta(days=days)
+        except (TypeError, ValueError):
+            pass
+        next_at = ""
+        if stamp is not None:
+            next_at = (stamp + timedelta(days=days)).isoformat(timespec="seconds")
+        return {"saved": True, "confirmation_due": due,
+                "confirmed_at": confirmed, "next_confirmation_at": next_at,
+                "confirm_interval_days": days}
+
+    def _server_credential_blobs(self, settings: dict, name: str) -> dict:
+        stored = settings.get("server_credentials")
+        if not isinstance(stored, dict):
+            stored = {}
+            settings["server_credentials"] = stored
+        item = stored.get(name)
+        return item if isinstance(item, dict) else {}
+
+    def _decrypt_server_credential(self, name: str, field: str) -> str:
+        from . import secretbox
+        settings = self.load_settings()
+        item = self._server_credential_blobs(settings, name)
+        blob = item.get(field)
+        if not isinstance(blob, str) or not blob:
+            return ""
+        try:
+            return secretbox.unprotect_b64(
+                blob, entropy=secretbox.server_credential_entropy(name))
+        except (OSError, ValueError) as exc:
+            raise ConfigError(
+                f"无法解密服务器 {name!r} 的本机凭据；请重新输入并保存") from exc
+
+    def get_server_credentials(self, name: str, *, allow_expired: bool = False) -> dict:
+        """Decrypt credentials for one short-lived SSH operation.
+
+        Expired entries are withheld until the local user confirms retention.
+        """
+        status = self.server_credentials_status(name)
+        if not status.get("saved") or (status.get("confirmation_due") and
+                                        not allow_expired):
+            return {}
+        return {"password": self._decrypt_server_credential(name, "password"),
+                "totp_seed": self._decrypt_server_credential(name, "totp_seed")}
+
+    def save_server_credentials(self, name: str, *, password: str | None = None,
+                                totp_seed: str | None = None,
+                                confirm_interval_days: int | None = None) -> dict:
+        """Create/update credentials with Windows DPAPI protection.
+
+        ``None`` preserves an existing field. An empty password is rejected so
+        a half-cleared entry can never become the automatic-auth source.
+        """
+        if not SERVER_NAME_RE.fullmatch(str(name or "")):
+            raise ValidationError(f"server name {name!r} is invalid")
+        from . import secretbox
+        from .credentials import normalize_totp_seed
+        settings = self.load_settings()
+        stored = settings.get("server_credentials")
+        if not isinstance(stored, dict):
+            stored = {}
+        current = stored.get(name) if isinstance(stored.get(name), dict) else {}
+        if password is None:
+            password = self._decrypt_server_credential(name, "password") \
+                if current.get("password") else ""
+        password = str(password or "")
+        if not password.strip():
+            raise ValidationError("服务器密码不能为空")
+        if totp_seed is None:
+            totp_seed = self._decrypt_server_credential(name, "totp_seed") \
+                if current.get("totp_seed") else ""
+        totp_seed = normalize_totp_seed(str(totp_seed or ""))
+        days = self._credential_days(
+            confirm_interval_days if confirm_interval_days is not None
+            else current.get("confirm_interval_days"))
+        now = self.now_iso()
+        try:
+            password_blob = secretbox.protect_b64(
+                password, entropy=secretbox.server_credential_entropy(name))
+            totp_blob = (secretbox.protect_b64(
+                totp_seed, entropy=secretbox.server_credential_entropy(name))
+                         if totp_seed else "")
+        except OSError as exc:
+            raise ConfigError(
+                "当前系统不支持 Windows DPAPI，无法安全保存服务器凭据；"
+                "请改用 SSH 密钥/代理或环境变量") from exc
+        stored[name] = {
+            "password": password_blob,
+            "totp_seed": totp_blob,
+            "saved_at": now,
+            "confirmed_at": now,
+            "confirm_interval_days": days,
+        }
+        settings["server_credentials"] = stored
+        self.save_settings(settings)
+        return self.server_credentials_status(name)
+
+    def confirm_server_credentials(self, name: str) -> dict:
+        """Record the user's periodic confirmation without exposing secrets."""
+        status = self.server_credentials_status(name)
+        if not status.get("saved"):
+            raise ValidationError("该服务器没有已保存的加密凭据")
+        # Validate the DPAPI blob before extending its trust window; a copied
+        # or corrupted settings file must never be confirmed blindly.
+        if not self._decrypt_server_credential(name, "password"):
+            raise ConfigError("服务器密码密文为空，请重新输入并保存")
+        settings = self.load_settings()
+        stored = settings.get("server_credentials")
+        item = stored.get(name) if isinstance(stored, dict) else None
+        if not isinstance(item, dict):
+            raise ValidationError("该服务器没有已保存的加密凭据")
+        item["confirmed_at"] = self.now_iso()
+        item["confirm_interval_days"] = self._credential_days(
+            item.get("confirm_interval_days"))
+        self.save_settings(settings)
+        return self.server_credentials_status(name)
+
+    def remove_server_credentials(self, name: str) -> None:
+        settings = self.load_settings()
+        stored = settings.get("server_credentials")
+        if isinstance(stored, dict) and name in stored:
+            del stored[name]
+            settings["server_credentials"] = stored
+            self.save_settings(settings)
 
     # -- providers -----------------------------------------------------------
     def load_providers(self) -> list[ProviderEntry]:

@@ -42,14 +42,15 @@ class App:
     def transport(self) -> SshTransport:
         if self._transport is None:
             vlab = self.config.vlab
-            # A missing identity is NOT fatal here: ssh may use an agent or
-            # default keys, and 'server doctor' reports the gap explicitly.
+            # A missing Vlab identity is NOT fatal here: direct-route servers
+            # may be used without Vlab, and ssh may use an agent/default key.
             # Real auth failures surface as auth_required at call time.
             self._transport = SshTransport(
                 host=vlab["host"], user=vlab["user"], port=vlab["port"],
                 identity_file=self.config.identity_file(),
                 gateway_path=vlab["gateway_path"],
-                workspace_gateway_path=vlab["workspace_gateway_path"])
+                workspace_gateway_path=vlab["workspace_gateway_path"],
+                auto_deploy_gateway=vlab["auto_deploy_gateway"])
         return self._transport
 
     def client(self) -> GatewayClient:

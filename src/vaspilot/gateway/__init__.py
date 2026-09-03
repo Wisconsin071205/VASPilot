@@ -1,4 +1,4 @@
-from .transport import SshTransport, default_runner
+from .transport import DirectSshTransport, SshTransport, default_runner
 from .client import GatewayClient
 
-__all__ = ["SshTransport", "default_runner", "GatewayClient"]
+__all__ = ["SshTransport", "DirectSshTransport", "default_runner", "GatewayClient"]

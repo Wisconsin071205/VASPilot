@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 
 import pytest
@@ -87,6 +88,29 @@ class TestOpenConnectTerminal:
                     "NumberOfPasswordPrompts=3",
                     "ServerAliveInterval=30", "ServerAliveCountMax=4"):
             assert opt in joined
+
+    def test_run_gateway_auto_deploys_missing_helper(self):
+        calls = []
+
+        def fake_runner(cmd, *, timeout, capture=True, tty=False):
+            calls.append(list(cmd))
+            joined = " ".join(cmd)
+            if cmd[0] == "ssh" and "test -x" in joined:
+                return 1, "", ""
+            if cmd[0] == "scp":
+                assert "-O" in cmd
+                return 0, "", ""
+            if "mv -f" in joined:
+                return 0, "VASPilot gateway version 1.5.0", ""
+            return 0, json.dumps({"ok": True, "servers": {}}), ""
+
+        t = SshTransport(host="vlab.ustc.edu.cn", user="ubuntu",
+                         identity_file=r"C:\u\id.pem",
+                         runner=fake_runner)
+        result = t.run_gateway(["servers"], timeout=10)
+        assert result["ok"]
+        assert len(calls) == 5  # probe, prepare, copy, install, operation
+        assert any(cmd[0] == "scp" and "-O" in cmd for cmd in calls)
 
     def test_base_commands_carry_keepalives(self, transport):
         """Every outer ssh op sends heartbeats so idle NAT paths survive."""

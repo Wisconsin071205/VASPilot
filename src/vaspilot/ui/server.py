@@ -4,8 +4,10 @@ Security model:
   - binds 127.0.0.1 only; no remote access
   - every page load gets a fresh random session token; all /api/* calls must
     carry it in the X-Vaspilot-Token header (blocks drive-by localhost pages)
-  - the UI never sees or accepts passwords, TOTP, API keys or private keys;
-    interactive SSH login opens a SEPARATE visible terminal (system terminal)
+  - API keys and optional direct-route SSH credentials are accepted only over
+    the random-token localhost API and encrypted immediately with Windows
+    DPAPI; credentials never leave this workstation. Interactive fallback
+    login still opens a SEPARATE visible terminal (system terminal)
   - workflow approval still requires the human to type the confirmation
     phrase ("approve <plan_id>") — the phrase is verified server-side exactly
     like the CLI does; a model cannot forge it
@@ -37,13 +39,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 # the request larger. Keep an explicit, finite cap for all localhost calls.
 MAX_BODY = 64 * 1024 * 1024
 MAX_UI_DOWNLOAD = 1024 * 1024 * 1024
+_PATH_PICKER_LOCK = threading.Lock()
 
 
 class RequestTooLargeError(ValueError):
     """Raised before parsing a localhost request that exceeds its cap."""
 
 _EXPIRED_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>会话已过期 — 胡伟团队专用智能体</title><style>
+<title>会话已过期 — vasp 调度计算智能体</title><style>
 body{background:#0d1117;color:#e6edf3;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{max-width:520px;background:#161b22;border:1px solid #2d3644;border-radius:12px;padding:28px 32px}
@@ -52,20 +55,20 @@ code{background:#1c2330;border-radius:5px;padding:2px 7px;font-size:13px;color:#
 </style></head><body><div class="card">
 <h1>⏱ 会话已过期</h1>
 <p>每次启动 <code>vaspilot ui</code> 都会生成新的会话令牌，旧标签页的链接随之失效。</p>
-<p>请重新打开：<b>桌面「胡伟团队专用智能体」</b>快捷方式，或在终端运行
+<p>请重新打开：<b>桌面「vasp 调度计算智能体」</b>快捷方式，或在终端运行
 <code>vaspilot ui</code> —— 浏览器会自动打开新会话。</p>
 <p style="font-size:12px">若提示端口被占用，服务会自动改用相邻端口并打印实际地址。</p>
 </div></body></html>"""
 
 _LANDING_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>胡伟团队专用智能体</title><style>
+<title>vasp 调度计算智能体</title><style>
 body{background:#0d1117;color:#e6edf3;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{max-width:520px;background:#161b22;border:1px solid #2d3644;border-radius:12px;padding:28px 32px}
 h1{font-size:18px;margin:0 0 10px}p{color:#9aa7b8;margin:8px 0}
 code{background:#1c2330;border-radius:5px;padding:2px 7px;font-size:13px;color:#4f9cf7}
 </style></head><body><div class="card">
-<h1>胡伟团队专用智能体</h1>
+<h1>vasp 调度计算智能体</h1>
 <p>控制台通过带会话令牌的地址访问，请从快捷方式或命令启动（浏览器会自动打开）：</p>
 <p><code>vaspilot ui</code></p>
 <p style="font-size:12px">这是设计如此：令牌防止本机其他页面盗用控制台 API。</p>
@@ -101,6 +104,49 @@ def _server_name(body: dict) -> str:
 def _server_or_default(body: dict, app) -> str:
     name = _server_name(body)
     return name or app.config.default_server()
+
+
+def _pick_local_path(kind: str, *, title: str = "选择路径",
+                     initial: str = "") -> str:
+    """Open a native Windows file/folder picker and return the chosen path.
+
+    Browser file inputs intentionally hide absolute paths (they expose
+    ``C:\\fakepath``), while the local-first UI needs the real path for the
+    VASP input directory and PEM/POTCAR files.  The picker therefore runs in
+    the local UI process and returns only the user's explicit selection.
+    """
+    if kind not in {"file", "directory"}:
+        raise ValueError("kind must be 'file' or 'directory'")
+    from tkinter import Tk, filedialog
+
+    initialdir = str(Path.home())
+    if initial:
+        candidate = Path(initial).expanduser()
+        if candidate.is_file():
+            initialdir = str(candidate.parent)
+        elif candidate.is_dir():
+            initialdir = str(candidate)
+        elif candidate.parent.is_dir():
+            initialdir = str(candidate.parent)
+
+    # Only one native dialog at a time: a double-click or two browser tabs
+    # should not create competing modal windows.
+    with _PATH_PICKER_LOCK:
+        root = Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)
+            root.update()
+            if kind == "file":
+                selected = filedialog.askopenfilename(
+                    parent=root, title=title, initialdir=initialdir)
+            else:
+                selected = filedialog.askdirectory(
+                    parent=root, title=title, initialdir=initialdir,
+                    mustexist=True)
+        finally:
+            root.destroy()
+    return str(Path(selected).expanduser()) if selected else ""
 
 
 class UiHandler(BaseHTTPRequestHandler):
@@ -280,12 +326,43 @@ class UiHandler(BaseHTTPRequestHandler):
             engine = app.engine()
             if action == "state":
                 self._send_json(self._state_payload())
+            elif action == "local.pick":
+                self._pick_local(body)
             elif action == "monitor.snapshot":
                 from ..cli.monitor import _snapshot
                 self._send_json(_snapshot(app))
             elif action == "server.connect":
-                # never accept credentials here: open a VISIBLE terminal
-                result = client.open_login_terminal(str(body.get("server") or ""))
+                name = str(body.get("server") or "")
+                entry = client.server_entry(name)
+                credential = app.config.server_credentials_status(name)
+                if (getattr(entry, "route", "vlab") == "direct" and
+                        credential.get("saved") and
+                        credential.get("confirmation_due")):
+                    from ..core.errors import ValidationError
+                    raise ValidationError(
+                        f"{name} 的本机加密凭据已到复核时间，请先点击“确认凭据”")
+                if (getattr(entry, "route", "vlab") == "direct" and
+                        credential.get("saved") and
+                        not credential.get("confirmation_due")):
+                    # The password/TOTP are supplied to one local OpenSSH
+                    # child through SSH_ASKPASS; the web request carries none.
+                    result = client.connect(name, manual=True)
+                    result.setdefault("automatic", True)
+                else:
+                    # Missing/expired credentials still use a VISIBLE terminal.
+                    result = client.open_login_terminal(name)
+                self._send_json(result)
+            elif action == "server.credentials_confirm":
+                self._send_json(client.confirm_server_credentials(
+                    str(body.get("server") or "")))
+            elif action == "server.credentials_remove":
+                self._send_json(client.remove_server_credentials(
+                    str(body.get("server") or "")))
+            elif action == "server.direct_key_setup":
+                # The web server never receives credentials; the transport
+                # opens a visible SSH/PowerShell terminal for the human.
+                result = client.open_direct_key_setup_terminal(
+                    str(body.get("server") or ""))
                 self._send_json(result)
             elif action == "server.disconnect":
                 self._send_json(client.disconnect(str(body.get("server") or "")))
@@ -438,7 +515,12 @@ class UiHandler(BaseHTTPRequestHandler):
                 saved = app.config.set_vlab(
                     identity_file=str(body.get("identity_file") or "").strip(),
                     host=str(body.get("host") or "").strip() or None,
-                    user=str(body.get("user") or "").strip() or None)
+                    user=str(body.get("user") or "").strip() or None,
+                    port=(int(body.get("port"))
+                          if body.get("port") is not None else None),
+                    auto_deploy_gateway=(bool(body.get("auto_deploy_gateway"))
+                                         if "auto_deploy_gateway" in body
+                                         else None))
                 self._send_json({"saved": {k: v for k, v in saved.items()}})
             elif action == "agent.submit_mode":
                 mode = app.config.set_agent_submit_mode(
@@ -498,9 +580,19 @@ class UiHandler(BaseHTTPRequestHandler):
                 connected = bool(app.client().status(entry.name).get("connected"))
             except Exception:
                 connected = False
+            credential = app.config.server_credentials_status(entry.name)
             servers.append({**entry.to_dict(),
                             "connected": connected,
-                            "is_default": entry.name == app.config.default_server()})
+                            "is_default": entry.name == app.config.default_server(),
+                            "credential_saved": bool(credential.get("saved")),
+                            "credential_confirmation_due": bool(
+                                credential.get("confirmation_due")),
+                            "credential_confirmed_at": credential.get(
+                                "confirmed_at", ""),
+                            "credential_next_confirmation_at": credential.get(
+                                "next_confirmation_at", ""),
+                            "credential_confirm_interval_days": credential.get(
+                                "confirm_interval_days", 3)})
         cached = app.config.load_settings().get("provider_probes") or {}
         providers = []
         for p in app.config.load_providers():
@@ -548,6 +640,23 @@ class UiHandler(BaseHTTPRequestHandler):
                 pass
         self._send_json(result)
 
+    def _pick_local(self, body: dict) -> None:
+        """Open a native local file/folder picker for the desktop UI."""
+        from ..core.errors import ValidationError
+
+        kind = str(body.get("kind") or "").strip().lower()
+        if kind not in {"file", "directory"}:
+            raise ValidationError("local picker kind must be file or directory")
+        title = str(body.get("title") or "选择路径").strip()[:120]
+        initial = str(body.get("initial") or "").strip()
+        try:
+            selected = _pick_local_path(kind, title=title, initial=initial)
+        except Exception as exc:
+            raise ValidationError(
+                f"无法打开本地路径选择器：{type(exc).__name__}: {exc}") from exc
+        self._send_json({"kind": kind, "path": selected,
+                         "cancelled": not bool(selected)})
+
     def _open_vscode(self, body: dict) -> None:
         """Retired direct-target entry point.
 
@@ -590,12 +699,25 @@ class UiHandler(BaseHTTPRequestHandler):
         target = str(body.get("target") or "").strip()
         if not target or "@" not in target:
             raise ValidationError("target must be user@host")
+        route = str(body.get("route") or "vlab")
+        credential_password = str(body.get("credential_password") or "")
+        credential_totp_seed = str(body.get("credential_totp_seed") or "")
+        if route != "direct" and (credential_password or credential_totp_seed):
+            raise ValidationError("密码/TOTP 仅可保存到直连服务器")
+        if credential_totp_seed and not credential_password:
+            raise ValidationError("首次保存 Google 验证密钥时必须同时输入服务器密码")
         result = client.server_add(
             name=name, target=target,
             port=int(body.get("port") or 22),
             remote_root=str(body.get("remote_root") or "").strip(),
             persist=str(body.get("persist") or "8h").strip() or "8h",
             scheduler=str(body.get("scheduler") or "auto"),
+            route=route,
+            credential_password=credential_password or None,
+            credential_totp_seed=credential_totp_seed or None,
+            credential_confirm_days=(int(body.get("credential_confirm_days"))
+                                     if body.get("credential_confirm_days")
+                                     else None),
             set_default=bool(body.get("make_default")))
         self._send_json({"added": name, "result": result})
 
@@ -617,20 +739,49 @@ class UiHandler(BaseHTTPRequestHandler):
                          if body.get("remote_root") is not None
                          else entry.remote_root),
             persist=str(body.get("persist") or "").strip() or entry.persist,
-            scheduler=str(body.get("scheduler") or "").strip() or entry.scheduler)
+            scheduler=str(body.get("scheduler") or "").strip() or entry.scheduler,
+            route=str(body.get("route") or "").strip() or getattr(entry, "route", "vlab"))
+
+        credential_password = str(body.get("credential_password") or "")
+        credential_totp_seed = str(body.get("credential_totp_seed") or "").strip()
+        credential_days = (int(body.get("credential_confirm_days"))
+                           if body.get("credential_confirm_days") else None)
+        clear_credentials = bool(body.get("clear_credentials"))
+        if fields["route"] != "direct" and (credential_password or
+                                              credential_totp_seed or
+                                              clear_credentials):
+            raise ValidationError("密码/TOTP 仅可用于直连服务器")
+
+        def save_credentials(name: str, route: str) -> None:
+            if route != "direct":
+                # Credentials are route-specific. Do not leave a stale
+                # password/TOTP blob behind when switching back to Vlab.
+                if app.config.server_credentials_status(name).get("saved"):
+                    client.remove_server_credentials(name)
+                return
+            if clear_credentials:
+                client.remove_server_credentials(name)
+            elif credential_password or credential_totp_seed:
+                client.save_server_credentials(
+                    name, password=credential_password or None,
+                    totp_seed=credential_totp_seed or None,
+                    confirm_days=credential_days)
 
         identity_changed = (new_name and new_name != old) or \
-            fields["target"] != entry.target or fields["port"] != entry.port
+            fields["target"] != entry.target or fields["port"] != entry.port or \
+            fields["route"] != getattr(entry, "route", "vlab")
         if connected and identity_changed:
             raise ValidationError(
-                f"{old} 已连接：改名或修改地址/端口前请先断开该服务器；"
+                f"{old} 已连接：改名、修改地址/端口或切换连接方式前请先断开该服务器；"
                 "根路径与保持时长可随时修改")
 
         if not identity_changed:
             edited = client.server_edit(
                 old, target=None, port=None,
                 remote_root=fields["remote_root"],
-                persist=fields["persist"], scheduler=fields["scheduler"])
+                persist=fields["persist"], scheduler=fields["scheduler"],
+                route=fields["route"])
+            save_credentials(old, fields["route"])
             self._send_json({"edited": old, "result": edited})
             return
 
@@ -639,7 +790,9 @@ class UiHandler(BaseHTTPRequestHandler):
             edited = client.server_edit(
                 old, target=fields["target"], port=fields["port"],
                 remote_root=fields["remote_root"],
-                persist=fields["persist"], scheduler=fields["scheduler"])
+                persist=fields["persist"], scheduler=fields["scheduler"],
+                route=fields["route"])
+            save_credentials(old, fields["route"])
             self._send_json({"edited": old, "result": edited})
             return
 
@@ -648,8 +801,9 @@ class UiHandler(BaseHTTPRequestHandler):
         result = client.server_add(
             name=new_name, target=fields["target"], port=fields["port"],
             remote_root=fields["remote_root"], persist=fields["persist"],
-            scheduler=fields["scheduler"])
+            scheduler=fields["scheduler"], route=fields["route"])
         client.server_remove(old)
+        save_credentials(new_name, fields["route"])
         if keep_default:
             client.server_set_default(new_name)
         self._send_json({"renamed": [old, new_name], "result": result})

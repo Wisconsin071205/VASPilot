@@ -124,13 +124,13 @@ class TestTokenGuard:
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "胡伟团队专用智能体" in body and "vaspilot ui" in body
+        assert "vasp 调度计算智能体" in body and "vaspilot ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "胡伟团队专用智能体" in html and "chatinput" in html
+        assert "vasp 调度计算智能体" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
@@ -140,6 +140,33 @@ class TestTokenGuard:
         assert "通过 Vlab 打开完整工作区" in html
         assert "在 VS Code 中安全编辑" in html
         assert "downloadRemoteFile" in html
+        assert "openRemotePathPicker" in html
+        assert "pickLocalPath" in html
+        assert "pathpickmodalback" in html
+        assert "mroute" in html and "直接连接目标服务器" in html
+        assert "server.direct_key_setup" in html and "配钥" in html
+        assert "mcredentialpassword" in html and "mcredentialtotp" in html
+        assert "server.credentials_confirm" in html
+        assert "cfgautodeploy" in html and "网关缺失时自动部署" in html
+
+    def test_local_path_picker_returns_selected_path(self, ui, monkeypatch):
+        from vaspilot.ui import server as ui_server
+        monkeypatch.setattr(
+            ui_server, "_pick_local_path",
+            lambda kind, *, title, initial: (
+                r"C:\\cases\\case-01" if kind == "directory"
+                else r"C:\\keys\\vlab.pem"))
+        selected = call(ui, "local.pick", {
+            "kind": "directory", "title": "选择输入目录",
+            "initial": r"C:\\cases"})
+        assert selected["ok"]
+        assert selected["kind"] == "directory"
+        assert selected["path"].endswith(r"cases\\case-01")
+
+    def test_local_path_picker_rejects_unknown_kind(self, ui):
+        payload = call(ui, "local.pick", {"kind": "volume"})
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "validation_error"
 
 
 class TestPortFallback:

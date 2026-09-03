@@ -28,6 +28,8 @@ def register(sub) -> None:
     p.add_argument("--root", default="", help="absolute remote_root confining all paths")
     p.add_argument("--persist", default="8h", help="ControlPersist window (8h, 1d, ...)")
     p.add_argument("--scheduler", default="auto", choices=["auto", "slurm", "pbs"])
+    p.add_argument("--route", default="vlab", choices=["vlab", "direct"],
+                   help="reach the target through Vlab (default) or directly")
     p.add_argument("--set-default", action="store_true")
 
     p = command("edit", cmd_edit)
@@ -39,6 +41,8 @@ def register(sub) -> None:
     p.add_argument("--scheduler", choices=["auto", "slurm", "pbs"])
     p.add_argument("--auth-mode", choices=["interactive", "key"])
     p.add_argument("--auto-connect", action="store_true")
+    p.add_argument("--route", choices=["vlab", "direct"],
+                   help="change the target route")
 
     p = command("remove", cmd_remove)
     p.add_argument("name")
@@ -94,7 +98,8 @@ def cmd_add(app, args):
     return app.client().server_add(
         name=args.name, target=args.target, port=args.port,
         remote_root=args.root, persist=args.persist,
-        scheduler=args.scheduler, set_default=args.set_default)
+        scheduler=args.scheduler, set_default=args.set_default,
+        route=args.route)
 
 
 def cmd_edit(app, args):
@@ -102,7 +107,7 @@ def cmd_edit(app, args):
         args.name, target=args.target, port=args.port,
         remote_root=args.root, persist=args.persist,
         scheduler=args.scheduler, auth_mode=args.auth_mode,
-        auto_connect=(True if args.auto_connect else None))
+        auto_connect=(True if args.auto_connect else None), route=args.route)
 
 
 def cmd_remove(app, args):
@@ -114,13 +119,15 @@ def cmd_set_default(app, args):
 
 
 def cmd_connect(app, args):
-    """key-mode servers reconnect unattended; interactive servers run the
-    login in THIS terminal (password + TOTP here)."""
+    """Use direct-route encrypted credentials when available; otherwise open
+    the visible password/TOTP terminal. Vlab key-mode keeps its old behavior."""
     name = args.server
     try:
         entry = app.client().server_entry(name) if name else None
     except Exception:
         entry = None
+    if entry is not None and getattr(entry, "route", "vlab") == "direct":
+        return app.client().connect(name, manual=True)
     if entry is not None and entry.auth_mode == "key":
         return app.client().connect(name, manual=True)
     return app.client().connect_interactive(name)
@@ -163,6 +170,10 @@ def cmd_doctor(app, args):
     """Read-only connectivity diagnosis. Never changes system settings."""
     report: dict = {"checks": [], "ok": True}
     vlab = app.config.vlab
+    configured = app.config.load_servers()
+    needs_vlab = (not configured or
+                  any(getattr(entry, "route", "vlab") == "vlab"
+                      for entry in configured))
 
     def check(name, ok, detail=""):
         report["checks"].append({"name": name, "ok": bool(ok),
@@ -181,7 +192,10 @@ def cmd_doctor(app, args):
 
     # 2) identity file
     identity = app.config.identity_file()
-    if identity and Path(identity).expanduser().is_file():
+    if not needs_vlab:
+        check("vlab_ssh", True, "skipped: no server uses Vlab routing")
+        check("gateway_version", True, "skipped: no server uses Vlab routing")
+    elif identity and Path(identity).expanduser().is_file():
         check("identity_file", True, identity)
     else:
         check("identity_file", False,
@@ -213,8 +227,13 @@ def cmd_doctor(app, args):
     server_reports = []
     for name in names:
         valid_server_name(name)
-        entry: dict = {"server": name}
+        configured_entry = next((item for item in configured if item.name == name), None)
+        route = getattr(configured_entry, "route", "vlab") if configured_entry else "vlab"
+        entry: dict = {"server": name, "route": route}
         try:
+            if route == "direct":
+                reachable, detail = app.client()._transport_for(name).probe_reachable()
+                check(f"direct_ssh:{name}", reachable, detail)
             status = app.client().status(name)
             entry["connected"] = bool(status.get("connected"))
             if entry["connected"]:

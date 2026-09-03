@@ -8,6 +8,7 @@ CLI, the agent tool registry and the MCP server use to touch remote systems.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -18,26 +19,69 @@ from ..core.hashing import file_sha256
 from ..core.validation import (confirm_match, remote_path, scheduler_kind,
                                valid_filename, valid_glob, valid_job_id,
                                valid_server_name, valid_trash_id)
-from .transport import SshTransport
+from .transport import DirectSshTransport, SshTransport
 
 # Align the local console with the bridge's 32 MiB text-open limit.
 _TEXT_CAP_BYTES = 32 * 1024 * 1024
 
 
 class GatewayClient:
-    """Facade over the Vlab gateway for all remote operations."""
+    """Facade over the configured Vlab or direct per-server transport."""
 
     def __init__(self, config: Config, transport: SshTransport,
                  audit: AuditLog | None = None) -> None:
         self.config = config
         self.transport = transport
         self.audit = audit
+        self._direct_transports: dict[str, DirectSshTransport] = {}
+
+    def _server_from_args(self, args: list[str], audit_fields: dict) -> str:
+        name = str(audit_fields.get("server") or "").strip()
+        if name:
+            return name
+        try:
+            index = args.index("--server")
+            return str(args[index + 1]).strip()
+        except (ValueError, IndexError):
+            return ""
+
+    def _transport_for(self, server: str | None):
+        """Select the per-server route while preserving the Vlab default."""
+        name = str(server or "").strip()
+        if not name:
+            return self.transport
+        entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") != "direct":
+            return self.transport
+        credential_status = self.config.server_credentials_status(name)
+        credentials = self.config.get_server_credentials(name)
+        cached = self._direct_transports.get(name)
+        details = (entry.target, entry.port, entry.remote_root, entry.persist,
+                   entry.scheduler, entry.auth_mode, entry.auto_connect,
+                   credential_status.get("confirmed_at", ""),
+                   credential_status.get("confirmation_due", False),
+                   credential_status.get("saved", False))
+        if cached is None or getattr(cached, "_route_details", None) != details:
+            cached = DirectSshTransport(
+                server=name, target=entry.target, port=entry.port,
+                remote_root=entry.remote_root, persist=entry.persist,
+                scheduler=entry.scheduler, auth_mode=entry.auth_mode,
+                auto_connect=entry.auto_connect,
+                password=credentials.get("password", ""),
+                totp_seed=credentials.get("totp_seed", ""),
+                credentials_due=bool(credential_status.get(
+                    "confirmation_due", False)))
+            cached._route_details = details
+            self._direct_transports[name] = cached
+        return cached
 
     # ---------------------------------------------------------------- helpers
     def _call(self, event: str, args: list[str], *, timeout: int = 180,
               **audit_fields) -> dict:
         try:
-            document = self.transport.run_gateway(args, timeout=timeout)
+            server = self._server_from_args(args, audit_fields)
+            document = self._transport_for(server).run_gateway(
+                args, timeout=timeout)
         except RemoteError as exc:
             if self.audit:
                 self.audit.record(event, outcome="failed",
@@ -57,6 +101,10 @@ class GatewayClient:
                         **audit_fields) -> dict:
         """Workspace Gateway runs only on Vlab.  It receives fixed arguments
         from this facade and never gets a model-authored shell command."""
+        server = self._server_from_args(args, audit_fields)
+        if server and getattr(self.server_entry(server), "route", "vlab") == "direct":
+            raise ValidationError(
+                "完整工作区模式需要通过 Vlab；直连服务器请使用普通文件/作业功能")
         try:
             document = self.transport.run_workspace_gateway(args, timeout=timeout)
         except RemoteError as exc:
@@ -88,16 +136,72 @@ class GatewayClient:
         return self._call("gateway.version", ["version"])
 
     def servers(self) -> dict:
+        local = self.config.load_servers()
+        if local and not any(getattr(entry, "route", "vlab") == "vlab"
+                             for entry in local):
+            rows = []
+            for entry in local:
+                credential = self.config.server_credentials_status(entry.name)
+                rows.append({**entry.to_dict(), "connected": False,
+                             "reconnect_state": "-", "retry_in": 0,
+                             "failure_count": 0, "last_connect_error": "",
+                             "credential_saved": bool(credential.get("saved")),
+                             "credential_confirmation_due": bool(
+                                 credential.get("confirmation_due")),
+                             "credential_confirm_interval_days": credential.get(
+                                 "confirm_interval_days", 3)})
+            return {
+                "ok": True,
+                "servers": rows,
+                "default": self.config.default_server(),
+                "gateway_version": "direct",
+                "protocol": "2",
+            }
         return self._call("server.list", ["servers"])
 
     def server_add(self, *, name: str, target: str, port: int = 22,
                    remote_root: str = "", persist: str = "8h",
                    scheduler: str = "auto", set_default: bool = False,
                    auth_mode: str = "interactive",
-                   auto_connect: bool = False) -> dict:
+                   auto_connect: bool = False, route: str = "vlab",
+                   credential_password: str | None = None,
+                   credential_totp_seed: str | None = None,
+                   credential_confirm_days: int | None = None) -> dict:
         name = valid_server_name(name)
+        if not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,253}",
+                target or ""):
+            raise ValidationError("target must be user@host")
+        if not 1 <= int(port) <= 65535:
+            raise ValidationError("port must be 1..65535")
         if scheduler not in ("auto", "slurm", "pbs"):
             raise ValidationError("scheduler must be auto, slurm or pbs")
+        route = str(route or "vlab").strip().lower()
+        if route not in ("vlab", "direct"):
+            raise ValidationError("route must be vlab or direct")
+        if route != "direct" and (credential_password or credential_totp_seed):
+            raise ValidationError("服务器密码/TOTP 只允许保存到直连服务器")
+        if credential_totp_seed and not credential_password:
+            raise ValidationError("首次保存 Google 验证密钥时必须同时输入服务器密码")
+        entry = ServerEntry(
+            name=name, target=target, port=port, remote_root=remote_root,
+            persist=persist, scheduler=scheduler, auth_mode=auth_mode,
+            auto_connect=auto_connect, route=route)
+        if route == "direct":
+            if credential_password:
+                self.config.save_server_credentials(
+                    name, password=credential_password,
+                    totp_seed=credential_totp_seed,
+                    confirm_interval_days=credential_confirm_days)
+            self.config.upsert_server(entry)
+            if set_default:
+                self.config.set_default_server(name)
+            self._direct_transports.pop(name, None)
+            if self.audit:
+                self.audit.record("server.add", outcome="ok", server=name,
+                                  route="direct")
+            return {"ok": True, "added": name, "entry": entry.to_dict(),
+                    "route": "direct"}
         result = self._call("server.add", [
             "server-add", name, "--target", target, "--port", str(port),
             "--root", remote_root, "--persist", persist,
@@ -105,10 +209,7 @@ class GatewayClient:
             "--auth-mode", auth_mode]
             + (["--auto-connect"] if auto_connect else []))
         # keep the local mirror in sync (metadata only)
-        self.config.upsert_server(ServerEntry(
-            name=name, target=target, port=port, remote_root=remote_root,
-            persist=persist, scheduler=scheduler,
-            auth_mode=auth_mode, auto_connect=auto_connect))
+        self.config.upsert_server(entry)
         if set_default:
             self.config.set_default_server(name)
             self.transport.run_gateway(
@@ -120,8 +221,90 @@ class GatewayClient:
                     persist: str | None = None,
                     scheduler: str | None = None,
                     auth_mode: str | None = None,
-                    auto_connect: bool | None = None) -> dict:
+                    auto_connect: bool | None = None,
+                    route: str | None = None) -> dict:
         name = valid_server_name(name)
+        entry = self.server_entry(name)
+        if target is not None and not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}@[A-Za-z0-9][A-Za-z0-9._-]{0,253}",
+                target or ""):
+            raise ValidationError("target must be user@host")
+        if port is not None and not 1 <= int(port) <= 65535:
+            raise ValidationError("port must be 1..65535")
+        route = (str(route).strip().lower() if route is not None
+                 else getattr(entry, "route", "vlab"))
+        if route not in ("vlab", "direct"):
+            raise ValidationError("route must be vlab or direct")
+        old_route = getattr(entry, "route", "vlab")
+        if route == "direct":
+            if target is not None:
+                entry.target = target
+            if port is not None:
+                entry.port = port
+            if remote_root is not None:
+                entry.remote_root = remote_root
+            if persist is not None:
+                entry.persist = persist
+            if scheduler is not None:
+                entry.scheduler = scheduler
+            if auth_mode is not None:
+                entry.auth_mode = auth_mode
+            if auto_connect is not None:
+                entry.auto_connect = auto_connect
+            entry.route = route
+            self.config.upsert_server(entry)
+            self._direct_transports.pop(name, None)
+            if self.audit:
+                self.audit.record("server.edit", outcome="ok", server=name,
+                                  route=route)
+            return {"ok": True, "edited": name, "entry": entry.to_dict(),
+                    "route": route}
+        if old_route == "direct":
+            # Re-register the entry in the Vlab catalog when switching back
+            # to the mediated route; the direct catalog is local-only.
+            target_value = target or entry.target
+            port_value = port or entry.port
+            root_value = (remote_root if remote_root is not None
+                          else entry.remote_root)
+            persist_value = persist or entry.persist or "8h"
+            scheduler_value = scheduler or entry.scheduler or "auto"
+            auth_value = auth_mode or entry.auth_mode
+            try:
+                result = self._call("server.edit", [
+                    "server-edit", name, "--target", target_value,
+                    "--port", str(port_value), "--root", root_value,
+                    "--persist", persist_value, "--scheduler", scheduler_value,
+                    "--auth-mode", auth_value]
+                    + (["--auto-connect"] if auto_connect else []))
+            except RemoteError:
+                result = self._call("server.add", [
+                    "server-add", name, "--target", target_value,
+                    "--port", str(port_value), "--root", root_value,
+                    "--persist", persist_value, "--scheduler", scheduler_value,
+                    "--auth-mode", auth_value]
+                    + (["--auto-connect"] if auto_connect else []))
+            if target is not None:
+                entry.target = target
+            if port is not None:
+                entry.port = port
+            if remote_root is not None:
+                entry.remote_root = remote_root
+            if persist is not None:
+                entry.persist = persist
+            if scheduler is not None:
+                entry.scheduler = scheduler
+            if auth_mode is not None:
+                entry.auth_mode = auth_mode
+            if auto_connect is not None:
+                entry.auto_connect = auto_connect
+            entry.route = "vlab"
+            self.config.upsert_server(entry)
+            self.config.remove_server_credentials(name)
+            self._direct_transports.pop(name, None)
+            if self.audit:
+                self.audit.record("server.edit", outcome="ok", server=name,
+                                  route="vlab")
+            return result
         args = ["server-edit", name]
         if target is not None:
             args += ["--target", target]
@@ -139,7 +322,6 @@ class GatewayClient:
             args += ["--auto-connect"]
         result = self._call("server.edit", args)
         # refresh the mirror entry
-        entry = self.server_entry(name)
         if target is not None:
             entry.target = target
         if port is not None:
@@ -154,23 +336,70 @@ class GatewayClient:
             entry.auth_mode = auth_mode
         if auto_connect is not None:
             entry.auto_connect = auto_connect
+        entry.route = route
         self.config.upsert_server(entry)
         return result
 
     def server_remove(self, name: str) -> dict:
         name = valid_server_name(name)
+        entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") == "direct":
+            self.config.remove_server(name)
+            self._direct_transports.pop(name, None)
+            if self.audit:
+                self.audit.record("server.remove", outcome="ok", server=name,
+                                  route="direct")
+            return {"ok": True, "removed": name, "route": "direct"}
         result = self._call("server.remove", ["server-remove", name])
         self.config.remove_server(name)
         return result
 
+    def save_server_credentials(self, server: str | None = None, *,
+                                password: str | None = None,
+                                totp_seed: str | None = None,
+                                confirm_days: int | None = None) -> dict:
+        """Persist direct-route SSH credentials in the local DPAPI vault."""
+        name = self._require(server)
+        entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") != "direct":
+            raise ValidationError("加密服务器凭据只允许用于直接连接")
+        result = self.config.save_server_credentials(
+            name, password=password, totp_seed=totp_seed,
+            confirm_interval_days=confirm_days)
+        self._direct_transports.pop(name, None)
+        if self.audit:
+            self.audit.record("server.credentials_save", outcome="ok",
+                              server=name)
+        return {"server": name, "credentials": result, "route": "direct"}
+
+    def remove_server_credentials(self, server: str | None = None) -> dict:
+        name = self._require(server)
+        self.config.remove_server_credentials(name)
+        self._direct_transports.pop(name, None)
+        if self.audit:
+            self.audit.record("server.credentials_remove", outcome="ok",
+                              server=name)
+        return {"server": name, "removed": True}
+
     def server_set_default(self, name: str) -> dict:
         name = valid_server_name(name)
+        entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") == "direct":
+            self.config.set_default_server(name)
+            if self.audit:
+                self.audit.record("server.default", outcome="ok", server=name,
+                                  route="direct")
+            return {"ok": True, "default": name, "route": "direct"}
         result = self._call("server.default", ["server-set-default", name])
         self.config.set_default_server(name)
         return result
 
     def refresh_server_mirror(self) -> list[ServerEntry]:
         """Pull the gateway catalog into the local mirror (metadata only)."""
+        local = {entry.name: entry for entry in self.config.load_servers()}
+        if local and not any(getattr(entry, "route", "vlab") == "vlab"
+                             for entry in local.values()):
+            return list(local.values())
         catalog = self.servers()
         entries = []
         for item in catalog.get("servers", []):
@@ -185,8 +414,14 @@ class GatewayClient:
                 scheduler=str(item.get("scheduler", "auto") or "auto"),
                 auth_mode=str(item.get("auth_mode", "interactive")
                               or "interactive"),
-                auto_connect=bool(item.get("auto_connect", False))))
-        self.config.save_servers(entries, default=str(catalog.get("default", "")))
+                auto_connect=bool(item.get("auto_connect", False)),
+                route=getattr(local.get(str(item["name"])), "route", "vlab")))
+        names = {entry.name for entry in entries}
+        entries.extend(entry for entry in local.values()
+                       if getattr(entry, "route", "vlab") == "direct"
+                       and entry.name not in names)
+        default = str(catalog.get("default", "")) or self.config.default_server()
+        self.config.save_servers(entries, default=default)
         return entries
 
     def status(self, server: str | None = None) -> dict:
@@ -195,17 +430,24 @@ class GatewayClient:
 
     def connect_interactive(self, server: str | None = None) -> dict:
         name = self._require(server)
-        result = self.transport.interactive_connect(name)
+        result = self._transport_for(name).interactive_connect(name)
         if self.audit:
             self.audit.record("server.connect", outcome="ok", server=name)
         return result
 
     def connect(self, server: str | None = None, *,
                 manual: bool = True) -> dict:
-        """Unattended connect: key-mode servers reconnect with their key;
-        interactive servers raise instead of ever answering a prompt."""
+        """Connect with a key or a locally encrypted direct credential."""
         name = self._require(server)
         entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") == "direct":
+            status = self.config.server_credentials_status(name)
+            if status.get("confirmation_due") and status.get("saved"):
+                raise AuthRequiredError(
+                    f"{name} 的本机加密凭据已到复核时间，请先确认仍保留")
+            args = ["connect", "--server", name]
+            result = self._call("server.connect", args, server=name)
+            return {**result, "automatic": True, "route": "direct"}
         if entry.auth_mode != "key":
             raise AuthRequiredError(
                 f"{name} is interactive; run 'vaspilot server connect "
@@ -218,6 +460,19 @@ class GatewayClient:
             self.audit.record("server.connect", outcome="ok", server=name)
         return result
 
+    def confirm_server_credentials(self, server: str | None = None) -> dict:
+        """Refresh the local retention confirmation for a direct server."""
+        name = self._require(server)
+        entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") != "direct":
+            raise ValidationError("加密服务器凭据只适用于直接连接目标服务器")
+        result = self.config.confirm_server_credentials(name)
+        self._direct_transports.pop(name, None)
+        if self.audit:
+            self.audit.record("server.credentials_confirm", outcome="ok",
+                              server=name)
+        return {"server": name, "credentials": result, "route": "direct"}
+
     def ensure_session(self, server: str | None = None, *,
                        manual: bool = False) -> dict:
         """Session-or-reconnect used by read/scheduler/progress paths."""
@@ -227,6 +482,10 @@ class GatewayClient:
         except Exception:
             pass
         entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") == "direct":
+            status = self.config.server_credentials_status(name)
+            if status.get("saved") and not status.get("confirmation_due"):
+                return self.connect(name, manual=manual)
         if entry.auth_mode == "key" and entry.auto_connect:
             return self.connect(name, manual=manual)
         return self.status(name)
@@ -308,14 +567,34 @@ class GatewayClient:
         """
         name = self._require(server)
         entry = self.server_entry(name)
-        result = self.transport.open_connect_terminal(
+        result = self._transport_for(name).open_connect_terminal(
             server=name, target=entry.target, port=entry.port,
             persist=entry.persist or "8h")
         if self.audit:
             self.audit.record("server.login_terminal", outcome="ok", server=name)
         return {"opened": True, "server": name,
-                "note": ("enter that server's password and TOTP in the new "
-                         "terminal window; existing sessions report alive")}
+                "route": getattr(entry, "route", "vlab"),
+                "interactive_only": bool(result.get("interactive_only", False)),
+                "note": result.get("note") or
+                ("enter that server's password and TOTP in the new terminal "
+                 "window; existing sessions report alive")}
+
+    def open_direct_key_setup_terminal(self, server: str | None = None) -> dict:
+        """Open a visible one-shot terminal to install the local SSH public
+        key on a direct-route target.  Password/TOTP stay in that terminal.
+        """
+        name = self._require(server)
+        entry = self.server_entry(name)
+        if getattr(entry, "route", "vlab") != "direct":
+            raise ValidationError("直连密钥配置只适用于直接连接目标服务器")
+        result = self._transport_for(name).open_key_setup_terminal(
+            server=name, target=entry.target, port=entry.port)
+        if self.audit:
+            self.audit.record("server.direct_key_setup_terminal", outcome="ok",
+                              server=name)
+        return {"opened": True, "server": name, "route": "direct",
+                "note": result.get("note") or
+                "已打开直连密钥配置窗口；密码和 Google 验证码只在该窗口输入"}
 
     def disconnect(self, server: str | None = None) -> dict:
         name = self._require(server)
@@ -499,14 +778,15 @@ class GatewayClient:
         if not local.is_file() or local.is_symlink():
             raise ValidationError(f"upload source must be a regular file: {local}")
         sha = expected_sha256 or file_sha256(local)
-        stage = self.transport.stage_path()
+        transport = self._transport_for(name)
+        stage = transport.stage_path()
         try:
-            self.transport.scp_to_stage(str(local), stage, timeout=timeout)
+            transport.scp_to_stage(str(local), stage, timeout=timeout)
             result = self._call("remote.upload", [
                 "upload", "--server", name, stage, target, sha],
                 path=target, sha256=sha, timeout=timeout)
         finally:
-            self.transport.rm_stage(stage)
+            transport.rm_stage(stage)
         if str(result.get("sha256", "")) != sha:
             raise RemoteError("upload hash verification failed",
                               detail={"expected": sha,
@@ -524,14 +804,15 @@ class GatewayClient:
         local = Path(local_path)
         if not local.is_file() or local.is_symlink():
             raise ValidationError(f"write source must be a regular file: {local}")
-        stage = self.transport.stage_path()
+        transport = self._transport_for(name)
+        stage = transport.stage_path()
         try:
-            self.transport.scp_to_stage(str(local), stage, timeout=timeout)
+            transport.scp_to_stage(str(local), stage, timeout=timeout)
             return self._call("remote.write", [
                 "write", "--server", name, "--expected-sha", expected_sha256,
                 stage, target], path=target, timeout=timeout)
         finally:
-            self.transport.rm_stage(stage)
+            transport.rm_stage(stage)
 
     def download(self, path: str, local_path: str | Path, *,
                  server: str | None = None, timeout: int = 600) -> dict:
@@ -542,15 +823,16 @@ class GatewayClient:
             raise ValidationError(
                 f"local target {local} already exists; downloads never overwrite")
         local.parent.mkdir(parents=True, exist_ok=True)
-        stage = self.transport.stage_path()
+        transport = self._transport_for(name)
+        stage = transport.stage_path()
         try:
             result = self._call("remote.download", [
                 "download", "--server", name, source, stage],
                 path=source, timeout=timeout)
             remote_sha = str(result.get("sha256", ""))
-            self.transport.scp_from_stage(stage, str(local), timeout=timeout)
+            transport.scp_from_stage(stage, str(local), timeout=timeout)
         finally:
-            self.transport.rm_stage(stage)
+            transport.rm_stage(stage)
         if not local.is_file():
             raise RemoteError("download did not produce a local file")
         local_sha = file_sha256(local)
