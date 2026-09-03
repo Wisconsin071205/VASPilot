@@ -298,6 +298,20 @@ class WorkspaceGateway:
         return {"read": "read=yes" in text, "write": "write=yes" in text}
 
     @staticmethod
+    def find_rclone() -> str | None:
+        """rclone 查找：PATH 优先，回退到用户目录（非交互 ssh 的 PATH
+        不包含 ~/bin，因此 rclone 安装在用户目录时也能被发现）。"""
+        found = shutil.which("rclone")
+        if found:
+            return found
+        home = Path.home()
+        for candidate in (home / "bin" / "rclone",
+                          home / ".local" / "bin" / "rclone"):
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        return None
+
+    @staticmethod
     def _free_port() -> int:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.bind(("127.0.0.1", 0))
@@ -306,7 +320,7 @@ class WorkspaceGateway:
         return port
 
     def _rclone_bin(self) -> str:
-        binary = shutil.which("rclone")
+        binary = self.find_rclone()
         if not binary:
             raise GatewayError("rclone_missing", "Vlab 未安装 rclone")
         return binary
@@ -316,7 +330,7 @@ class WorkspaceGateway:
         return shutil.which("fusermount3") or shutil.which("fusermount")
 
     def _check_mount_capability(self) -> dict[str, Any]:
-        rclone = shutil.which("rclone")
+        rclone = self.find_rclone()
         fuse = self._fuse_bin()
         return {
             "rclone": bool(rclone),

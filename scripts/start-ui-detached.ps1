@@ -1,4 +1,4 @@
-# Start the VASPilot web console as a detached, minimized process that
+﻿# Start the VASPilot web console as a detached, minimized process that
 # survives the launching shell. Session URL lands in ~/.vaspilot/ui.log
 # and the browser opens automatically.
 #
