@@ -288,10 +288,11 @@ class WorkspaceGateway:
 
     def _remote_permissions(self, server: str, entry: dict[str, Any], path: str) -> dict[str, bool]:
         import shlex
+        # POSIX test 不支持 "--"；path 已被白名单约束为绝对路径
         command = (
-            f"test -d -- {shlex.quote(path)} && "
-            f"test -r -- {shlex.quote(path)} && echo read=yes || echo read=no; "
-            f"test -w -- {shlex.quote(path)} && echo write=yes || echo write=no"
+            f"test -d {shlex.quote(path)} && "
+            f"test -r {shlex.quote(path)} && echo read=yes || echo read=no; "
+            f"test -w {shlex.quote(path)} && echo write=yes || echo write=no"
         )
         result = _run(self._ssh_argv(server, entry, command), timeout=35)
         text = (result.stdout or "")
@@ -412,7 +413,7 @@ class WorkspaceGateway:
         source = f"{self._remote_name()}:{data['remote_path']}"
         argv = [
             self._rclone_bin(), "--config", str(paths["config"]), "mount", source,
-            str(paths["mount"]), "--daemon", "--daemon-wait", "30s",
+            str(paths["mount"]),
             "--cache-dir", str(paths["cache"]), "--dir-cache-time",
             str(settings["dir_cache_time"]), "--attr-timeout", str(settings["attr_timeout"]),
             "--buffer-size", str(settings["buffer_size"]), "--rc", "--rc-no-auth",
@@ -572,9 +573,24 @@ class WorkspaceGateway:
             }
             self._write_rclone_config(paths, name, entry)
             self._write_vscode_workspace(paths, data)
-            result = _run(self._rclone_mount_argv(data), timeout=45)
-            if result.returncode != 0 or not self._is_mounted(paths["mount"]):
-                detail = (result.stderr or result.stdout or "rclone mount failed").strip()[:300]
+            # 不用 rclone --daemon：PVE 容器上父/子进程会竞争 RC 端口。
+            # 改为脚本后台化（setsid）并轮询挂载点就绪。
+            process = subprocess.Popen(
+                self._rclone_mount_argv(data),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, start_new_session=True)
+            mounted = False
+            for _ in range(90):
+                if self._is_mounted(paths["mount"]):
+                    mounted = True
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.5)
+            if not mounted:
+                if process.poll() is None:
+                    process.terminate()
+                detail = (f"rclone 挂载未在 45 秒内就绪（pid {process.pid}）")
                 data.update({"status": "needs_recovery", "last_error": detail})
                 state["workspaces"][workspace_id] = data
                 self._save_state(state)
@@ -746,10 +762,23 @@ class WorkspaceGateway:
             if self._is_mounted(paths["mount"]):
                 raise GatewayError("workspace_still_mounted", "工作区已挂载，无需恢复")
             data["rc_port"] = self._free_port()
-            result = _run(self._rclone_mount_argv(data), timeout=45)
-            if result.returncode != 0 or not self._is_mounted(paths["mount"]):
+            process = subprocess.Popen(
+                self._rclone_mount_argv(data),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL, start_new_session=True)
+            mounted = False
+            for _ in range(90):
+                if self._is_mounted(paths["mount"]):
+                    mounted = True
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.5)
+            if not mounted:
+                if process.poll() is None:
+                    process.terminate()
                 data["status"] = "needs_recovery"
-                data["last_error"] = (result.stderr or result.stdout or "恢复挂载失败").strip()[:300]
+                data["last_error"] = "恢复挂载失败：45 秒内未就绪"
                 self._save_state(state)
                 raise GatewayError("recovery_mount_failed", "恢复挂载失败；缓存仍保留")
             data.update({"status": "recovering", "last_error": "", "heartbeat_at": now()})
