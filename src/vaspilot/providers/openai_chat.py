@@ -7,7 +7,7 @@ The concrete class is protocol-generic by design — never name vendors here.
 from __future__ import annotations
 
 import json
-import time
+import socket
 from datetime import datetime, timezone
 from typing import Callable
 from urllib.error import HTTPError, URLError
@@ -34,14 +34,10 @@ class OpenAIChatCompatibleProvider(BaseProvider):
             else base + "/chat/completions"
         # never route provider traffic through a system proxy silently
         self.opener = build_opener(ProxyHandler({}))
-        self.url = base if base.endswith("/chat/completions") \
-            else base + "/chat/completions"
-        # never route provider traffic through a system proxy silently
-        self.opener = build_opener(ProxyHandler({}))
 
     # -- transport -------------------------------------------------------------
     def _request(self, payload: dict, *, stream: bool = False,
-                 timeout: int = 120, retries: int = 2):
+                 timeout: int = 120, retries: int = 3):
         headers = {"Content-Type": "application/json"}
         if stream:
             headers["Accept"] = "text/event-stream"
@@ -52,6 +48,7 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         body = json.dumps(payload).encode("utf-8")
         last_error: Exception | None = None
         for attempt in range(retries + 1):
+            self.raise_if_cancelled()
             request = Request(self.url, data=body, method="POST", headers=headers)
             try:
                 return self.opener.open(request, timeout=timeout)
@@ -60,33 +57,58 @@ class OpenAIChatCompatibleProvider(BaseProvider):
                 last_error = ProviderError(
                     f"provider returned HTTP {exc.code}: {detail}")
                 if exc.code in _RETRYABLE_STATUS and attempt < retries:
-                    time.sleep(1.5 * (attempt + 1))
+                    retry_after = exc.headers.get("Retry-After", "")
+                    try:
+                        delay = min(float(retry_after), 12.0)
+                    except (TypeError, ValueError):
+                        delay = min(0.75 * (2 ** attempt), 6.0)
+                    self.wait_retry(delay)
                     continue
                 raise last_error from exc
             except URLError as exc:
-                last_error = ProviderError(f"provider unreachable: {exc.reason}")
+                reason = str(exc.reason)
+                last_error = ProviderError(
+                    "读取模型服务响应超时：已重试仍未收到完整响应；"
+                    "请检查网络/VPN、服务端负载后重试"
+                    if "timed out" in reason.lower()
+                    else f"provider unreachable: {reason}")
                 if attempt < retries:
-                    time.sleep(1.5 * (attempt + 1))
+                    self.wait_retry(min(0.75 * (2 ** attempt), 6.0))
+                    continue
+                raise last_error from exc
+            except (TimeoutError, socket.timeout) as exc:
+                last_error = ProviderError(
+                    "读取模型服务响应超时：已重试仍未收到完整响应；"
+                    "请检查网络/VPN、服务端负载后重试")
+                if attempt < retries:
+                    self.wait_retry(min(0.75 * (2 ** attempt), 6.0))
                     continue
                 raise last_error from exc
         raise last_error or ProviderError("provider request failed")
 
     # -- streaming ----------------------------------------------------------------
     def _stream_events(self, payload: dict, timeout: int = 120):
-        with self._request(payload, stream=True, timeout=timeout) as response:
-            for raw_line in response:
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    yield event
+        response = self._request(payload, stream=True, timeout=timeout)
+        with self.track_response(response) as response:
+            try:
+                for raw_line in response:
+                    self.raise_if_cancelled()
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict):
+                        yield event
+            except (TimeoutError, socket.timeout) as exc:
+                raise ProviderError(
+                    "读取模型流响应超时：模型服务在输出过程中长时间没有返回数据；"
+                    "请重试或检查服务端负载") from exc
 
     # -- chat ------------------------------------------------------------------------
     def _chat(self, messages: list[dict], tools: list[dict],
@@ -154,8 +176,14 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         return reply
 
     def _chat_blocking(self, payload: dict) -> ProviderReply:
-        with self._request(payload) as response:
-            document = json.load(response)
+        response = self._request(payload)
+        with self.track_response(response) as response:
+            self.raise_if_cancelled()
+            try:
+                document = json.load(response)
+            except (TimeoutError, socket.timeout) as exc:
+                raise ProviderError(
+                    "读取模型服务响应超时：请检查网络/VPN、服务端负载后重试") from exc
         try:
             choice = document["choices"][0]
             message = choice.get("message") or {}

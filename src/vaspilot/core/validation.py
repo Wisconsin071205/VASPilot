@@ -144,8 +144,8 @@ def local_project_path(value: object, *, project_root: str | Path) -> Path:
 
 
 def scheduler_kind(value: object) -> str:
-    if value not in ("slurm", "pbs"):
-        raise ValidationError("scheduler must be 'slurm' or 'pbs'")
+    if value not in ("auto", "slurm", "pbs"):
+        raise ValidationError("scheduler must be 'auto', 'slurm' or 'pbs'")
     return str(value)
 
 

@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -143,6 +145,52 @@ class BaseProvider:
                 self.api_key = ""
         if not self.api_key and entry.protocol != "codex-sdk":
             require_api_key_if_remote(entry)
+        self._cancel_event = None
+        self._response_lock = threading.Lock()
+        self._active_response = None
+
+    def bind_cancel_event(self, event) -> None:
+        """Bind one request-scoped cancellation event to this provider."""
+        self._cancel_event = event
+
+    def raise_if_cancelled(self) -> None:
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise InterruptedError("model response cancelled by user")
+
+    def wait_retry(self, seconds: float) -> None:
+        event = self._cancel_event
+        if event is not None and event.wait(max(0.0, seconds)):
+            raise InterruptedError("model response cancelled by user")
+        if event is None:
+            import time
+            time.sleep(max(0.0, seconds))
+
+    @contextmanager
+    def track_response(self, response):
+        """Make an active urllib response closable by another UI request."""
+        with self._response_lock:
+            self._active_response = response
+        try:
+            yield response
+        finally:
+            with self._response_lock:
+                if self._active_response is response:
+                    self._active_response = None
+            try:
+                response.close()
+            except Exception:
+                pass
+
+    def cancel(self) -> None:
+        if self._cancel_event is not None:
+            self._cancel_event.set()
+        with self._response_lock:
+            response = self._active_response
+        if response is not None:
+            try:
+                response.close()
+            except Exception:
+                pass
 
     # -- subclass API ---------------------------------------------------------
     def probe(self) -> CapabilityProbe:  # pragma: no cover - abstract

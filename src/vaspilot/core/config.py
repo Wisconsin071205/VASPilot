@@ -4,7 +4,7 @@ Layout under ``~/.vaspilot`` (override with ``VASPILOT_HOME``):
 
   settings.json     vlab endpoint, identity-file path, default server,
                     provider list (id/name/protocol/base_url/model/api_key_env),
-                    optional DPAPI-encrypted direct-server credentials
+                    optional DPAPI-encrypted per-server credentials
   servers.json      local mirror of the gateway server catalog (metadata only)
   approval.key      HMAC signing key for approval tokens (0600, auto-created)
   approvals.json    issued approvals + consumed token ids
@@ -76,7 +76,7 @@ class ServerEntry:
     terminal) or 'key' (per-server Ed25519 key on the gateway host, enabling
     unattended auto-reconnect). ``auto_connect`` gates that reconnect.
     ``route`` selects Vlab routing (the default) or direct workstation SSH.
-    Optional direct-route credentials live separately in the local DPAPI vault.
+    Optional credentials for either route live separately in the local DPAPI vault.
     """
 
     __slots__ = ("name", "target", "port", "remote_root", "persist",
@@ -320,7 +320,7 @@ class Config:
         return number
 
     # -- web search configuration -------------------------------------------------
-    WEBSEARCH_PROVIDERS = ("zhipu", "bocha", "bing")
+    WEBSEARCH_PROVIDERS = ("tavily", "zhipu", "bocha", "bing")
 
     def websearch(self) -> dict:
         data = self.load_settings().get("websearch") or {}

@@ -1,8 +1,9 @@
 """Web access for the agent: search adapters and a hardened URL fetcher.
 
-- web_search: provider adapters (zhipu web-search, bocha, and a keyless
-  Bing SERP reader). The API key comes from ``VASPILOT_WEBSEARCH_KEY``
-  or the DPAPI vault — never logged; bing needs none.
+- web_search: provider adapters (Tavily, zhipu web-search, bocha, and a
+  keyless Bing SERP reader). The API key comes from
+  ``VASPILOT_WEBSEARCH_KEY`` or the DPAPI vault — never logged; bing needs
+  none.
 - web_fetch: plain http(s) GET with SSRF protection (no private/loopback
   targets, no exotic ports), HTML stripped to readable text, size-capped.
 """
@@ -25,7 +26,7 @@ FETCH_BODY_CAP = 512 * 1024   # raw bytes read from the wire
 FETCH_TEXT_CAP = 50 * 1024    # text returned to the model
 ALLOWED_PORTS = (80, 443, 8080, 8443)
 
-_SEARCH_PROVIDERS = ("zhipu", "bocha", "bing")
+_SEARCH_PROVIDERS = ("tavily", "zhipu", "bocha", "bing")
 
 
 class _TextExtractor(HTMLParser):
@@ -146,6 +147,8 @@ def web_search(query: str, *, provider: str, api_key: str = "") -> dict[str, Any
         return _search_zhipu(query, api_key)
     if provider == "bocha":
         return _search_bocha(query, api_key)
+    if provider == "tavily":
+        return _search_tavily(query, api_key)
     return _search_bing(query)
 
 
@@ -192,6 +195,24 @@ def _search_bocha(query: str, api_key: str) -> dict[str, Any]:
                                item.get("summary") or "")[:400],
             })
     return {"provider": "bocha", "query": query, "results": results}
+
+
+def _search_tavily(query: str, api_key: str) -> dict[str, Any]:
+    document = _post_json(
+        "https://api.tavily.com/search",
+        {"query": query, "search_depth": "basic", "max_results": 10,
+         "topic": "general", "include_answer": False,
+         "include_raw_content": False, "include_images": False},
+        api_key)
+    results = []
+    for item in (document.get("results") or [])[:10]:
+        if isinstance(item, dict):
+            results.append({
+                "title": str(item.get("title") or "")[:200],
+                "url": str(item.get("url") or "")[:500],
+                "snippet": str(item.get("content") or "")[:400],
+            })
+    return {"provider": "tavily", "query": query, "results": results}
 
 
 class _BingSerpParser(HTMLParser):

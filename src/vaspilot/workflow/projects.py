@@ -261,6 +261,70 @@ class ProjectStore:
         self._save_index(index)
         return {"name": name, "pinned": meta["pinned"]}
 
+    def update(self, name: str, *, new_name: str | None = None,
+               files: dict[str, str] | None = None,
+               potcar_path: str | Path | None = None,
+               potcar_remote: str | None = None,
+               remove_potcar: bool = False) -> dict[str, Any]:
+        """Update project metadata and text inputs, optionally renaming it.
+
+        All values are validated before the directory is renamed. Text files
+        use the same whitelist and size cap as :meth:`write_file`; POTCAR is
+        only ever replaced by a byte-for-byte copy from an explicit path.
+        """
+        source = self._project_dir(name)
+        if not source.is_dir():
+            raise ValidationError(f"project {name!r} not found")
+        target_name = str(new_name or name).strip()
+        target = self._project_dir(target_name)
+        if target_name != name and target.exists():
+            raise ValidationError(f"project {target_name!r} already exists")
+
+        text_files = {str(k): str(v) for k, v in (files or {}).items()}
+        for fname, content in text_files.items():
+            if fname not in FILE_WHITELIST or fname == "POTCAR":
+                raise ValidationError(
+                    f"file {fname!r} is not an editable project text file")
+            if len(content.encode("utf-8")) > 262144:
+                raise ValidationError(f"{fname} exceeds the 256 KiB text cap")
+        source_potcar = None
+        if potcar_path:
+            source_potcar = Path(potcar_path).expanduser()
+            if not source_potcar.is_file():
+                raise ValidationError(f"POTCAR source not found: {source_potcar}")
+        if potcar_remote is not None and \
+                len(str(potcar_remote).strip().encode("utf-8")) > 512:
+            raise ValidationError("potcar_remote path exceeds 512 bytes")
+
+        index = self._load_index()
+        meta = index.get(name, {"created_at": _now(), "pinned": False})
+        if target_name != name:
+            source.rename(target)
+            index.pop(name, None)
+            index[target_name] = meta
+            self._save_index(index)
+        else:
+            target = source
+
+        written = [self.write_file(target_name, fname, content)
+                   for fname, content in text_files.items()]
+        potcar_removed = False
+        existing_potcar = target / "POTCAR"
+        if remove_potcar and source_potcar is None and existing_potcar.is_file():
+            existing_potcar.unlink()
+            potcar_removed = True
+        potcar = self.copy_potcar(target_name, source_potcar) \
+            if source_potcar is not None else None
+        if potcar_remote is not None:
+            self.set_potcar_remote(target_name, str(potcar_remote))
+        self._record("project.update", outcome="ok", project=target_name,
+                     renamed_from=name if target_name != name else "",
+                     files=[row["name"] for row in written],
+                     potcar=bool(potcar))
+        return {"name": target_name, "previous_name": name,
+                "path": str(target), "files": written, "potcar": potcar,
+                "potcar_removed": potcar_removed}
+
     def set_potcar_remote(self, name: str, path: str) -> dict[str, Any]:
         """Record where the POTCAR lives on the HPC side (library path).
 
@@ -372,5 +436,10 @@ class ProjectStore:
                 files[fname] = path.read_text(encoding="utf-8",
                                               errors="replace")
         result = validate_inputs(files, require_potcar=False)
+        from ..integrations.materials import validate_vasp_directory
+        materials = validate_vasp_directory(directory)
+        result["materials_backend"] = materials
+        if materials.get("enabled") and materials.get("errors"):
+            result.setdefault("errors", []).extend(materials["errors"])
         result["project"] = name
         return result

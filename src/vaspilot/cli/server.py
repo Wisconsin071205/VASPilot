@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import socket
 from pathlib import Path
 
@@ -73,6 +74,18 @@ def register(sub) -> None:
     p.add_argument("--confirm-server", required=True,
                    help="type the server name again to confirm")
 
+    p = command("credentials-save", cmd_credentials_save,
+                help="encrypt password/TOTP locally for automatic login")
+    p.add_argument("server")
+    p.add_argument("--confirm-days", type=int, default=3,
+                   help="retention confirmation interval (1-30 days)")
+    p = command("credentials-confirm", cmd_credentials_confirm,
+                help="confirm continued use of a saved credential")
+    p.add_argument("server")
+    p = command("credentials-remove", cmd_credentials_remove,
+                help="delete one saved encrypted credential")
+    p.add_argument("server")
+
 
 def cmd_list(app, args):
     try:
@@ -119,13 +132,17 @@ def cmd_set_default(app, args):
 
 
 def cmd_connect(app, args):
-    """Use direct-route encrypted credentials when available; otherwise open
+    """Use an authorised encrypted credential when available; otherwise open
     the visible password/TOTP terminal. Vlab key-mode keeps its old behavior."""
     name = args.server
     try:
         entry = app.client().server_entry(name) if name else None
     except Exception:
         entry = None
+    credential = app.config.server_credentials_status(entry.name) \
+        if entry is not None else {}
+    if entry is not None and credential.get("saved"):
+        return app.client().connect(name, manual=True)
     if entry is not None and getattr(entry, "route", "vlab") == "direct":
         return app.client().connect(name, manual=True)
     if entry is not None and entry.auth_mode == "key":
@@ -164,6 +181,25 @@ def cmd_key_revoke(app, args):
             "--confirm-server must repeat the server name exactly")
     return app.client().key_revoke(args.server,
                                    confirm_server=args.confirm_server)
+
+
+def cmd_credentials_save(app, args):
+    """Prompt in the human terminal so secrets never enter argv/history."""
+    valid_server_name(args.server)
+    password = getpass.getpass("服务器登录密码: ")
+    totp_seed = getpass.getpass(
+        "Google 验证密钥（Base32/otpauth URI，可留空）: ")
+    return app.client().save_server_credentials(
+        args.server, password=password, totp_seed=totp_seed,
+        confirm_days=args.confirm_days)
+
+
+def cmd_credentials_confirm(app, args):
+    return app.client().confirm_server_credentials(args.server)
+
+
+def cmd_credentials_remove(app, args):
+    return app.client().remove_server_credentials(args.server)
 
 
 def cmd_doctor(app, args):

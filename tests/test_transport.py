@@ -112,8 +112,88 @@ class TestOpenConnectTerminal:
         assert len(calls) == 5  # probe, prepare, copy, install, operation
         assert any(cmd[0] == "scp" and "-O" in cmd for cmd in calls)
 
+    def test_run_gateway_upgrades_outdated_helper(self):
+        calls = []
+
+        def fake_runner(cmd, *, timeout, capture=True, tty=False):
+            calls.append(list(cmd))
+            joined = " ".join(cmd)
+            if "test -x" in joined:
+                return 0, "", ""
+            if joined.endswith("vaspilot-gateway version"):
+                return 0, json.dumps({
+                    "ok": True, "gateway_version": "1.3.3",
+                    "protocol": "2"}), ""
+            if cmd[0] == "scp":
+                return 0, "", ""
+            if "mv -f" in joined:
+                return 0, json.dumps({
+                    "ok": True, "gateway_version": "1.3.4",
+                    "protocol": "2"}), ""
+            return 0, json.dumps({"ok": True, "servers": {}}), ""
+
+        t = SshTransport(host="vlab.ustc.edu.cn", user="ubuntu",
+                         identity_file=r"C:\u\id.pem",
+                         runner=fake_runner)
+        assert t.run_gateway(["servers"])["ok"] is True
+        assert any(cmd[0] == "scp" for cmd in calls)
+
+    def test_workspace_gateway_auto_deploys_missing_helper(self):
+        calls = []
+
+        def fake_runner(cmd, *, timeout, capture=True, tty=False):
+            calls.append(list(cmd))
+            joined = " ".join(cmd)
+            if "test -x" in joined:
+                return 1, "", ""
+            if cmd[0] == "scp":
+                assert "-O" in cmd
+                assert "huwei_workspace_gateway.py" in joined
+                return 0, "", ""
+            if "mv -f" in joined:
+                return 0, json.dumps({
+                    "ok": True, "gateway": "Workspace Gateway",
+                    "version": "0.1.0"}), ""
+            return 0, json.dumps({
+                "ok": True, "workspaces": [], "space": {}}), ""
+
+        t = SshTransport(host="vlab.ustc.edu.cn", user="ubuntu",
+                         identity_file=r"C:\u\id.pem", runner=fake_runner)
+        result = t.run_workspace_gateway(["list"], timeout=10)
+
+        assert result["ok"] and result["workspaces"] == []
+        assert len(calls) == 5  # probe, prepare, copy, install, operation
+        assert any(cmd[0] == "scp" for cmd in calls)
+
     def test_base_commands_carry_keepalives(self, transport):
         """Every outer ssh op sends heartbeats so idle NAT paths survive."""
         for cmd in (transport._base(), transport._base(batch=False, tty=True)):
             assert "ServerAliveInterval=30" in cmd
             assert "ServerAliveCountMax=4" in cmd
+
+    def test_vlab_saved_credentials_use_stdin_not_command_arguments(self):
+        calls = []
+
+        def fake_runner(cmd, *, timeout, capture=True, tty=False,
+                        input_data=None):
+            calls.append((list(cmd), input_data))
+            return 0, json.dumps({"ok": True, "connected": True}), ""
+
+        t = SshTransport(
+            host="vlab.ustc.edu.cn", user="ubuntu",
+            identity_file=r"C:\u\id.pem", auto_deploy_gateway=False,
+            runner=fake_runner)
+        result = t.connect_with_credentials(
+            server="cl9", password="P@ss word!",
+            totp_seed="JBSWY3DPEHPK3PXP")
+
+        assert result["connected"] is True
+        cmd, payload_text = calls[-1]
+        joined = " ".join(cmd)
+        assert "credential-connect" in joined
+        assert "P@ss word!" not in joined
+        assert "JBSWY3DPEHPK3PXP" not in joined
+        payload = json.loads(payload_text)
+        assert payload["password"] == "P@ss word!"
+        assert payload["totp"].isdigit() and len(payload["totp"]) == 6
+        assert "JBSWY3DPEHPK3PXP" not in payload_text

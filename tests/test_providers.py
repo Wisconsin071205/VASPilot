@@ -306,6 +306,17 @@ class TestResponsesProtocol:
         reply = provider.chat([{"role": "user", "content": "hi"}], [])
         assert reply.text == "hello"
 
+    def test_rate_limit_retry_then_success(self, mock_backend, monkeypatch):
+        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        mock_backend.behavior = "text"
+        mock_backend.status = 429
+        mock_backend.fail_times = 1
+        mock_backend.hits = 0
+        provider = build_provider(_entry(
+            "openai-responses", mock_backend.server_address[1]))
+        reply = provider.chat([{"role": "user", "content": "hi"}], [])
+        assert reply.text == "hello"
+
 
 def _fake_bridge(tmp_path, script):
     bridge = tmp_path / "fake-bridge.mjs"

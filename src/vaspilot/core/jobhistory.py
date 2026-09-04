@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,16 @@ TERMINAL_STATES = {"COMPLETED", "FAILED", "TIMEOUT", "CANCELLED",
                    "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"}
 MAX_ENTRIES = 200
 KEEP_DAYS = 30
+
+_LOCKS_GUARD = threading.Lock()
+_LEDGER_LOCKS: dict[str, threading.RLock] = {}
+
+
+def _ledger_lock(path: Path) -> threading.RLock:
+    """Share one lock across short-lived JobLedger instances in the UI."""
+    key = os.path.normcase(str(path.resolve()))
+    with _LOCKS_GUARD:
+        return _LEDGER_LOCKS.setdefault(key, threading.RLock())
 
 
 def _now() -> str:
@@ -39,6 +51,7 @@ def _is_terminal(state: str) -> bool:
 class JobLedger:
     def __init__(self, directory: str | Path) -> None:
         self.directory = Path(directory)
+        self._lock = _ledger_lock(self.directory)
 
     def _path(self, server: str) -> Path:
         return self.directory / f"{server}.json"
@@ -61,7 +74,20 @@ class JobLedger:
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
                 json.dump(jobs, fh, ensure_ascii=False, indent=1,
                           sort_keys=True)
-            os.replace(tmp, self._path(server))
+            # Windows may transiently deny replacement while another process
+            # (or an antivirus scanner) has the destination open.  In-process
+            # writers are serialized by ``self._lock``; bounded retries cover
+            # those short external locks without hiding persistent ACL errors.
+            delays = (0.0, 0.025, 0.075, 0.2)
+            for attempt, delay in enumerate(delays):
+                if delay:
+                    time.sleep(delay)
+                try:
+                    os.replace(tmp, self._path(server))
+                    break
+                except PermissionError:
+                    if attempt == len(delays) - 1:
+                        raise
         except BaseException:
             try:
                 os.unlink(tmp)
@@ -80,83 +106,110 @@ class JobLedger:
         """
         if not server:
             return []
-        now = _now()
-        jobs = self._load(server)
-        for row in rows or []:
-            job_id = str(row.get("job_id") or "").strip()
-            if not job_id:
-                continue
-            entry = jobs.setdefault(job_id, {})
-            state = str(row.get("state") or "UNKNOWN")
-            prior_state = entry.get("state")
-            entry.update({
-                "job_id": job_id,
-                "name": str(row.get("name") or entry.get("name") or ""),
-                "partition": str(row.get("partition")
-                                 or entry.get("partition") or ""),
-                "elapsed": str(row.get("elapsed") or entry.get("elapsed")
-                               or ""),
-                "state": state,
-                "first_seen": entry.get("first_seen") or now,
-                "last_seen": now,
-                "source": f"{entry.get('source', '')}+cluster".lstrip("+")
-                          if "cluster" not in entry.get("source", "")
-                          else entry["source"],
-            })
-            if row.get("started_at") and not entry.get("started_at"):
-                entry["started_at"] = str(row["started_at"])
-            if row.get("completed_at") and not entry.get("completed_at"):
-                entry["completed_at"] = str(row["completed_at"])
-            if prior_state != state or "state_history" not in entry:
-                entry.setdefault("state_history", []).append(
-                    {"state": state, "at": now})
-            if _is_terminal(state) and not entry.get("completed_at"):
-                entry["completed_at"] = now
-        if infer_missing:
-            known = {str(r.get("job_id") or "") for r in rows or []}
-            for job_id, entry in jobs.items():
-                if job_id in known or _is_terminal(str(entry.get("state"))):
+        with self._lock:
+            now = _now()
+            jobs = self._load(server)
+            for row in rows or []:
+                job_id = str(row.get("job_id") or "").strip()
+                if not job_id:
                     continue
-                entry["state"] = "COMPLETED"
-                entry["assumed_end"] = True
-                entry.setdefault("state_history", []).append(
-                    {"state": "COMPLETED", "assumed": True, "at": now})
-                if not entry.get("completed_at"):
+                entry = jobs.setdefault(job_id, {})
+                state = str(row.get("state") or "UNKNOWN")
+                prior_state = entry.get("state")
+                # A live non-terminal sighting is authoritative.  This also
+                # handles schedulers that reuse an id after a controller reset
+                # and repairs an earlier disappearance inference.
+                if (_is_terminal(str(prior_state or ""))
+                        and not _is_terminal(state)):
+                    entry.pop("completed_at", None)
+                entry.pop("assumed_end", None)
+                entry.update({
+                    "job_id": job_id,
+                    "name": str(row.get("name") or entry.get("name") or ""),
+                    "partition": str(row.get("partition")
+                                     or entry.get("partition") or ""),
+                    "elapsed": str(row.get("elapsed") or entry.get("elapsed")
+                                   or ""),
+                    "directory": str(row.get("directory")
+                                     or entry.get("directory") or ""),
+                    "state": state,
+                    "first_seen": entry.get("first_seen") or now,
+                    "last_seen": now,
+                    "source": f"{entry.get('source', '')}+cluster".lstrip("+")
+                              if "cluster" not in entry.get("source", "")
+                              else entry["source"],
+                })
+                if row.get("started_at") and not entry.get("started_at"):
+                    entry["started_at"] = str(row["started_at"])
+                if row.get("completed_at") and not entry.get("completed_at"):
+                    entry["completed_at"] = str(row["completed_at"])
+                if prior_state != state or "state_history" not in entry:
+                    entry.setdefault("state_history", []).append(
+                        {"state": state, "at": now})
+                if _is_terminal(state) and not entry.get("completed_at"):
                     entry["completed_at"] = now
-        # cap + prune old terminal entries
-        horizon = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
-        for job_id in list(jobs):
-            entry = jobs[job_id]
-            updated = entry.get("last_seen") or entry.get("first_seen") or ""
-            try:
-                seen_at = datetime.fromisoformat(updated)
-            except ValueError:
-                continue
-            if _is_terminal(entry.get("state", "")) and seen_at < horizon:
-                del jobs[job_id]
-        while len(jobs) > MAX_ENTRIES:  # oldest terminal entries first
-            oldest = min(
-                (j for j in jobs.values()
-                 if _is_terminal(str(j.get("state")))),
-                key=lambda e: e.get("last_seen", ""), default=None)
-            if oldest is None:
-                break
-            jobs.pop(str(oldest["job_id"]), None)
-        self._save(server, jobs)
-        return self.merged(server)
+            if infer_missing:
+                known = {str(r.get("job_id") or "") for r in rows or []}
+                for job_id, entry in jobs.items():
+                    if job_id in known or _is_terminal(str(entry.get("state"))):
+                        continue
+                    entry["state"] = "COMPLETED"
+                    entry["assumed_end"] = True
+                    entry.setdefault("state_history", []).append(
+                        {"state": "COMPLETED", "assumed": True, "at": now})
+                    if not entry.get("completed_at"):
+                        entry["completed_at"] = now
+            # cap + prune old terminal entries
+            horizon = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
+            for job_id in list(jobs):
+                entry = jobs[job_id]
+                updated = entry.get("last_seen") or entry.get("first_seen") or ""
+                try:
+                    seen_at = datetime.fromisoformat(updated)
+                except ValueError:
+                    continue
+                if _is_terminal(entry.get("state", "")) and seen_at < horizon:
+                    del jobs[job_id]
+            while len(jobs) > MAX_ENTRIES:  # oldest terminal entries first
+                oldest = min(
+                    (j for j in jobs.values()
+                     if _is_terminal(str(j.get("state")))),
+                    key=lambda e: e.get("last_seen", ""), default=None)
+                if oldest is None:
+                    break
+                jobs.pop(str(oldest["job_id"]), None)
+            self._save(server, jobs)
+            rows_out = sorted(jobs.values(),
+                              key=lambda e: str(e.get("job_id")), reverse=True)
+            return [self._view(e) for e in rows_out]
 
     def seed_submitted(self, server: str, job_id: str, name: str = "",
-                       partition: str = "") -> None:
+                       partition: str = "", directory: str = "") -> None:
         """A submission we performed ourselves: seed before first poll."""
         self.observe(server, [{"job_id": job_id, "name": name,
-                               "partition": partition, "state": "PENDING",
+                               "partition": partition,
+                               "directory": directory, "state": "PENDING",
                                "elapsed": "0:00"}])
 
     def merged(self, server: str) -> list[dict[str, Any]]:
-        jobs = self._load(server)
-        rows = sorted(jobs.values(),
-                      key=lambda e: str(e.get("job_id")), reverse=True)
-        return [self._view(e) for e in rows]
+        with self._lock:
+            jobs = self._load(server)
+            rows = sorted(jobs.values(),
+                          key=lambda e: str(e.get("job_id")), reverse=True)
+            return [self._view(e) for e in rows]
+
+    def bind_directory(self, server: str, job_id: str,
+                       directory: str) -> dict[str, Any]:
+        """Persist a one-time directory repair for an older scheduler row."""
+        with self._lock:
+            jobs = self._load(server)
+            entry = jobs.get(str(job_id))
+            if entry is None:
+                raise ValueError(f"job {job_id!r} is not in the local ledger")
+            entry["directory"] = str(directory)
+            entry["last_seen"] = _now()
+            self._save(server, jobs)
+            return self._view(entry)
 
     @staticmethod
     def _view(entry: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +219,7 @@ class JobLedger:
             "partition": entry.get("partition"),
             "state": entry.get("state"),
             "elapsed": entry.get("elapsed"),
+            "directory": entry.get("directory", ""),
             "completed_at": entry.get("completed_at"),
             "started_at": entry.get("started_at"),
             "assumed_end": bool(entry.get("assumed_end")),

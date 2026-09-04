@@ -105,6 +105,47 @@ class PendingSubmitStore:
         self._save(entries)
         return entry
 
+    def regenerate(self, entry_id: str, *,
+                   ttl_seconds: int = DEFAULT_TTL_SECONDS) -> dict[str, Any]:
+        """Issue a fresh card for an expired, otherwise unchanged submission.
+
+        The frozen command parameters are copied into a new pending entry. The
+        caller is responsible for re-validating the current remote script
+        digest before exposing the new card to the user.
+        """
+        if not ID_RE.fullmatch(entry_id or ""):
+            raise ValidationError("invalid pending-submit id")
+        entries = self._load()
+        self._expire(entries)
+        source = entries.get(entry_id)
+        if source is None:
+            raise ValidationError(f"pending submit {entry_id!r} not found")
+        status = str(source.get("status") or "")
+        if status == "pending":
+            return source
+        if status != "expired":
+            raise ValidationError(
+                f"pending submit {entry_id} is already {status or 'settled'}")
+        import secrets
+        now = _utcnow()
+        entry = {
+            "id": f"ps-{secrets.token_urlsafe(9)}",
+            "server": str(source.get("server") or ""),
+            "directory": str(source.get("directory") or ""),
+            "script": str(source.get("script") or ""),
+            "script_sha256": str(source.get("script_sha256") or ""),
+            "script_content": str(source.get("script_content") or ""),
+            "session_id": str(source.get("session_id") or ""),
+            "created_at": now.isoformat(timespec="seconds"),
+            "expires_at": (now + timedelta(seconds=ttl_seconds)
+                           ).isoformat(timespec="seconds"),
+            "status": "pending",
+            "regenerated_from": entry_id,
+        }
+        entries[entry["id"]] = entry
+        self._save(entries)
+        return entry
+
     def get(self, entry_id: str) -> dict[str, Any]:
         if not ID_RE.fullmatch(entry_id or ""):
             raise ValidationError("invalid pending-submit id")
@@ -142,3 +183,14 @@ class PendingSubmitStore:
             out = [e for e in out if e.get("session_id") == session_id]
         out.sort(key=lambda e: str(e.get("created_at", "")), reverse=True)
         return out
+
+    def history(self, session_id: str = "", *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return recent pending/expired cards so a refreshed UI can recover."""
+        entries = self._load()
+        self._expire(entries)
+        out = [e for e in entries.values()
+               if e.get("status") in {"pending", "expired"}]
+        if session_id:
+            out = [e for e in out if e.get("session_id") == session_id]
+        out.sort(key=lambda e: str(e.get("created_at", "")), reverse=True)
+        return out[:max(1, min(int(limit), 50))]

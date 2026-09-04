@@ -93,7 +93,7 @@ class AgentRuntime:
                  max_turns: int = 32,
                  stream_cb: Callable[[str], None] | None = None,
                  event_cb: Callable[[str, dict[str, Any]], None] | None = None,
-                 system_extra: str = "") -> None:
+                 system_extra: str = "", cancel_event=None) -> None:
         self.provider = provider
         self.registry = registry
         self.mode = mode  # "full" | "analysis_only"
@@ -103,9 +103,14 @@ class AgentRuntime:
         # event_cb(kind, payload) lets hosts (local web UI) observe the loop:
         # kinds: "tool" (name, ok), "final" (result), "error" (message)
         self.event_cb = event_cb
+        self.cancel_event = cancel_event
         # hosts append e.g. the skill index or the active project context
         self.system_prompt = SYSTEM_PROMPT + (
             "\n\n" + system_extra if system_extra else "")
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            raise InterruptedError("agent response cancelled by user")
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
         if self.event_cb is not None:
@@ -128,6 +133,7 @@ class AgentRuntime:
         hard_cap = self.max_turns * 2      # one continuation grant at the cap
         turn = 0
         while turn < hard_cap:
+            self._check_cancelled()
             turn += 1
             reply = self.provider.chat(messages, tools,
                                        stream_cb=self.stream_cb)
@@ -146,6 +152,7 @@ class AgentRuntime:
                         for call in reply.tool_calls],
                 })
                 for call in reply.tool_calls:
+                    self._check_cancelled()
                     outcome = self._dispatch(call.name, call.arguments)
                     row = {"turn": turn, "tool": call.name,
                            "ok": bool(outcome.get("ok", True))}
@@ -171,6 +178,7 @@ class AgentRuntime:
                             "不要停在计划句上。"),
                     })
                 continue
+            self._check_cancelled()
             result = {
                 "ok": True,
                 "answer": reply.text,

@@ -47,13 +47,17 @@ _AUTH_HINTS = (
 # The value is used in a remote shell command; rejecting metacharacters keeps
 # the convenience path from becoming an arbitrary shell command sink.
 _SAFE_GATEWAY_PATH = re.compile(r"^(?:~/|/)[A-Za-z0-9._/-]+$")
+_MIN_GATEWAY_VERSION = (1, 3, 4)
 
 
 def default_runner(cmd: list[str], *, timeout: int, capture: bool = True,
-                   tty: bool = False, env: dict | None = None):
+                   tty: bool = False, env: dict | None = None,
+                   input_data: str | None = None):
     """Run one subprocess; UTF-8 everywhere, never raises for non-zero exit."""
     kwargs: dict = {"timeout": timeout}
-    if env and env.get("SSH_ASKPASS_REQUIRE") == "force":
+    if input_data is not None:
+        kwargs["input"] = input_data
+    elif env and env.get("SSH_ASKPASS_REQUIRE") == "force":
         # Force OpenSSH to consult SSH_ASKPASS instead of attempting to read a
         # password from the hosting process' console/stdin.
         kwargs["stdin"] = subprocess.DEVNULL
@@ -91,6 +95,8 @@ class SshTransport:
         self.runner = runner or default_runner
         self._gateway_ready = False
         self._gateway_lock = threading.Lock()
+        self._workspace_gateway_ready = False
+        self._workspace_gateway_lock = threading.Lock()
 
     # -- command construction -----------------------------------------------
     def _base(self, *, batch: bool = True, tty: bool = False) -> list[str]:
@@ -131,10 +137,14 @@ class SshTransport:
                           detail={"stderr": (stderr or stdout).strip()[:300]})
 
     def _run(self, cmd: list[str], *, timeout: int = 180,
-             capture: bool = True, tty: bool = False):
+             capture: bool = True, tty: bool = False,
+             input_data: str | None = None):
         """Run one outer Vlab command and turn hangs into a useful error."""
         try:
-            return self.runner(cmd, timeout=timeout, capture=capture, tty=tty)
+            kwargs = {"timeout": timeout, "capture": capture, "tty": tty}
+            if input_data is not None:
+                kwargs["input_data"] = input_data
+            return self.runner(cmd, **kwargs)
         except subprocess.TimeoutExpired as exc:
             raise RemoteError(
                 f"Vlab SSH 命令在 {timeout} 秒后超时；请确认校园网/VPN、"
@@ -148,13 +158,49 @@ class SshTransport:
                 "gateway_path 只能是简单的 ~/ 或 / 开头 POSIX 路径")
         return path
 
+    def _workspace_gateway_path(self) -> str:
+        path = str(self.workspace_gateway_path or "").strip()
+        if not _SAFE_GATEWAY_PATH.fullmatch(path):
+            raise ValidationError(
+                "workspace_gateway_path 只能是简单的 ~/ 或 / 开头 POSIX 路径")
+        return path
+
+    @staticmethod
+    def _workspace_gateway_source() -> Path:
+        """Locate the standalone Workspace Gateway in source/editable installs.
+
+        A same-directory candidate also supports packaged builds that choose to
+        bundle the helper as package data.
+        """
+        candidates = (
+            Path(__file__).with_name("huwei_workspace_gateway.py"),
+            Path(__file__).resolve().parents[3] / "gateway"
+            / "huwei-workspace-gateway" / "huwei_workspace_gateway.py",
+        )
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        raise RemoteError(
+            "本机缺少 Workspace Gateway 源文件，无法自动部署；请重新安装 "
+            "VASPilot，或从源码目录运行 scripts\\install_vlab_gateway.py")
+
     def _probe_gateway(self, *, timeout: int = 30) -> bool:
-        """Return whether the configured helper is executable on Vlab."""
+        """Return whether Vlab has an executable, protocol-compatible helper."""
         path = self._gateway_path()
         rc, stdout, stderr = self._run(
             self._base() + [f"test -x {path}"], timeout=timeout)
         if rc == 0:
-            return True
+            rc, stdout, stderr = self._run(
+                self._base() + [f"{path} version"], timeout=timeout)
+            self._classify(rc, stdout, stderr)
+            try:
+                document = self.parse_gateway_document(stdout, stderr)
+                version = tuple(int(part) for part in str(
+                    document.get("gateway_version") or "0.0.0").split(".")[:3])
+            except (RemoteError, TypeError, ValueError):
+                return False
+            return (str(document.get("protocol") or "") == "2" and
+                    version >= _MIN_GATEWAY_VERSION)
         # ``test`` returns 1 for a missing/non-executable path.  Treat 127 as
         # missing as well so a partially prepared home can be repaired.
         if rc in (1, 127):
@@ -213,9 +259,78 @@ class SshTransport:
             self._gateway_ready = True
             return True
 
+    def _probe_workspace_gateway(self, *, timeout: int = 30) -> bool:
+        path = self._workspace_gateway_path()
+        rc, stdout, stderr = self._run(
+            self._base() + [f"test -x {path}"], timeout=timeout)
+        if rc == 0:
+            rc, stdout, stderr = self._run(
+                self._base() + [f"{path} version"], timeout=timeout)
+            if rc != 0:
+                return False
+            try:
+                document = self.parse_gateway_document(stdout, stderr)
+            except RemoteError:
+                return False
+            return bool(document.get("version"))
+        if rc in (1, 127):
+            return False
+        self._classify(rc, stdout, stderr)
+        return False
+
+    def _deploy_workspace_gateway(self, *, timeout: int = 180) -> None:
+        source = self._workspace_gateway_source()
+        remote_path = self._workspace_gateway_path()
+        stage = f"/tmp/huwei-workspace-gateway-{uuid.uuid4().hex[:16]}.new"
+        prepare = self._base() + [
+            "mkdir -p ~/bin ~/.huwei-agent/workspaces && "
+            "chmod 700 ~/bin ~/.huwei-agent ~/.huwei-agent/workspaces"]
+        rc, stdout, stderr = self._run(prepare, timeout=timeout)
+        self._classify(rc, stdout, stderr)
+
+        copy = ["scp", "-q", "-O", "-P", str(self.port)]
+        if self.identity_file:
+            copy += ["-i", self.identity_file]
+        copy += ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+                 "-o", "UpdateHostKeys=no", str(source),
+                 f"{self.user}@{self.host}:{stage}"]
+        rc, stdout, stderr = self._run(copy, timeout=timeout)
+        self._classify(rc, stdout, stderr)
+
+        install = self._base() + [
+            f"sed -i 's/\\r//' {stage} && chmod 700 {stage} && "
+            f"python3 -m py_compile {stage} && "
+            f"mv -f -- {stage} {remote_path} && {remote_path} version"]
+        try:
+            rc, stdout, stderr = self._run(install, timeout=timeout)
+            self._classify(rc, stdout, stderr)
+            self.parse_gateway_document(stdout, stderr)
+        except BaseException:
+            try:
+                self._run(self._base() + [f"rm -f -- {stage}"], timeout=30)
+            except Exception:
+                pass
+            raise
+
+    def _ensure_workspace_gateway(self, *, timeout: int = 180) -> bool:
+        """Deploy the Vlab-only workspace helper once when absent/broken."""
+        if not self.auto_deploy_gateway:
+            return False
+        with self._workspace_gateway_lock:
+            if self._workspace_gateway_ready:
+                return False
+            if self._probe_workspace_gateway(
+                    timeout=min(30, max(5, timeout))):
+                self._workspace_gateway_ready = True
+                return False
+            self._deploy_workspace_gateway(timeout=timeout)
+            self._workspace_gateway_ready = True
+            return True
+
     # -- gateway JSON protocol -------------------------------------------------
     def run_gateway(self, args: list[str], *, timeout: int = 180,
-                    tty: bool = False, capture: bool = True) -> dict:
+                    tty: bool = False, capture: bool = True,
+                    input_data: str | None = None) -> dict:
         """Invoke one gateway operation; return its parsed JSON document."""
         self._ensure_gateway(timeout=timeout)
         import shlex
@@ -223,21 +338,55 @@ class SshTransport:
         cmd = self._base(batch=not tty, tty=tty) + [
             f"{self.gateway_path} {quoted}"]
         rc, stdout, stderr = self._run(cmd, timeout=timeout,
-                                       capture=capture, tty=tty)
+                                       capture=capture, tty=tty,
+                                       input_data=input_data)
         self._classify(rc, stdout, stderr)
         if not capture:
             return {"ok": True}
         return self.parse_gateway_document(stdout, stderr)
+
+    def connect_with_credentials(self, *, server: str, password: str,
+                                 totp_seed: str = "",
+                                 timeout: int = 120) -> dict:
+        """Establish one Vlab-side target session with local credentials.
+
+        The reusable password and TOTP seed remain on this workstation.  The
+        outer, host-key-verified SSH connection carries a bounded JSON object
+        on stdin containing the password and only the current six-digit TOTP
+        value.  Neither secret is placed in a command argument or persisted
+        by the gateway.
+        """
+        name = valid_server_name(server)
+        password = str(password or "")
+        if not password:
+            raise AuthRequiredError(
+                f"{name} has no saved password for automatic connection")
+        from ..core.credentials import totp_code
+        payload = json.dumps({
+            "password": password,
+            "totp": totp_code(totp_seed) if totp_seed else "",
+        }, ensure_ascii=False)
+        return self.run_gateway(
+            ["credential-connect", "--server", name], timeout=timeout,
+            input_data=payload)
 
     def run_workspace_gateway(self, args: list[str], *, timeout: int = 180) -> dict:
         """Call the Vlab-only Workspace Gateway using the same verified outer
         SSH route as ordinary gateway operations.  The workspace component
         owns rclone/FUSE; this transport never opens a target-HPC SSH route.
         """
+        deployed = self._ensure_workspace_gateway(timeout=timeout)
         import shlex
         quoted = " ".join(shlex.quote(str(a)) for a in args)
-        cmd = self._base() + [f"{self.workspace_gateway_path} {quoted}"]
+        path = self._workspace_gateway_path()
+        cmd = self._base() + [f"{path} {quoted}"]
         rc, stdout, stderr = self._run(cmd, timeout=timeout, capture=True)
+        if rc == 127:
+            attempted = "自动部署后仍不可执行" if deployed else "不存在或不可执行"
+            raise RemoteError(
+                f"Vlab Workspace Gateway {attempted}（rc=127）；请确认 Vlab "
+                "用户可写 ~/bin，或运行 scripts\\install_vlab_gateway.py",
+                detail={"stderr": (stderr or stdout).strip()[:300]})
         self._classify(rc, stdout, stderr)
         return self.parse_gateway_document(stdout, stderr)
 

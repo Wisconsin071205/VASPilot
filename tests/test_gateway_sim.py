@@ -49,10 +49,11 @@ def gateway_env(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(vlab_home))
     monkeypatch.setenv("USERPROFILE", str(vlab_home))
 
-    def run(*args, check=False):
+    def run(*args, check=False, input_data=None):
         result = subprocess.run(
             [sys.executable, str(GATEWAY), *args],
-            capture_output=True, text=True, encoding="utf-8", timeout=120)
+            input=input_data, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=120)
         document = None
         for line in result.stdout.splitlines():
             if line.startswith("{"):
@@ -288,7 +289,23 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.3.3"
+        assert result["gateway_version"] == "1.3.4"
+
+    def test_transient_credential_connect_is_not_persisted(self, gateway_env):
+        password = "transient-password!"
+        otp = "123456"
+        gateway_env["run"]("disconnect", "--server", "cl9", check=True)
+        result = gateway_env["run"](
+            "credential-connect", "--server", "cl9", check=True,
+            input_data=json.dumps({"password": password, "totp": otp}))
+        assert result["connected"] is True
+        assert result["via"] == "saved_credential"
+
+        persisted = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for root in (gateway_env["config"], gateway_env["cache"])
+            for path in root.rglob("*") if path.is_file())
+        assert password not in persisted and otp not in persisted
 
     def test_exec_passthrough(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9",
@@ -309,7 +326,7 @@ class TestCatalogAndSessions:
         assert result is None or not result.get("ok")
 
     def test_structured_write_flow(self, gateway_env):
-        """v1.3.3 structured text save: new file, stale-sha conflict,
+        """Structured text save: new file, stale-sha conflict,
         clean update, denylist refusal — all through the real gateway."""
         import hashlib
         stage = gateway_env["stage"]

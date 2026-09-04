@@ -12,6 +12,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+materials = ["pymatgen", "custodian", "atomate2"]
+dispatch = ["dpdispatcher"]
+provenance = ["aiida-core"]
+automation = ["pymatgen", "custodian", "atomate2", "dpdispatcher", "aiida-core"]
 
 [project.scripts]
 vaspilot = "vaspilot.cli.main:main"

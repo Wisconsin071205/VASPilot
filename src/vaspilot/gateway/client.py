@@ -78,10 +78,40 @@ class GatewayClient:
     # ---------------------------------------------------------------- helpers
     def _call(self, event: str, args: list[str], *, timeout: int = 180,
               **audit_fields) -> dict:
+        server = self._server_from_args(args, audit_fields)
         try:
-            server = self._server_from_args(args, audit_fields)
             document = self._transport_for(server).run_gateway(
                 args, timeout=timeout)
+        except AuthRequiredError:
+            # A Vlab-routed target may have lost its ControlMaster while the
+            # outer Vlab connection remains healthy.  If the user explicitly
+            # saved a current local credential, establish a new target
+            # session through the encrypted outer channel and retry once.
+            if not server:
+                raise
+            entry = self.server_entry(server)
+            if getattr(entry, "route", "vlab") == "direct":
+                raise
+            status = self.config.server_credentials_status(server)
+            credentials = self.config.get_server_credentials(server)
+            if not status.get("saved") or not credentials.get("password"):
+                raise
+            try:
+                self.transport.connect_with_credentials(
+                    server=server, password=credentials["password"],
+                    totp_seed=credentials.get("totp_seed", ""),
+                    timeout=min(max(timeout, 90), 180))
+            except (AuthRequiredError, RemoteError) as exc:
+                if self.audit:
+                    self.audit.record(
+                        "server.auto_connect", outcome="failed",
+                        server=server, route="vlab", error=exc.to_dict())
+                raise
+            if self.audit:
+                self.audit.record(
+                    "server.auto_connect", outcome="ok", server=server,
+                    route="vlab", credential_mode="transient")
+            document = self.transport.run_gateway(args, timeout=timeout)
         except RemoteError as exc:
             if self.audit:
                 self.audit.record(event, outcome="failed",
@@ -179,8 +209,6 @@ class GatewayClient:
         route = str(route or "vlab").strip().lower()
         if route not in ("vlab", "direct"):
             raise ValidationError("route must be vlab or direct")
-        if route != "direct" and (credential_password or credential_totp_seed):
-            raise ValidationError("服务器密码/TOTP 只允许保存到直连服务器")
         if credential_totp_seed and not credential_password:
             raise ValidationError("首次保存 Google 验证密钥时必须同时输入服务器密码")
         entry = ServerEntry(
@@ -210,6 +238,11 @@ class GatewayClient:
             + (["--auto-connect"] if auto_connect else []))
         # keep the local mirror in sync (metadata only)
         self.config.upsert_server(entry)
+        if credential_password:
+            self.config.save_server_credentials(
+                name, password=credential_password,
+                totp_seed=credential_totp_seed,
+                confirm_interval_days=credential_confirm_days)
         if set_default:
             self.config.set_default_server(name)
             self.transport.run_gateway(
@@ -235,6 +268,8 @@ class GatewayClient:
                  else getattr(entry, "route", "vlab"))
         if route not in ("vlab", "direct"):
             raise ValidationError("route must be vlab or direct")
+        if scheduler is not None:
+            scheduler = scheduler_kind(scheduler)
         old_route = getattr(entry, "route", "vlab")
         if route == "direct":
             if target is not None:
@@ -299,7 +334,6 @@ class GatewayClient:
                 entry.auto_connect = auto_connect
             entry.route = "vlab"
             self.config.upsert_server(entry)
-            self.config.remove_server_credentials(name)
             self._direct_transports.pop(name, None)
             if self.audit:
                 self.audit.record("server.edit", outcome="ok", server=name,
@@ -358,11 +392,9 @@ class GatewayClient:
                                 password: str | None = None,
                                 totp_seed: str | None = None,
                                 confirm_days: int | None = None) -> dict:
-        """Persist direct-route SSH credentials in the local DPAPI vault."""
+        """Persist per-server SSH credentials in the local DPAPI vault."""
         name = self._require(server)
         entry = self.server_entry(name)
-        if getattr(entry, "route", "vlab") != "direct":
-            raise ValidationError("加密服务器凭据只允许用于直接连接")
         result = self.config.save_server_credentials(
             name, password=password, totp_seed=totp_seed,
             confirm_interval_days=confirm_days)
@@ -370,7 +402,8 @@ class GatewayClient:
         if self.audit:
             self.audit.record("server.credentials_save", outcome="ok",
                               server=name)
-        return {"server": name, "credentials": result, "route": "direct"}
+        return {"server": name, "credentials": result,
+                "route": getattr(entry, "route", "vlab")}
 
     def remove_server_credentials(self, server: str | None = None) -> dict:
         name = self._require(server)
@@ -437,14 +470,29 @@ class GatewayClient:
 
     def connect(self, server: str | None = None, *,
                 manual: bool = True) -> dict:
-        """Connect with a key or a locally encrypted direct credential."""
+        """Connect with a key or a locally encrypted server credential."""
         name = self._require(server)
         entry = self.server_entry(name)
+        status = self.config.server_credentials_status(name)
+        if status.get("confirmation_due") and status.get("saved"):
+            raise AuthRequiredError(
+                f"{name} 的本机加密凭据已到复核时间，请先确认仍保留")
+        credentials = self.config.get_server_credentials(name)
+        if credentials.get("password"):
+            if getattr(entry, "route", "vlab") == "direct":
+                args = ["connect", "--server", name]
+                result = self._call("server.connect", args, server=name)
+            else:
+                result = self.transport.connect_with_credentials(
+                    server=name, password=credentials["password"],
+                    totp_seed=credentials.get("totp_seed", ""))
+                if self.audit:
+                    self.audit.record("server.connect", outcome="ok",
+                                      server=name, route="vlab",
+                                      credential_mode="transient")
+            return {**result, "automatic": True,
+                    "route": getattr(entry, "route", "vlab")}
         if getattr(entry, "route", "vlab") == "direct":
-            status = self.config.server_credentials_status(name)
-            if status.get("confirmation_due") and status.get("saved"):
-                raise AuthRequiredError(
-                    f"{name} 的本机加密凭据已到复核时间，请先确认仍保留")
             args = ["connect", "--server", name]
             result = self._call("server.connect", args, server=name)
             return {**result, "automatic": True, "route": "direct"}
@@ -461,17 +509,16 @@ class GatewayClient:
         return result
 
     def confirm_server_credentials(self, server: str | None = None) -> dict:
-        """Refresh the local retention confirmation for a direct server."""
+        """Refresh the local retention confirmation for one server."""
         name = self._require(server)
         entry = self.server_entry(name)
-        if getattr(entry, "route", "vlab") != "direct":
-            raise ValidationError("加密服务器凭据只适用于直接连接目标服务器")
         result = self.config.confirm_server_credentials(name)
         self._direct_transports.pop(name, None)
         if self.audit:
             self.audit.record("server.credentials_confirm", outcome="ok",
                               server=name)
-        return {"server": name, "credentials": result, "route": "direct"}
+        return {"server": name, "credentials": result,
+                "route": getattr(entry, "route", "vlab")}
 
     def ensure_session(self, server: str | None = None, *,
                        manual: bool = False) -> dict:
@@ -482,10 +529,11 @@ class GatewayClient:
         except Exception:
             pass
         entry = self.server_entry(name)
+        status = self.config.server_credentials_status(name)
+        if status.get("saved") and not status.get("confirmation_due"):
+            return self.connect(name, manual=manual)
         if getattr(entry, "route", "vlab") == "direct":
-            status = self.config.server_credentials_status(name)
-            if status.get("saved") and not status.get("confirmation_due"):
-                return self.connect(name, manual=manual)
+            return self.status(name)
         if entry.auth_mode == "key" and entry.auto_connect:
             return self.connect(name, manual=manual)
         return self.status(name)
@@ -605,11 +653,36 @@ class GatewayClient:
         return self._call("server.whoami", ["whoami", "--server", name])
 
     # ---------------------------------------------------------- workspaces
+    def _ensure_workspace_root(self, server: str) -> str:
+        """Give the Workspace Gateway an explicit confinement boundary.
+
+        The ordinary gateway permits an empty ``remote_root`` and discovers
+        the login home lazily.  The workspace helper cannot safely mount
+        without an explicit boundary, so discover that same home once and
+        persist it to both catalogs before invoking the helper.
+        """
+        name = self._require(server)
+        entry = self.server_entry(name)
+        if entry.remote_root:
+            return entry.remote_root
+        document = self.pwd(server=name)
+        root = str(document.get("root") or document.get("pwd") or "").strip()
+        if not root.startswith("/"):
+            raise ValidationError(
+                f"无法取得 {name} 的登录主目录；请连接服务器后重试，或在服务器设置中选择远端根路径")
+        remote_path(root, remote_root=root)
+        if root in ("/", "/home"):
+            raise ValidationError(
+                "自动发现的远端根路径过宽；请在服务器设置中选择你的个人目录")
+        self.server_edit(name, remote_root=root)
+        return root
+
     def workspace_doctor(self, *, server: str | None = None,
                          path: str = "") -> dict:
         args = ["doctor"]
         if server:
             name = self._require(server)
+            self._ensure_workspace_root(name)
             args += ["--server", name]
             if path:
                 args += ["--path", self._resolve(name, path)]
@@ -619,6 +692,7 @@ class GatewayClient:
     def workspace_open(self, path: str, *, server: str | None = None,
                        mode: str = "full") -> dict:
         name = self._require(server)
+        self._ensure_workspace_root(name)
         if mode not in ("full", "read-only"):
             raise ValidationError("workspace mode must be full or read-only")
         target = self._resolve(name, path)
@@ -854,11 +928,25 @@ class GatewayClient:
     def submit(self, directory: str, script: str, *,
                approval_ref: str = "", server: str | None = None) -> dict:
         name = self._require(server)
-        args = ["submit", "--server", name, self._resolve(name, directory),
+        resolved_directory = self._resolve(name, directory)
+        args = ["submit", "--server", name, resolved_directory,
                 valid_filename(script)]
         if approval_ref:
             args += ["--approval-ref", approval_ref[:120]]
         result = self._call("job.submit", args, directory=directory, script=script)
+        result.setdefault("directory", resolved_directory)
+        job_id = str(result.get("job_id") or "")
+        if job_id:
+            try:
+                from ..core.jobhistory import JobLedger
+                JobLedger(self.config.jobs_dir).seed_submitted(
+                    name, job_id, name=script,
+                    partition=str(result.get("partition") or ""),
+                    directory=resolved_directory)
+            except Exception:
+                # Submission succeeded remotely; local bookkeeping must not
+                # turn that success into a misleading retry/double-submit.
+                pass
         if self.audit:
             self.audit.record("job.submit", outcome="ok", server=name,
                               job_id=str(result.get("job_id", "")),

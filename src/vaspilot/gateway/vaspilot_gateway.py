@@ -18,8 +18,9 @@ Design invariants:
     checked lexically AND via ``realpath`` (symlink escapes fail closed)
   - removals go to a structured trash area; purge requires a double-match
   - host-key changes never auto-heal: StrictHostKeyChecking stays strict
-  - secrets (passwords, TOTP) are only ever typed by the human in the
-    interactive ``connect`` terminal; this script never sees or stores them
+  - reusable secrets are never stored here; an explicitly authorised local
+    client may send a password plus one current TOTP code over SSH stdin for
+    one connection attempt, after which both disappear with the process
   - an append-only audit trail records every operation
 
 Standalone by design: Python 3 stdlib only, no package imports, so a single
@@ -45,10 +46,11 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.3.3"
+GATEWAY_VERSION = "1.3.4"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -530,6 +532,54 @@ def ensure_session(name: str, *, manual: bool = False) -> bool:
     return ok
 
 
+_CREDENTIAL_ASKPASS_HELPER = r'''#!/usr/bin/env python3
+import os
+import sys
+
+prompt = " ".join(sys.argv[1:]).lower()
+is_otp = any(token in prompt for token in (
+    "verification", "one-time", "one time", "otp", "passcode",
+    "token", "验证码", "动态码", "code"))
+name = "VASPILOT_ASKPASS_TOTP" if is_otp else "VASPILOT_ASKPASS_PASSWORD"
+sys.stdout.write(os.environ.get(name, "") + "\n")
+'''
+
+
+@contextmanager
+def credential_askpass(password: str, totp: str):
+    """Provide one target-SSH attempt with transient askpass values.
+
+    The helper source contains no credential.  Its directory is mode 0700,
+    the helper is removed immediately after SSH exits, and the values exist
+    only in this process tree's environment.
+    """
+    root = Path(tempfile.mkdtemp(prefix="vaspilot-askpass-"))
+    helper = root / "askpass.py"
+    try:
+        os.chmod(root, 0o700)
+        helper.write_text(_CREDENTIAL_ASKPASS_HELPER,
+                          encoding="utf-8", newline="\n")
+        os.chmod(helper, 0o700)
+        env = os.environ.copy()
+        env.update({
+            "SSH_ASKPASS": str(helper),
+            "SSH_ASKPASS_REQUIRE": "force",
+            "DISPLAY": env.get("DISPLAY") or "vaspilot",
+            "VASPILOT_ASKPASS_PASSWORD": password,
+            "VASPILOT_ASKPASS_TOTP": totp,
+        })
+        yield env
+    finally:
+        try:
+            helper.unlink(missing_ok=True)
+        except OSError:
+            pass
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+
+
 class GatewayError(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -702,6 +752,19 @@ def _pbs_parse_qstat_f(raw: str) -> dict[str, dict]:
             state = "FAILED"
         job["state"] = state
         job["name"] = job.pop("Job_Name", "")
+        directory = str(job.get("init_work_dir") or "").strip()
+        if not directory:
+            variables = str(job.get("Variable_List") or "")
+            match = re.search(r"(?:^|,)PBS_O_WORKDIR=([^,]+)", variables)
+            if match:
+                directory = match.group(1).strip()
+        if not directory:
+            output_path = str(job.get("Output_Path") or "")
+            if ":" in output_path:
+                output_path = output_path.split(":", 1)[1]
+            if output_path.startswith("/"):
+                directory = str(PurePosixPath(output_path).parent)
+        job["directory"] = directory
         if "walltime" in job:
             job["elapsed"] = job.pop("walltime")
         if "mtime" in job and state in ("COMPLETED", "FAILED", "EXITING"):
@@ -1194,11 +1257,12 @@ def op_jobs(args) -> int:
                  "limit": j.get("walltime", j.get("limit", "")),
                  "partition": j.get("queue", ""),
                  "name": j.get("name", ""),
+                 "directory": j.get("directory", ""),
                  "nodes": j.get("exec_host", "")[:80]}
                 for j in mapped.values() if j["state"] in active_states]
     else:
         command = ('squeue -u "$(id -un)" -h -o '
-                   '"%i|%T|%M|%L|%P|%j|%N"')
+                   '"%i|%T|%M|%L|%P|%j|%N|%Z"')
         raw = remote(name, command)
         jobs = []
         for line in raw.splitlines():
@@ -1210,7 +1274,8 @@ def op_jobs(args) -> int:
                              "limit": fields[3] if len(fields) > 3 else "",
                              "partition": fields[4] if len(fields) > 4 else "",
                              "name": fields[5] if len(fields) > 5 else "",
-                             "nodes": fields[6] if len(fields) > 6 else ""})
+                             "nodes": fields[6] if len(fields) > 6 else "",
+                             "directory": fields[7] if len(fields) > 7 else ""})
     out({"scheduler": scheduler, "jobs": jobs})
     audit("jobs", "ok", f"{len(jobs)} jobs", name)
     return 0
@@ -1227,6 +1292,7 @@ def op_recent(args) -> int:
                  "elapsed": j.get("elapsed", ""),
                  "completed_at": j.get("completed_at", ""),
                  "started_at": j.get("started_at", ""),
+                 "directory": j.get("directory", ""),
                  "nodes": j.get("exec_host", "")[:80]}
                 for j in mapped.values()]
     else:
@@ -1234,7 +1300,7 @@ def op_recent(args) -> int:
             raw = remote(
                 name,
                 'sacct -u "$(id -un)" --starttime today -X -P '
-                '-o JobID,JobName%24,Partition,State,Elapsed,ExitCode')
+                '-o JobID,JobName%24,Partition,State,Elapsed,ExitCode,WorkDir')
         except GatewayError as exc:
             # slurmdbd down (e.g. "Connection refused" on port 7031) must
             # not break the history view: squeue-driven active jobs and
@@ -1251,7 +1317,8 @@ def op_recent(args) -> int:
                              "name": fields[1], "partition": fields[2],
                              "state": normalize_state(fields[3]),
                              "elapsed": fields[4] if len(fields) > 4 else "",
-                             "exit_code": fields[5] if len(fields) > 5 else ""})
+                             "exit_code": fields[5] if len(fields) > 5 else "",
+                             "directory": fields[6] if len(fields) > 6 else ""})
     out({"scheduler": scheduler, "jobs": jobs})
     audit("recent", "ok", f"{len(jobs)} jobs", name)
     return 0
@@ -1813,6 +1880,102 @@ def op_connect(args) -> int:
     return 0
 
 
+def op_credential_connect(args) -> int:
+    """Connect a Vlab-routed target with transient local credentials.
+
+    Input is a bounded JSON document on the already encrypted outer SSH
+    channel.  It contains a password and, optionally, one current TOTP code;
+    neither value is written to config, cache, audit, stdout, or arguments.
+    Host keys must already be trusted, so the first connection remains an
+    explicit human fingerprint-confirmation step.
+    """
+    name, entry = resolve_server(args.server)
+    if DIRECT_MODE:
+        return fail("unsupported_route",
+                    "credential-connect is only used by the Vlab route")
+    if connected(name):
+        record_reconnect(name, ok=True)
+        out({"server": name, "connected": True, "already": True,
+             "via": "saved_credential"})
+        return 0
+    raw = sys.stdin.read(32769)
+    if len(raw) > 32768:
+        return fail("credential_payload_too_large",
+                    "credential payload exceeds 32 KiB")
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return fail("credential_payload_invalid",
+                    "credential payload is not valid JSON")
+    if not isinstance(payload, dict):
+        return fail("credential_payload_invalid",
+                    "credential payload must be an object")
+    password = str(payload.get("password") or "")
+    totp = str(payload.get("totp") or "")
+    if not password or len(password) > 4096:
+        return fail("credential_payload_invalid",
+                    "password is missing or too long")
+    if totp and not re.fullmatch(r"[0-9]{6}", totp):
+        return fail("credential_payload_invalid",
+                    "TOTP must be the current six-digit code")
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    sock = socket_path(name)
+    if sock.exists():
+        sock.unlink()
+    if os.environ.get("VASPILOT_FAKE_HPC"):
+        sock.write_text("up\n", encoding="utf-8")
+        record_reconnect(name, ok=True)
+        audit("credential-connect", "ok", "transient", name)
+        out({"server": name, "connected": True,
+             "via": "saved_credential"})
+        return 0
+
+    command = [
+        "ssh", "-M", "-S", str(sock),
+        "-o", "ControlMaster=yes",
+        "-o", f"ControlPersist={entry.get('persist') or '8h'}",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=4",
+        "-o", "BatchMode=no",
+        "-o", "KbdInteractiveAuthentication=yes",
+        "-o", "PasswordAuthentication=yes",
+        "-o", "PreferredAuthentications=keyboard-interactive,password,publickey",
+        "-o", "StrictHostKeyChecking=yes",
+        "-o", "UpdateHostKeys=no",
+        "-o", "NumberOfPasswordPrompts=3",
+        "-p", str(entry.get("port", 22)), "-fN", entry["target"],
+    ]
+    with credential_askpass(password, totp) as env:
+        result = subprocess.run(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, text=True, encoding="utf-8",
+            errors="replace", env=env, timeout=90)
+    stderr = (result.stderr or "").strip()
+    ok_now = result.returncode == 0 and connected(name)
+    if ok_now:
+        record_reconnect(name, ok=True)
+        audit("credential-connect", "ok", "transient", name)
+        out({"server": name, "connected": True,
+             "via": "saved_credential"})
+        return 0
+    low = stderr.lower()
+    if "host key" in low:
+        code = "host_key_failed"
+        message = ("目标服务器主机指纹未知或已变化；请先在可见登录窗口中"
+                   "人工核对，系统不会自动接受")
+    elif ("permission denied" in low or "authentication failed" in low or
+          "keyboard-interactive" in low):
+        code = "credential_rejected"
+        message = "目标服务器拒绝了已保存的密码或当前验证码"
+    else:
+        code = "connect_failed"
+        message = "无法使用已保存凭据建立目标服务器连接"
+    record_reconnect(name, ok=False, error_code=code, error=message)
+    audit("credential-connect", "failed", code, name)
+    return fail(code, message)
+
+
 def op_disconnect(args) -> int:
     name, entry = resolve_server(args.server)
     if DIRECT_MODE:
@@ -2083,6 +2246,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("connect", op_connect)
     p.add_argument("--manual", action="store_true",
                    help="bypass the reconnect backoff for this attempt")
+    add("credential-connect", op_credential_connect)
     add("disconnect", op_disconnect)
     add("whoami", op_whoami)
 

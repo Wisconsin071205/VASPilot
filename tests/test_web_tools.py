@@ -124,6 +124,32 @@ class TestSearch:
         result = web.web_search("NEB", provider="bocha", api_key="test-key")
         assert result["results"][0]["url"] == "https://vasp.example/neb"
 
+    def test_tavily_adapter(self, monkeypatch):
+        captured = {}
+
+        def post(url, payload, api_key, timeout=15):
+            captured.update(url=url, payload=payload, api_key=api_key)
+            return {"results": [{
+                "title": "VASP wiki", "url": "https://vasp.example/wiki",
+                "content": "ENCUT controls the plane-wave cutoff.",
+                "score": 0.91}]}
+
+        monkeypatch.setattr(web, "_post_json", post)
+        result = web.web_search("VASP ENCUT", provider="tavily",
+                                api_key="tvly-test-key")
+
+        assert captured["url"] == "https://api.tavily.com/search"
+        assert captured["api_key"] == "tvly-test-key"
+        assert captured["payload"] == {
+            "query": "VASP ENCUT", "search_depth": "basic",
+            "max_results": 10, "topic": "general",
+            "include_answer": False, "include_raw_content": False,
+            "include_images": False}
+        assert result["provider"] == "tavily"
+        assert result["results"][0] == {
+            "title": "VASP wiki", "url": "https://vasp.example/wiki",
+            "snippet": "ENCUT controls the plane-wave cutoff."}
+
     def test_missing_key_rejected(self):
         with pytest.raises(ValidationError):
             web.web_search("q", provider="zhipu", api_key="")

@@ -58,6 +58,7 @@ class FakeTransport:
     def __init__(self, state: FakeGatewayState):
         self.state = state
         self.calls: list[list] = []
+        self.credential_connects: list[dict] = []
 
     # -- transport surface ----------------------------------------------------
     def run_gateway(self, args, *, timeout=180, tty=False, capture=True):
@@ -142,6 +143,17 @@ class FakeTransport:
         self.state.servers.setdefault(server, {"target": target, "port": port,
                                                "root": "", "scheduler": "auto"})
         return {"opened": True, "server": server}
+
+    def connect_with_credentials(self, *, server, password, totp_seed="",
+                                 timeout=120):
+        # Record metadata only, mirroring the production audit boundary.
+        self.credential_connects.append({
+            "server": server, "password_present": bool(password),
+            "totp_present": bool(totp_seed),
+        })
+        self.state.connected[server] = True
+        return {"ok": True, "server": server, "connected": True,
+                "via": "saved_credential"}
 
     # -- helpers ---------------------------------------------------------------
     def _server(self, args):
@@ -284,11 +296,16 @@ class FakeTransport:
                 "content": content.decode("utf-8", "replace")}
 
     def op_tail(self, args):
-        document = self.op_read(args)
-        if document.get("ok"):
-            lines = document["content"].splitlines()
-            document["content"] = "\n".join(lines[-80:])
-        return document
+        server = self._server(args)
+        positionals = self._positionals(args)
+        path = positionals[0] if positionals else ""
+        content = self.state.files[server].get(path)
+        if content is None:
+            return {"ok": False, "error": {"code": "not_found",
+                                             "message": f"{path} missing"}}
+        lines = content.decode("utf-8", "replace").splitlines()
+        return {"ok": True, "path": path, "size": len(content),
+                "content": "\n".join(lines[-80:])}
 
     def op_find(self, args):
         server = self._server(args)
@@ -447,7 +464,8 @@ class FakeTransport:
         scheduler = self.state.scheduler.get(server, "slurm")
         jobs = [{"job_id": str(j["job_id"]), "state": j["state"],
                  "elapsed": "0:00", "limit": "0", "partition": "cpu",
-                 "name": j.get("name", ""), "nodes": "n1"}
+                 "name": j.get("name", ""), "nodes": "n1",
+                 "directory": j.get("directory", "")}
                 for j in self.state.jobs[server]
                 if j["state"] in ("RUNNING", "PENDING")]
         return {"ok": True, "scheduler": scheduler, "jobs": jobs}
@@ -458,16 +476,21 @@ class FakeTransport:
                 "jobs": [{"job_id": str(j["job_id"]), "state": j["state"],
                           "name": j.get("name", ""),
                           "elapsed": j.get("elapsed", ""),
-                          "partition": "cpu"}
+                          "partition": "cpu",
+                          "directory": j.get("directory", "")}
                          for j in self.state.jobs[server]]}
 
     def op_submit(self, args):
         server = self._server(args)
         self.state.job_seq += 1
         job_id = str(self.state.job_seq)
+        positionals = self._positionals(args)
+        directory = positionals[0] if positionals else ""
         self.state.jobs[server].append({"job_id": job_id, "state": "RUNNING",
-                                        "name": "vaspilot"})
-        return {"ok": True, "job_id": job_id, "scheduler": "slurm"}
+                                        "name": "vaspilot",
+                                        "directory": directory})
+        return {"ok": True, "job_id": job_id, "scheduler": "slurm",
+                "directory": directory}
 
     def op_cancel(self, args):
         job_id = self._positionals(args)[0]

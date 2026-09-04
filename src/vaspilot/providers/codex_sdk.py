@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -105,9 +106,16 @@ class CodexSdkProvider(BaseProvider):
             process.stdin.close()
         except (BrokenPipeError, OSError):
             pass
-        if not terminal.wait(timeout=timeout):
-            process.kill()
-            raise ProviderError("Codex bridge timed out")
+        deadline = time.monotonic() + timeout
+        while not terminal.wait(timeout=0.1):
+            try:
+                self.raise_if_cancelled()
+            except InterruptedError:
+                process.kill()
+                raise
+            if time.monotonic() >= deadline:
+                process.kill()
+                raise ProviderError("Codex bridge timed out")
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:

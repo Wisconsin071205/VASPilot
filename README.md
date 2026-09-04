@@ -28,6 +28,17 @@ huwei --help               # 兼容命令: vaspilot --help
 py -3.12 -m pytest         # offline test suite
 ```
 
+材料自动化栈按需安装，不强迫轻量网关携带科学计算依赖：
+
+```powershell
+py -3.12 -m pip install -e .[materials]   # pymatgen + custodian + atomate2
+py -3.12 -m pip install -e .[dispatch]    # DPDispatcher
+py -3.12 -m pip install -e .[provenance]  # AiiDA
+```
+
+当前稳定执行后端仍是受限 gateway；这些可选包的职责边界、部署前提和迁移顺序见
+[`spec/automation-stack.md`](spec/automation-stack.md)。
+
 **Note:** an older `vaspilot` 0.3.0 may be installed globally on this machine
 (from `D:\VASP`). Until you deliberately replace it, invoke this repository
 explicitly:
@@ -51,8 +62,10 @@ vaspilot server add cl9 --target user@cl9.ustc.edu.cn --root /public/home/you/va
 # 目标可从本机直接访问时，可改用：--route direct
 vaspilot server connect cl9        # 无加密凭据时在可见终端输入密码 + TOTP
 
-# Web 控制台中也可编辑直连服务器：输入密码与 TOTP 种子，选择“保存并加密”；
+# Web 控制台中可为 Vlab 中转或直连服务器保存密码与 TOTP 种子；
 # 之后点击“连接”会自动认证。每 3 天在服务器卡片点击“确认凭据”即可继续使用。
+# CLI 也可安全交互录入（密码不会进入命令历史）：
+vaspilot server credentials-save cl9 --confirm-days 3
 
 # 3) model providers (keys stay in environment variables)
 vaspilot agent provider add --id ds --name DeepSeek --protocol openai-chat-compatible `
@@ -101,19 +114,22 @@ re-authenticate visibly via `server connect`.
 
 本地零依赖 Web UI（默认 `http://127.0.0.1:8930`，浏览器自动打开）：
 
-- **对话** — 多 Provider 智能体聊天，流式输出 + 工具调用卡片（可展开参数/结果），
-  与 CLI/MCP 共用同一注册表和权限语义；
+- **对话** — 多 Provider 智能体聊天，流式输出、持久记忆、会话分支、上下文压缩、
+  安全 Markdown 渲染和工具调用卡片（可展开参数/结果），与 CLI/MCP 共用同一注册表
+  和权限语义；
 - **总览** — 全服务器快照（连接、调度器、活动作业、状态）+ 60 秒自动刷新；
 - **文件** — 远端目录浏览与小型文本查看（POTCAR/大二进制拒绝）；
-- **作业** — 活动/历史作业 + VASP 科学进度卡（调度器状态与科学收敛分列）；
+- **作业** — 活动/历史作业 + VASP 科学进度卡；每个作业可读取受限日志尾部并运行
+  内置规则诊断（调度器状态与科学收敛始终分列）；
 - **工作流** — 计划预览（文件 SHA-256 + 步骤 DAG + 风险）→ 本地审批
   （在页面输入 `approve <plan_id>` 确认短语）→ 无人值守执行 + 尝试时间线。
 
 安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
-必须携带。直连服务器可以在编辑窗口保存登录密码和 Google Authenticator 的
+必须携带。Vlab 中转和直连服务器都可以在编辑窗口保存登录密码和 Google Authenticator 的
 TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
-`~/.vaspilot/settings.json`，只在本机 SSH 子进程中短暂解密，绝不上传到
-Vlab、审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
+`~/.vaspilot/settings.json`。直连时仅在本机 SSH 子进程中短暂解密；Vlab
+中转只经已验证的 SSH 通道临时发送密码和当期六位码，TOTP 种子不会离开本机，
+Vlab 不会落盘保存凭据。密码和种子绝不进入审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
 自动连接会暂停；未保存凭据时仍通过「连接」按钮在**独立可见系统终端**中手工输入。
 审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「VASPilot 控制台」
 或 `%USERPROFILE%\bin\vaspilot-ui.cmd` 一键启动。
@@ -193,9 +209,10 @@ carries credentials or approval references through MCP.
 - strict validation of server names, paths (lexical + `realpath`), job ids,
   trash ids and local project roots
 - SSH host-key changes fail closed; `known_hosts` is never auto-modified
-- Direct-route passwords and TOTP seeds are optional, DPAPI-encrypted CurrentUser
-  blobs; only a short-lived `SSH_ASKPASS` child environment can read them, and
-  periodic retention confirmation (default 3 days) gates automatic use
+- Per-server passwords and TOTP seeds are optional DPAPI-encrypted CurrentUser
+  blobs. Direct mode uses a short-lived local `SSH_ASKPASS`; Vlab mode sends
+  only the password and current code over verified SSH stdin. Periodic
+  retention confirmation (default 3 days) gates automatic use
 - SHA-256 recorded for every upload/download/analysis artifact
 - POTCAR readable only as metadata (TITEL/ENMAX/size/SHA-256) from an
   authorized library
@@ -229,6 +246,8 @@ recipes/ spec/  migrated workflow recipes and specifications
   short-lived `SSH_ASKPASS` helper when an encrypted password/TOTP seed is
   present, or an SSH key/agent. Credentials are withheld after the periodic
   confirmation deadline until the user confirms retention.
+  Vlab-routed targets can use the same local encrypted vault; the reusable
+  TOTP seed remains local and the Vlab gateway does not persist credentials.
   Vlab complete-workspace mode remains available only for Vlab-routed
   servers;
 - `server doctor` probes DNS/reachability/identity/gateway/scheduler but

@@ -21,6 +21,8 @@ from ..core.errors import ValidationError
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$")
 MAX_MESSAGES = 60
 TITLE_SNIPPET = 40
+CONTEXT_BUDGET_TOKENS = 12000
+CONTEXT_COMPACT_THRESHOLD = 0.82
 
 
 def _now() -> str:
@@ -79,8 +81,12 @@ class ConversationStore:
         if not isinstance(data, dict):
             return None
         data.setdefault("messages", [])
+        data.setdefault("archived_messages", [])
         data.setdefault("project", "")
         data.setdefault("title", "")
+        data.setdefault("context_summary", "")
+        data.setdefault("compacted_messages", 0)
+        data.setdefault("parent_session_id", "")
         return data
 
     def save(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -128,12 +134,116 @@ class ConversationStore:
         payload["project"] = str(project or "")
         return self.save(payload)
 
+    def replace_project(self, old_project: str, new_project: str) -> int:
+        """Retarget every saved session after a local project rename."""
+        changed = 0
+        for row in self.list_sessions():
+            if row.get("project") != old_project:
+                continue
+            payload = self.load(str(row.get("session_id") or ""))
+            if payload is None:
+                continue
+            payload["project"] = str(new_project or "")
+            self.save(payload)
+            changed += 1
+        return changed
+
     def rename(self, session_id: str, title: str) -> dict[str, Any]:
         payload = self.load(session_id)
         if payload is None:
             raise ValidationError(f"session {session_id!r} not found")
         payload["title"] = str(title or "").strip()[:120]
         return self.save(payload)
+
+    def fork(self, session_id: str, *, title: str = "") -> dict[str, Any]:
+        """Create an independent branch from the current saved context."""
+        source = self.load(session_id)
+        if source is None:
+            raise ValidationError(f"session {session_id!r} not found")
+        branch = self.create_session(
+            project=str(source.get("project") or ""),
+            title=(str(title or "").strip() or
+                   f"{str(source.get('title') or '未命名会话')} · 分支"))
+        branch["messages"] = [dict(row) for row in source.get("messages") or []]
+        branch["archived_messages"] = [
+            dict(row) for row in source.get("archived_messages") or []]
+        branch["context_summary"] = str(source.get("context_summary") or "")
+        branch["compacted_messages"] = int(source.get("compacted_messages") or 0)
+        branch["parent_session_id"] = session_id
+        branch["branched_at"] = _now()
+        return self.save(branch)
+
+    def compact(self, session_id: str, *, keep_last: int = 8) -> dict[str, Any]:
+        """Compress old turns into bounded context and retain recent messages.
+
+        This deterministic representation is intentionally provider-independent:
+        it works offline and never sends stored chat text to a second model call.
+        """
+        payload = self.load(session_id)
+        if payload is None:
+            raise ValidationError(f"session {session_id!r} not found")
+        keep = max(2, min(int(keep_last), 20))
+        messages = list(payload.get("messages") or [])
+        old = messages[:-keep] if len(messages) > keep else []
+        if not old:
+            return {**payload, "compacted_now": 0}
+        lines = []
+        previous = str(payload.get("context_summary") or "").strip()
+        if previous:
+            lines.append(previous)
+        for row in old:
+            role = "用户" if row.get("role") == "user" else "助手"
+            content = " ".join(str(row.get("content") or "").split())
+            lines.append(f"- {role}: {content[:500]}")
+        summary = "\n".join(lines)
+        if len(summary) > 6000:
+            summary = summary[-6000:]
+            summary = "[更早摘要已截断]\n" + summary
+        payload["context_summary"] = summary
+        payload.setdefault("archived_messages", []).extend(old)
+        payload["messages"] = messages[-keep:]
+        payload["compacted_messages"] = int(
+            payload.get("compacted_messages") or 0) + len(old)
+        payload["last_compacted_at"] = _now()
+        saved = self.save(payload)
+        return {**saved, "compacted_now": len(old)}
+
+    def context_stats(self, session_id: str, *, pending_text: str = "",
+                      budget_tokens: int = CONTEXT_BUDGET_TOKENS) -> dict[str, Any]:
+        """Return a cheap, provider-independent estimate for the context meter.
+
+        Exact tokenization differs by model and language. Four UTF-8 Python
+        characters per token is intentionally presented as an estimate; the
+        meter is for early warning, while automatic compaction keeps the
+        active prompt bounded before a model call.
+        """
+        payload = self.load(session_id)
+        if payload is None:
+            raise ValidationError(f"session {session_id!r} not found")
+        active = list(payload.get("messages") or [])
+        archived = list(payload.get("archived_messages") or [])
+        summary = str(payload.get("context_summary") or "")
+        pending = str(pending_text or "")
+        chars = sum(len(str(row.get("content") or "")) for row in active)
+        chars += len(summary) + len(pending)
+        budget = max(1000, int(budget_tokens))
+        estimated = (chars + 3) // 4
+        percent = min(100, round(estimated * 100 / budget, 1))
+        threshold = round(budget * CONTEXT_COMPACT_THRESHOLD)
+        return {
+            "estimated_tokens": estimated,
+            "budget_tokens": budget,
+            "percent": percent,
+            "estimated_chars": chars,
+            "active_messages": len(active),
+            "archived_messages": len(archived),
+            "compacted_messages": int(payload.get("compacted_messages") or 0),
+            "has_summary": bool(summary),
+            "pending_chars": len(pending),
+            "compact_threshold_tokens": threshold,
+            "needs_compaction": estimated >= threshold,
+            "can_compact": len(active) > 2,
+        }
 
     def clear(self, session_id: str) -> dict[str, Any]:
         path = self._path(session_id)
@@ -160,7 +270,11 @@ class ConversationStore:
                 "title": data.get("title", ""),
                 "created_at": data.get("created_at", ""),
                 "updated_at": data.get("updated_at", ""),
-                "message_count": len(data.get("messages") or []),
+                "message_count": (len(data.get("archived_messages") or [])
+                                  + len(data.get("messages") or [])),
+                "compacted_messages": int(data.get("compacted_messages") or 0),
+                "has_summary": bool(data.get("context_summary")),
+                "parent_session_id": data.get("parent_session_id", ""),
             })
         out.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
         return out

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from datetime import datetime, timezone
 from typing import Callable
 from urllib.error import HTTPError, URLError
@@ -20,6 +21,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 from ..core.errors import ProviderError
 from .base import (BaseProvider, CapabilityProbe, ProviderReply, ToolCall,
                    parse_tool_arguments, require_api_key_if_remote)
+
+_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
 class OpenAIResponsesProvider(BaseProvider):
@@ -33,31 +36,75 @@ class OpenAIResponsesProvider(BaseProvider):
         self.url = base if base.endswith("/responses") else base + "/responses"
         self.opener = build_opener(ProxyHandler({}))
 
-    def _post(self, payload: dict, *, timeout: int = 120):
+    def _post(self, payload: dict, *, timeout: int = 120, retries: int = 3):
         headers = {"Content-Type": "application/json",
                    "Accept": "text/event-stream" if payload.get("stream")
                    else "application/json"}
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
-        request = Request(self.url, data=json.dumps(payload).encode("utf-8"),
-                          method="POST", headers=headers)
-        return self.opener.open(request, timeout=timeout)
+        body = json.dumps(payload).encode("utf-8")
+        last_error: Exception | None = None
+        for attempt in range(retries + 1):
+            self.raise_if_cancelled()
+            request = Request(self.url, data=body, method="POST", headers=headers)
+            try:
+                return self.opener.open(request, timeout=timeout)
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")[:400]
+                last_error = ProviderError(
+                    f"provider returned HTTP {exc.code}: {detail}")
+                if exc.code in _RETRYABLE_STATUS and attempt < retries:
+                    retry_after = exc.headers.get("Retry-After", "")
+                    try:
+                        delay = min(float(retry_after), 12.0)
+                    except (TypeError, ValueError):
+                        delay = min(0.75 * (2 ** attempt), 6.0)
+                    self.wait_retry(delay)
+                    continue
+                raise last_error from exc
+            except URLError as exc:
+                reason = str(exc.reason)
+                last_error = ProviderError(
+                    "读取模型服务响应超时：已重试仍未收到完整响应；"
+                    "请检查网络/VPN、服务端负载后重试"
+                    if "timed out" in reason.lower()
+                    else f"provider unreachable: {reason}")
+                if attempt < retries:
+                    self.wait_retry(min(0.75 * (2 ** attempt), 6.0))
+                    continue
+                raise last_error from exc
+            except (TimeoutError, socket.timeout) as exc:
+                last_error = ProviderError(
+                    "读取模型服务响应超时：已重试仍未收到完整响应；"
+                    "请检查网络/VPN、服务端负载后重试")
+                if attempt < retries:
+                    self.wait_retry(min(0.75 * (2 ** attempt), 6.0))
+                    continue
+                raise last_error from exc
+        raise last_error or ProviderError("provider request failed")
 
     def _sse_events(self, payload: dict, timeout: int = 120):
-        with self._post({**payload, "stream": True}, timeout=timeout) as response:
-            for raw_line in response:
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    yield event
+        response = self._post({**payload, "stream": True}, timeout=timeout)
+        with self.track_response(response) as response:
+            try:
+                for raw_line in response:
+                    self.raise_if_cancelled()
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict):
+                        yield event
+            except (TimeoutError, socket.timeout) as exc:
+                raise ProviderError(
+                    "读取模型流响应超时：模型服务在输出过程中长时间没有返回数据；"
+                    "请重试或检查服务端负载") from exc
 
     def _chat(self, messages: list[dict], tools: list[dict],
               *, stream_cb: Callable[[str], None] | None) -> ProviderReply:
@@ -128,8 +175,15 @@ class OpenAIResponsesProvider(BaseProvider):
         return reply
 
     def _chat_blocking(self, payload: dict) -> ProviderReply:
-        with self._post({k: v for k, v in payload.items() if k != "stream"}) as response:
-            document = json.load(response)
+        response = self._post({k: v for k, v in payload.items()
+                               if k != "stream"})
+        with self.track_response(response) as response:
+            self.raise_if_cancelled()
+            try:
+                document = json.load(response)
+            except (TimeoutError, socket.timeout) as exc:
+                raise ProviderError(
+                    "读取模型服务响应超时：请检查网络/VPN、服务端负载后重试") from exc
         reply = ProviderReply()
         calls: list[ToolCall] = []
         for item in document.get("output") or []:

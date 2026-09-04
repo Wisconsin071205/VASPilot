@@ -29,7 +29,7 @@ a{color:var(--acc)}
 .srv{padding:8px 10px;border-radius:8px;margin-bottom:4px;cursor:default;display:flex;align-items:center;gap:8px}
 .srv:hover{background:var(--bg3)}
 .srv .dot{width:9px;height:9px;border-radius:50%;background:var(--err);flex-shrink:0}
-.srv.on .dot{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.srv.on .dot{background:var(--ok)}
 .srv .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srv .nm small{color:var(--fg2);margin-left:6px;font-size:11px}
 .srv button{background:var(--bg3);border:1px solid var(--line);color:var(--fg2);border-radius:6px;padding:2px 7px;font-size:11px;cursor:pointer}
@@ -87,12 +87,12 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 .modal label{display:block;font-size:12px;color:var(--fg2);margin:10px 0 4px}
 .modal input,.modal select{width:100%}
 .modal .mrow{display:flex;gap:14px}.modal .mrow>div{flex:1}
-.modal .note{font-size:12px;color:var(--warn);border-left:3px solid var(--line);
-  padding-left:10px;margin-top:14px}
+.modal .note{font-size:12px;color:var(--warn);border:1px solid var(--line);
+  background:var(--bg3);border-radius:7px;padding:8px 10px;margin-top:14px}
 .modal .mbtns{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
 .srv button.mini{padding:1px 6px;font-size:11px;margin-left:4px}
-.toast{background:var(--bg3);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:8px;padding:10px 14px;max-width:420px;font-size:13px;animation:in .2s}
-.toast.err{border-left-color:var(--err)} .toast.ok{border-left-color:var(--ok)}
+.toast{background:var(--bg3);border:1px solid var(--acc);border-radius:8px;padding:10px 14px;max-width:420px;font-size:13px;animation:in .2s}
+.toast.err{border-color:var(--err)} .toast.ok{border-color:var(--ok)}
 @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
 
 /* ---------- sidebar projects & sessions ---------- */
@@ -146,7 +146,9 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .confirmcard h4{font-size:13px;color:var(--warn);margin-bottom:8px}
 .confirmcard .cmeta{font-size:12px;color:var(--fg2);margin-bottom:6px}
 .confirmcard pre{max-height:200px;font-size:11px}
-.confirmcard .cbtns{display:flex;gap:10px;margin-top:8px}
+.confirmcard .cbtns{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+.confirmcard.expired{border-color:var(--err)}
+.confirmcard.expired h4{color:var(--err)}
 
 /* ---------- server resource cards ---------- */
 .rescard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
@@ -202,7 +204,42 @@ textarea:focus{outline:none;border-color:var(--acc)}
 #chatbar{border-top:1px solid var(--line);padding:12px 22px;background:var(--bg2)}
 #chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
 #chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
+#chatattachbtn{flex:0 0 auto;align-self:stretch;min-width:72px}
+#sendbtn.danger{background:var(--err);min-width:92px}
+#chatattachments{display:flex;flex-wrap:wrap;gap:6px;max-width:860px;margin:0 auto 8px}
+.chatfile{display:flex;align-items:center;gap:7px;max-width:100%;padding:4px 8px;
+  border:1px solid var(--line);border-radius:7px;background:var(--bg3);font-size:11px;color:var(--fg2)}
+.chatfile .name{max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
+.chatfile button{border:0;background:none;color:var(--fg2);padding:0 2px;cursor:pointer}
+.chatfile button:hover{color:var(--err)}
 #chathint{max-width:860px;margin:6px auto 0;font-size:11px;color:var(--fg2);text-align:center}
+#contextmeter{max-width:860px;margin:7px auto 0;display:flex;align-items:center;gap:8px;
+  font-size:11px;color:var(--fg2)}
+#contextmeter .cm-track{height:6px;flex:1;min-width:80px;background:var(--bg3);
+  border:1px solid var(--line);border-radius:4px;overflow:hidden}
+#contextmeter .cm-fill{display:block;height:100%;width:100%;background:var(--ok);
+  border-radius:4px;transform:scaleX(0);transform-origin:left;
+  transition:transform .2s,background .2s}
+#contextmeter.warn .cm-fill{background:var(--warn)}
+#contextmeter.danger .cm-fill{background:var(--err)}
+#contextlabel{white-space:nowrap}
+.job-analysis{margin:5px 0 8px;padding:10px 12px;border:1px solid var(--line);
+  background:var(--bg3);font-size:12px;line-height:1.55}
+.job-analysis.running{border-color:var(--acc)}
+.job-analysis.success{border-color:var(--ok)}
+.job-analysis.warning,.job-analysis.pending{border-color:var(--warn)}
+.job-analysis.error{border-color:var(--err)}
+.job-analysis .ja-title{font-weight:600;margin-bottom:3px}
+.job-analysis ul{margin:5px 0 0 18px;padding:0}
+.jobdir{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:var(--fg2);font-family:var(--mono);font-size:10.5px;margin-top:2px}
+.model-advice{border:1px solid var(--line);border-radius:9px;padding:12px 14px;
+  margin:12px 0 16px;background:var(--bg3)}
+.model-advice h3{margin:0 0 7px;color:var(--fg);font-size:13px}
+.model-advice ul{margin:0;padding-inline-start:19px;color:var(--fg2);font-size:12px;
+  display:grid;grid-template-columns:repeat(2,minmax(240px,1fr));gap:5px 28px}
+.model-advice b{color:var(--fg);font-weight:600}
+@media(max-width:900px){.model-advice ul{grid-template-columns:1fr}}
 .cursor{display:inline-block;width:8px;height:15px;background:var(--acc);animation:blink 1s infinite;vertical-align:-2px}
 @keyframes blink{50%{opacity:0}}
 
@@ -296,6 +333,11 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .bubble code.ic{background:var(--bg3);border-radius:4px;padding:1px 5px;
   font-family:var(--mono);font-size:12px;color:#79c0ff}
 .bubble .mp{margin:4px 0}
+.bubble blockquote{margin:8px 0;padding:7px 10px;background:var(--bg3);border-radius:6px;color:var(--fg2)}
+.bubble a{color:#79c0ff;text-decoration:none}.bubble a:hover{text-decoration:underline}
+.bubble .codewrap{position:relative}.bubble .copycode{position:absolute;right:7px;top:6px;
+  border:1px solid var(--line);background:var(--bg3);color:var(--fg2);border-radius:5px;
+  padding:2px 7px;font-size:10px;cursor:pointer}
 .turnmeta{font-size:11px;color:var(--fg2);margin-top:8px}
 .tc-sum{font-family:var(--mono);font-size:11.5px;color:var(--fg2);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
@@ -338,6 +380,8 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div id="sessbar">
       <select id="sesssel" title="会话（记忆按会话保存）"></select>
       <button onclick="newSession()">＋ 新会话</button>
+      <button onclick="forkSession()" title="复制当前上下文并从新会话继续">创建分支</button>
+      <button onclick="compactSession()" title="保留完整可见记录，仅压缩发送给模型的旧上下文">压缩上下文</button>
       <button onclick="clearSession()">清空记忆</button>
       <button onclick="loadSessions()" title="刷新会话列表">⟳</button>
       <span id="sesshint" style="font-size:11px;color:var(--fg2)"></span>
@@ -348,11 +392,19 @@ textarea:focus{outline:none;border-color:var(--acc)}
 提交作业默认需要你在聊天里点「批准」确认。试试：「新建项目 Fe-relax 并帮我写好参数」「查看 cl9 的作业」「cl9 服务器现在负载怎么样」。</div></div></div>
     </div>
     <div id="chatbar">
+      <div id="chatattachments" aria-live="polite"></div>
       <div id="chatbox">
+        <input id="chatfileinput" type="file" multiple hidden onchange="addChatFiles(this.files)">
+        <button class="btn ghost" id="chatattachbtn" onclick="document.getElementById('chatfileinput').click()"
+          title="最多 5 个文本文件；单个不超过 512 KiB">上传文本</button>
         <textarea id="chatinput" placeholder="向 vasp 调度计算智能体 提问（Enter 发送，Shift+Enter 换行）"></textarea>
-        <button class="btn" id="sendbtn" onclick="sendChat()">发送</button>
+        <button class="btn" id="sendbtn" onclick="chatButtonAction()">发送</button>
       </div>
-      <div id="chathint">对话有记忆（按会话保存） · 提交作业默认需确认 · 调度器完成 ≠ 科学收敛 · 全部操作留审计</div>
+      <div id="chathint">可附加文本文件（最多 5 个，单个 512 KiB） · 对话有记忆 · 提交作业默认需确认 · 调度器完成 ≠ 科学收敛</div>
+      <div id="contextmeter" aria-live="polite" title="按字符数估算，实际 token 数取决于模型">
+        <span>上下文</span><span class="cm-track"><i class="cm-fill"></i></span>
+        <span id="contextlabel">未选择会话</span>
+      </div>
     </div>
   </section>
 
@@ -504,7 +556,13 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <button class="btn ghost" onclick="refreshWorkspacePanel()">Vlab 工作区</button>
       </div>
     </div>
-    <div class="card"><h2>目录内容</h2><table id="filetable">
+    <div class="card"><div class="row" style="justify-content:space-between;align-items:end">
+      <h2 style="margin:0">目录内容</h2>
+      <div class="fg" style="width:min(320px,45vw)"><label for="fsearch">在当前目录中搜索</label>
+        <input id="fsearch" type="search" placeholder="输入文件或目录名" oninput="filterFileRows()"></div>
+    </div>
+      <div id="filesearchstatus" style="font-size:11px;color:var(--fg2);margin:7px 0" aria-live="polite"></div>
+      <table id="filetable">
       <thead><tr><th>名称</th><th>类型</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
       <tbody><tr><td colspan="5" class="empty">输入路径后点击浏览</td></tr></tbody></table></div>
     <div class="card" id="workspacecard">
@@ -523,14 +581,15 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <section class="view" id="v-jobs">
     <div class="card"><div class="row">
       <div class="fg"><label>服务器</label><select id="jsrv"></select></div>
-      <button class="btn" onclick="loadJobs()">查询作业</button>
+      <button class="btn" id="jobquery" onclick="loadJobs()">查询作业</button>
     </div></div>
     <div class="card"><h2>活动作业</h2><table id="jobtable">
-      <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th></tr></thead>
+      <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th><th>诊断</th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（本机台账：集群查不到的完成作业也会保留，含完成时间）</span></h2>
+    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（仅显示已结束作业；本机台账会保留集群已清除的记录）</span></h2>
+      <div id="jobhistorynote" style="font-size:12px;color:var(--fg2);margin-bottom:8px"></div>
       <table id="rectable">
-      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th></tr></thead>
+      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th><th>诊断</th></tr></thead>
       <tbody></tbody></table></div>
     <div class="card">
       <h2>VASP 科学进度（区别于调度器状态）</h2>
@@ -627,6 +686,17 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <h2>模型服务</h2>
         <p class="desc">每个服务商有自己的 API 地址（可含端口）和密钥。密钥以
           Windows 凭据加密保存在本机（不明文落盘），保存后即可直接对话；切换模型用左侧下拉框。</p>
+        <div class="model-advice">
+          <h3>模型调用策略</h3>
+          <ul>
+            <li><b>密钥留在本机服务端：</b>保存值不回填前端，并使用 Windows DPAPI 加密。</li>
+            <li><b>项目隔离：</b>敏感度或计费不同的项目，建立独立服务商条目并使用不同 API Key。</li>
+            <li><b>并发保护：</b>最多同时运行 4 个模型请求；429、超时及 5xx 最多重试 3 次并指数退避。</li>
+            <li><b>长文本流式返回：</b>对话默认开启 stream，可随时点击“中止回答”。</li>
+            <li><b>复杂任务稳定优先：</b>兼容协议当前使用 temperature=0，减少随机波动。</li>
+            <li><b>科研结论人工复核：</b>能量、收敛性、结构合理性及最终论文结论不可只依赖模型判断。</li>
+          </ul>
+        </div>
         <div id="provcards"></div>
         <div class="row" style="margin-top:14px">
           <button class="btn ghost" onclick="addProviderCard()">+ 添加服务商</button>
@@ -666,7 +736,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <div class="card"><div class="row">
           <div style="flex:1">
             <b>远端服务器</b>
-            <div style="font-size:12px;color:var(--fg2)">在左侧「服务器」面板添加与连接；直连服务器可在编辑窗口选择加密保存密码和 Google 验证密钥，按周期确认后自动连接。</div>
+            <div style="font-size:12px;color:var(--fg2)">在左侧「服务器」面板添加与连接；Vlab 中转和直连服务器都可在编辑窗口加密保存密码和 Google 验证密钥，按周期确认后自动连接。</div>
           </div>
         </div></div>
       </div>
@@ -705,8 +775,9 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <div class="card">
           <div class="row">
             <div class="fg"><label>搜索服务商</label>
-              <select id="webprovider">
+              <select id="webprovider" onchange="updateWebsearchKeyHint()">
                 <option value="bing">必应（免密钥）</option>
+                <option value="tavily">Tavily Search</option>
                 <option value="zhipu">智谱 web-search-pro</option>
                 <option value="bocha">博查 Bocha</option>
               </select></div>
@@ -800,7 +871,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <option value="vlab">通过 Vlab 中转（默认）</option>
       <option value="direct">直接连接目标服务器</option>
     </select>
-    <div id="mcredentialwrap" style="display:none">
+    <div id="mcredentialwrap">
       <label>服务器登录密码（留空 = 保持已保存密码）</label>
       <input id="mcredentialpassword" type="password" autocomplete="new-password"
              placeholder="仅本机加密保存，不会写入日志">
@@ -815,14 +886,14 @@ textarea:focus{outline:none;border-color:var(--acc)}
           清除已保存凭据
         </label>
       </div>
-      <div class="note">凭据使用 Windows DPAPI 按当前用户加密，自动连接时仅在本机 SSH 子进程内短暂解密。目标 SSH 服务需允许密码/keyboard-interactive 认证。每到复核周期会要求你点击“确认仍保留”，确认前不会使用保存的密码。</div>
+      <div class="note" id="mcredentialnote">凭据使用 Windows DPAPI 按当前用户加密。每到复核周期会要求你点击“确认仍保留”，确认前不会使用保存的密码。</div>
     </div>
     <label>远端根路径（留空 = 登录用户主目录；工具只能在此边界内操作）</label>
     <div class="path-actions"><input id="mroot" class="path-input" placeholder="保存服务器后通过弹窗选择"
       readonly
       title="新服务器首次添加请先保存；已有服务器可通过弹窗选择">
       <button class="btn ghost path-btn" onclick="pickServerRoot()">选择目录</button></div>
-    <div class="note">直连要求目标服务器可从本机访问并提供 Python 3。可配置 SSH 密钥/代理，也可在本机加密保存密码和 TOTP 种子用于自动连接；密码不会上传到 Vlab。新服务器可先留空保存，连接后再编辑并通过弹窗选择根路径。</div>
+    <div class="note">直连要求目标服务器可从本机访问并提供 Python 3；Vlab 中转要求已配置可用的 Vlab PEM。两种方式都可使用本机加密凭据自动恢复目标服务器连接。新服务器可先留空保存，连接后再编辑并通过弹窗选择根路径。</div>
     <div class="mbtns">
       <button class="btn ghost" onclick="document.getElementById('modalback').classList.remove('on')">取消</button>
       <button class="btn" onclick="saveServerModal()">保存修改</button>
@@ -834,7 +905,8 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <div class="modal" style="width:min(680px,94vw)">
     <h2 id="pmtitle">新建本地项目</h2>
     <div class="mrow">
-      <div><label>项目名称</label><input id="pmname" placeholder="如 Fe-relax"></div>
+      <div><label>项目名称</label><input id="pmname" maxlength="64"
+        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" placeholder="如 Fe-relax"></div>
       <div><label>模板</label><select id="pmtemplate"></select></div>
     </div>
     <label>INCAR</label><textarea id="pmincar"></textarea>
@@ -849,12 +921,16 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <div class="path-actions"><input id="pmremotepotcar" class="path-input" placeholder="请选择远端 POTCAR 文件" readonly
           title="通过弹窗选择远端 POTCAR 文件" onclick="openRemotePathPicker({targetId:'pmremotepotcar',server:document.getElementById('wsrv').value,kind:'file',title:'选择远端 POTCAR 文件'})">
           <button class="btn ghost path-btn" onclick="openRemotePathPicker({targetId:'pmremotepotcar',server:document.getElementById('wsrv').value,kind:'file',title:'选择远端 POTCAR 文件'})">选择文件</button></div></div>
-      <div style="flex:.7"><label>同时创建会话（在项目下开始对话）</label>
+      <div style="flex:.7" id="pmsessionwrap"><label>同时创建会话（在项目下开始对话）</label>
         <select id="pmsession"><option value="yes">是</option><option value="no">否</option></select></div>
     </div>
+    <div id="pmpotcarstate" class="note" style="display:none"></div>
+    <label class="checkline" id="pmremovepotcarwrap" style="display:none">
+      <input id="pmremovepotcar" type="checkbox" style="width:auto">移除项目中现有的 POTCAR
+    </label>
     <div class="mbtns">
       <button class="btn ghost" onclick="document.getElementById('projmodalback').classList.remove('on')">取消</button>
-      <button class="btn" onclick="saveProjectModal()">创建项目</button>
+      <button class="btn" id="pmsave" onclick="saveProjectModal()">创建项目</button>
     </div>
   </div>
 </div>
@@ -928,6 +1004,9 @@ window.addEventListener("error", e => {
 });
 let STATE = {servers:[], providers:[], default_provider:""};
 let CURRENT_PLAN = null, CURRENT_APPROVAL = null;
+let CHAT_ACTIVE = false, CHAT_REQUEST_ID = "";
+let LAST_CHAT_DRAFT = null;
+let contextUsageTimer = null;
 
 async function api(action, body = {}, silent = false) {
   const res = await fetch("/api/" + action, {
@@ -944,6 +1023,49 @@ function toast(text, kind = "") {
   el.className = "toast " + kind; el.textContent = text;
   document.getElementById("toasts").appendChild(el);
   setTimeout(() => el.remove(), 6000);
+}
+function renderContextUsage(stats) {
+  const meter = document.getElementById("contextmeter");
+  const fill = meter?.querySelector(".cm-fill");
+  const label = document.getElementById("contextlabel");
+  if (!meter || !fill || !label) return;
+  if (!stats) {
+    meter.className = "";
+    fill.style.transform = "scaleX(0)";
+    label.textContent = "未选择会话";
+    return;
+  }
+  const percent = Math.max(0, Math.min(100, Number(stats.percent || 0)));
+  meter.className = percent >= 100 ? "danger" :
+    (percent >= 82 ? "warn" : "");
+  fill.style.transform = `scaleX(${percent / 100})`;
+  const shown = Number.isInteger(Number(stats.percent))
+    ? Number(stats.percent).toFixed(0) : Number(stats.percent).toFixed(1);
+  let text = `约 ${Number(stats.estimated_tokens || 0).toLocaleString()} / ${Number(stats.budget_tokens || 0).toLocaleString()} tokens · ${shown}%`;
+  if (stats.auto_compacted) {
+    text += ` · 已自动压缩 ${Number(stats.compacted_now || 0)} 条`;
+  } else if (stats.needs_compaction && stats.can_compact) {
+    text += " · 接近上限，发送前自动压缩";
+  } else if (stats.needs_compaction) {
+    text += " · 已接近上限，建议新建会话";
+  }
+  label.textContent = text;
+}
+async function refreshContextUsage() {
+  if (!CURRENT_SESSION) return renderContextUsage(null);
+  const input = document.getElementById("chatinput");
+  const r = await api("chat.context", {
+    session_id: CURRENT_SESSION,
+    pending_chars: input ? input.value.length : 0,
+  }, true);
+  if (r.ok) renderContextUsage(r);
+}
+function queueContextUsage() {
+  if (contextUsageTimer) clearTimeout(contextUsageTimer);
+  contextUsageTimer = setTimeout(() => {
+    contextUsageTimer = null;
+    refreshContextUsage();
+  }, 220);
 }
 async function pollServerAfterLogin(name) {
   // The visible SSH terminal authenticates asynchronously.  Give Vlab's
@@ -990,14 +1112,15 @@ function pickerServerOptions(selected) {
 }
 
 async function openRemotePathPicker({targetId, server = "", kind = "directory",
-                                     title = "选择远端路径", initialPath = ""}) {
+                                     title = "选择远端路径", initialPath = "",
+                                     onSelect = null}) {
   const target = document.getElementById(targetId);
   const requestedServer = server || document.getElementById("fsrv")?.value || "";
   if (!requestedServer) return toast("请先选择服务器", "err");
   REMOTE_PICKER = {
     targetId, kind, title, server: requestedServer,
     initialPath: initialPath || target?.value?.trim() || "",
-    root: "", path: "", selectedPath: ""
+    root: "", path: "", selectedPath: "", onSelect
   };
   document.getElementById("pathpicktitle").textContent = title;
   document.getElementById("pathpickuse").textContent =
@@ -1091,8 +1214,11 @@ function useRemotePickerSelection() {
   if (!target) return closePathPicker();
   target.value = selected;
   const targetId = REMOTE_PICKER.targetId;
+  const selectedServer = REMOTE_PICKER.server;
+  const onSelect = REMOTE_PICKER.onSelect;
   closePathPicker();
   if (targetId === "fpath") browse();
+  if (typeof onSelect === "function") onSelect(selected, selectedServer);
 }
 
 function renderRemotePickerEntries(entries) {
@@ -1164,6 +1290,7 @@ document.getElementById("ver").textContent = "v" + (location.search.includes("de
 document.getElementById("chatinput").addEventListener("keydown", e => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
 });
+document.getElementById("chatinput").addEventListener("input", queueContextUsage);
 
 async function refreshServers() {
   const st = await api("state");
@@ -1177,9 +1304,9 @@ async function refreshServers() {
     const div = document.createElement("div");
     div.className = "srv" + (s.connected ? " on" : "");
     const statusTitle = s.connected ? "后台连接可用" :
-      (s.route === "direct" && s.credential_confirmation_due
+      (s.credential_confirmation_due
         ? "已到凭据复核时间，请先确认仍保留密码"
-        : (s.route === "direct" && !s.credential_saved
+        : (!s.credential_saved
           ? "未连接：请配置 SSH 密钥/代理，或在编辑窗口保存加密凭据"
           : "未连接"));
     div.innerHTML = `<span class="dot" title="${statusTitle}"></span>
@@ -1211,8 +1338,7 @@ async function refreshServers() {
     };
     div.appendChild(edit);
     div.appendChild(btn);
-    if (s.route === "direct") {
-      if (s.credential_saved && s.credential_confirmation_due) {
+    if (s.credential_saved && s.credential_confirmation_due) {
         const confirmBtn = document.createElement("button");
         confirmBtn.className = "mini";
         confirmBtn.textContent = "确认凭据";
@@ -1222,7 +1348,8 @@ async function refreshServers() {
           if (r.ok) { toast("已确认保留加密凭据", "ok"); await refreshServers(); }
         };
         div.appendChild(confirmBtn);
-      }
+    }
+    if (s.route === "direct") {
       const keyBtn = document.createElement("button");
       keyBtn.className = "mini";
       keyBtn.textContent = "配钥";
@@ -1358,7 +1485,8 @@ async function browse() {
       ${menuBtn(parent, "dir")}</tr>`;
   }
   rows += (r.entries || []).map(e => `
-    <tr oncontextmenu="rowMenu(event,'${esc(server)}','${esc(r.path)}/${esc(e.name)}','${e.type}')">
+    <tr data-file-entry="1" data-name="${esc(e.name)}"
+      oncontextmenu="rowMenu(event,'${esc(server)}','${esc(r.path)}/${esc(e.name)}','${e.type}')">
       <td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
       ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
@@ -1370,6 +1498,32 @@ async function browse() {
   document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="5" class="empty">空目录</td></tr>`;
   document.querySelector("#filetable tbody").dataset.loaded = "1";
+  filterFileRows();
+}
+function filterFileRows() {
+  const input = document.getElementById("fsearch");
+  const status = document.getElementById("filesearchstatus");
+  const tbody = document.querySelector("#filetable tbody");
+  if (!input || !status || !tbody) return;
+  const query = input.value.trim().toLocaleLowerCase();
+  const rows = [...tbody.querySelectorAll('tr[data-file-entry="1"]')];
+  let visible = 0;
+  for (const row of rows) {
+    const matched = !query || String(row.dataset.name || "")
+      .toLocaleLowerCase().includes(query);
+    row.style.display = matched ? "" : "none";
+    if (matched) visible++;
+  }
+  tbody.querySelector("#filesearchempty")?.remove();
+  if (query && rows.length && !visible) {
+    const empty = document.createElement("tr");
+    empty.id = "filesearchempty";
+    empty.innerHTML = `<td colspan="5" class="empty">当前目录没有匹配“${esc(input.value.trim())}”的项目</td>`;
+    tbody.appendChild(empty);
+  }
+  status.textContent = query
+    ? `找到 ${visible} 项（当前目录共 ${rows.length} 项）`
+    : (rows.length ? `当前目录共 ${rows.length} 项` : "当前目录为空");
 }
 function rowMenu(ev, server, path, type) {
   // 右键文件/文件夹：安全编辑模式（经本地控制台按需读写，不装远端 server）
@@ -1439,7 +1593,12 @@ async function refreshWorkspacePanel() {
   if (!out) return;
   const r = await api("workspace.list", {}, true);
   if (!r.ok) {
-    out.innerHTML = `<span style="color:var(--fg2)">Vlab Workspace Gateway 未就绪：${esc(r.error?.message || "请先运行工作区检测")}</span>`;
+    out.innerHTML = `<div role="alert" style="color:var(--fg2);overflow-wrap:anywhere">
+      <b style="color:var(--fg)">Vlab Workspace Gateway 未就绪</b><br>
+      ${esc(r.error?.message || "工作区检测失败")}<br>
+      <button class="btn ghost" style="margin-top:10px" onclick="refreshWorkspacePanel()">重新部署并重试</button>
+      <span style="font-size:12px;margin-left:8px">仍失败时，请确认 Vlab 用户可写 <code>~/bin</code>。</span>
+    </div>`;
     return;
   }
   const space = r.space || {};
@@ -1552,21 +1711,113 @@ function goUp() {
 }
 
 /* ===================== 作业 ===================== */
+const JOB_TERMINAL = new Set(["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED",
+  "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"]);
+function fmtLocalDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).replace("T", " ").slice(0, 19);
+  return date.toLocaleString("zh-CN", {year:"numeric", month:"2-digit", day:"2-digit",
+    hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false});
+}
+function jobAnalysisRows(rows, history = false) {
+  return (rows || []).map(j => {
+    const directory = String(j.directory || "");
+    return `
+    <tr><td class="mono">${esc(j.job_id)}</td>
+    <td>${badge(j.state, j.state === "RUNNING" || j.state === "COMPLETED" ? "ok" :
+      JOB_TERMINAL.has(String(j.state || "").toUpperCase()) ? "err" : "info")}</td>
+    <td class="mono">${esc(j.elapsed || "—")}</td>
+    ${history ? `<td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc(fmtLocalDateTime(j.completed_at))}${j.assumed_end ? ' <span class="badge b-warn" title="调度器已遗忘此作业，完成时间为本机首次发现其消失的时刻">推断</span>' : ""}</td>`
+              : `<td>${esc(j.partition || "")}</td>`}
+    <td>${esc(j.name || "")}${directory ? `<div class="jobdir" title="${esc(directory)}">${esc(directory)}</div>` : ""}</td>
+    <td><button class="btn ghost" data-job-id="${esc(j.job_id)}"
+      data-state="${esc(j.state || "UNKNOWN")}" data-directory="${esc(directory)}"
+      onclick="${directory ? "analyzeJob(this)" : "bindJobDirectory(this)"}">${directory ? "自动分析" : "绑定目录"}</button></td></tr>
+    <tr class="job-analysis-row" style="display:none"><td colspan="6"><div class="job-analysis"></div></td></tr>`;
+  }).join("");
+}
+async function analyzeJob(button) {
+  const server = document.getElementById("jsrv").value;
+  const directory = button.dataset.directory || "";
+  if (!directory) {
+    return bindJobDirectory(button);
+  }
+  const detailRow = button.closest("tr").nextElementSibling;
+  const box = detailRow.querySelector(".job-analysis");
+  detailRow.style.display = "";
+  box.className = "job-analysis running";
+  box.textContent = "正在读取受限日志并分析…";
+  button.disabled = true;
+  try {
+    const r = await api("job.analyze", {server, directory,
+      job_id: button.dataset.jobId, scheduler_state: button.dataset.state}, true);
+    if (!r.ok) {
+      box.className = "job-analysis error";
+      box.textContent = r.error?.message || "分析失败";
+      return;
+    }
+    box.className = "job-analysis " + esc(r.level || "unknown");
+    const details = [...(r.findings || []), ...(r.recommendations || [])];
+    box.innerHTML = `<div class="ja-title">${badge(r.status,
+      r.level === "success" ? "ok" : r.level === "error" ? "err" : "warn")}
+      ${esc(r.summary)}</div>
+      <div>判断引擎：<span class="mono">${esc(r.engine)}</span> · 目录：<span class="mono">${esc(r.directory)}</span></div>
+      ${details.length ? `<ul>${details.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      <div style="color:var(--fg2);margin-top:4px">读取日志：${esc((r.log_files || []).map(p => p.split("/").pop()).join(", ") || "仅 VASP 进度文件")}</div>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+function bindJobDirectory(button) {
+  const server = document.getElementById("jsrv").value;
+  const jobId = button.dataset.jobId;
+  openRemotePathPicker({targetId:"progdir", server, kind:"directory",
+    title:`为作业 ${jobId} 绑定计算目录`,
+    onSelect: async (directory, selectedServer) => {
+      button.disabled = true;
+      const r = await api("job.bind_directory", {
+        server:selectedServer, job_id:jobId, directory
+      });
+      button.disabled = false;
+      if (!r.ok) return;
+      toast(`已将作业 ${jobId} 绑定到 ${directory}`, "ok");
+      await loadJobs();
+    }});
+}
 async function loadJobs() {
   const server = document.getElementById("jsrv").value;
-  const [jobs, recent] = await Promise.all([api("job.list", {server}), api("job.recent", {server})]);
-  if (jobs.ok) document.querySelector("#jobtable tbody").innerHTML = (jobs.jobs || []).map(j => `
-    <tr><td class="mono">${esc(j.job_id)}</td>
-    <td>${badge(j.state, j.state === "RUNNING" ? "ok" : "info")}</td>
-    <td class="mono">${esc(j.elapsed)}</td><td>${esc(j.partition)}</td><td>${esc(j.name)}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="empty">无活动作业</td></tr>`;
-  if (recent.ok) document.querySelector("#rectable tbody").innerHTML = (recent.jobs || []).map(j => `
-    <tr><td class="mono">${esc(j.job_id)}</td>
-    <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED","CANCELED"].includes(String(j.state).toUpperCase()) ? "err" : "info")}</td>
-    <td class="mono">${esc(j.elapsed || "—")}</td>
-    <td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc((j.completed_at || "").replace("T", " ").slice(0, 19)) || "—"}${j.assumed_end ? ' <span class="badge b-warn" title="调度器已遗忘此作业，完成时间为本机首次发现其消失的时刻">推断</span>' : ""}</td>
-    <td>${esc(j.name || "")}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
+  const btn = document.getElementById("jobquery");
+  if (btn.disabled) return;
+  btn.disabled = true; btn.textContent = "查询中…";
+  document.querySelector("#jobtable tbody").innerHTML = `<tr><td colspan="6" class="empty">正在读取活动队列…</td></tr>`;
+  document.querySelector("#rectable tbody").innerHTML = `<tr><td colspan="6" class="empty">正在读取本机台账和调度器记录…</td></tr>`;
+  document.getElementById("jobhistorynote").textContent = "";
+  try {
+    const [jobs, recent] = await Promise.all([
+      api("job.list", {server}, true), api("job.recent", {server}, true)]);
+    if (jobs.ok) {
+      document.querySelector("#jobtable tbody").innerHTML =
+        jobAnalysisRows(jobs.jobs || []) || `<tr><td colspan="6" class="empty">无活动作业</td></tr>`;
+    } else {
+      document.querySelector("#jobtable tbody").innerHTML = `<tr><td colspan="6" class="empty">活动作业读取失败：${esc(jobs.error?.message || "未知错误")}。请再次点击“查询作业”。</td></tr>`;
+    }
+    if (recent.ok) {
+      const activeIds = new Set((recent.active_job_ids || []).map(String));
+      for (const job of jobs.jobs || []) activeIds.add(String(job.job_id || ""));
+      const history = (recent.jobs || []).filter(j =>
+        JOB_TERMINAL.has(String(j.state || "").toUpperCase()) &&
+        !activeIds.has(String(j.job_id || "")));
+      document.querySelector("#rectable tbody").innerHTML =
+        jobAnalysisRows(history, true) || `<tr><td colspan="6" class="empty">无已结束作业（查询时会自动登记）</td></tr>`;
+      if (recent.warning) document.getElementById("jobhistorynote").textContent =
+        "调度器历史接口暂不可用；当前显示本机台账，活动队列不受影响。";
+    } else {
+      document.querySelector("#rectable tbody").innerHTML = `<tr><td colspan="6" class="empty">历史作业读取失败：${esc(recent.error?.message || "未知错误")}。请再次点击“查询作业”。</td></tr>`;
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = "查询作业";
+  }
 }
 async function loadProgress() {
   const server = document.getElementById("jsrv").value;
@@ -1687,12 +1938,72 @@ const statusClass = s => ({"running":"info","completed":"ok","needs_review":"war
 
 /* ===================== 对话（SSE 流式） ===================== */
 let CURRENT_SESSION = "";
-async function sendChat() {
+let CHAT_ATTACHMENTS = [];
+const CHAT_FILE_LIMIT = 5;
+const CHAT_FILE_BYTES = 512 * 1024;
+const CHAT_FILES_TOTAL = 2 * 1024 * 1024;
+async function addChatFiles(fileList) {
+  const incoming = [...(fileList || [])];
+  document.getElementById("chatfileinput").value = "";
+  for (const file of incoming) {
+    if (CHAT_ATTACHMENTS.length >= CHAT_FILE_LIMIT) {
+      toast(`一次最多附加 ${CHAT_FILE_LIMIT} 个文本文件`, "err");
+      break;
+    }
+    if (file.size > CHAT_FILE_BYTES) {
+      toast(`${file.name} 超过 512 KiB，未添加`, "err");
+      continue;
+    }
+    try {
+      const content = await file.text();
+      if (content.includes("\u0000")) {
+        toast(`${file.name} 看起来不是文本文件，未添加`, "err");
+        continue;
+      }
+      const size = new TextEncoder().encode(content).length;
+      const total = CHAT_ATTACHMENTS.reduce((n, item) => n + item.size, 0);
+      if (total + size > CHAT_FILES_TOTAL) {
+        toast("文本附件总大小不能超过 2 MiB", "err");
+        break;
+      }
+      CHAT_ATTACHMENTS.push({name:file.name, content, size});
+    } catch (e) {
+      toast(`无法读取 ${file.name}：${e.message}`, "err");
+    }
+  }
+  renderChatAttachments();
+}
+function renderChatAttachments() {
+  const box = document.getElementById("chatattachments");
+  box.innerHTML = "";
+  CHAT_ATTACHMENTS.forEach((file, index) => {
+    const item = document.createElement("div");
+    item.className = "chatfile";
+    item.innerHTML = `<span class="name" title="${esc(file.name)}">${esc(file.name)}</span>
+      <span>${fmtBytes(file.size)}</span><button type="button" title="移除附件" aria-label="移除 ${esc(file.name)}"
+      onclick="removeChatFile(${index})">×</button>`;
+    box.appendChild(item);
+  });
+}
+function removeChatFile(index) {
+  CHAT_ATTACHMENTS.splice(index, 1);
+  renderChatAttachments();
+}
+async function sendChat(override = null) {
+  if (CHAT_ACTIVE) return;
   const input = document.getElementById("chatinput");
-  const text = input.value.trim();
-  if (!text) return;
+  const text = override ? String(override.text || "").trim() : input.value.trim();
+  const outgoingFiles = override ? (override.files || []).map(file => ({
+    name: file.name, content: file.content
+  })) : CHAT_ATTACHMENTS.map(file => ({
+    name:file.name, content:file.content
+  }));
+  if (!text && !outgoingFiles.length) return;
+  LAST_CHAT_DRAFT = {text, files: outgoingFiles.map(file => ({...file}))};
+  const shownText = (text || "请阅读附件。") + (outgoingFiles.length
+    ? `\n\n[文本附件：${outgoingFiles.map(file => file.name).join("、")}]` : "");
   input.value = "";
-  addMsg("user", text);
+  addMsg("user", shownText);
   const log = document.getElementById("chatlog");
   const botBody = addMsg("bot", "");
   const bubble = botBody.querySelector(".bubble");
@@ -1710,15 +2021,30 @@ async function sendChat() {
   log._timer = setInterval(() => {
     meta.textContent = `思考中… ${Math.round((Date.now() - log._t0) / 1000)}s`;
   }, 500);
-  document.getElementById("sendbtn").disabled = true;
+  CHAT_ACTIVE = true;
+  CHAT_REQUEST_ID = globalThis.crypto?.randomUUID?.() ||
+    `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const sendButton = document.getElementById("sendbtn");
+  sendButton.disabled = false;
+  sendButton.textContent = "中止回答";
+  sendButton.classList.add("danger");
   let acc = "";
   try {
     const res = await fetch("/api/agent/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json", "X-Vaspilot-Token": TOKEN},
       body: JSON.stringify({provider: currentProvider(), message: text,
-                             session_id: CURRENT_SESSION}),
+                             session_id: CURRENT_SESSION,
+                             attachments: outgoingFiles,
+                             request_id: CHAT_REQUEST_ID}),
     });
+    const contentType = res.headers.get("Content-Type") || "";
+    if (!contentType.includes("text/event-stream")) {
+      const problem = await res.json().catch(() => ({}));
+      throw new Error(problem.error?.message || `请求失败（HTTP ${res.status}）`);
+    }
+    CHAT_ATTACHMENTS = [];
+    renderChatAttachments();
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
@@ -1738,18 +2064,49 @@ async function sendChat() {
     if (!acc.trim()) bubble.textContent = bubble.textContent || "（无输出）";
   } catch (e) {
     if (log._timer) { clearInterval(log._timer); log._timer = null; }
-    bubble.textContent = "连接中断：" + e.message;
+    showChatError(bubble, "连接中断：" + e.message);
   } finally {
-    document.getElementById("sendbtn").disabled = false;
+    CHAT_ACTIVE = false;
+    CHAT_REQUEST_ID = "";
+    sendButton.disabled = false;
+    sendButton.textContent = "发送";
+    sendButton.classList.remove("danger");
     input.focus();
   }
-  await Promise.all([refreshServers(), loadSessions(), refreshProjects()]);
+  await Promise.all([refreshServers(), loadSessions(), refreshProjects(),
+                      refreshContextUsage()]);
+}
+function chatButtonAction() {
+  if (CHAT_ACTIVE) stopChat();
+  else sendChat();
+}
+async function stopChat() {
+  if (!CHAT_ACTIVE || !CHAT_REQUEST_ID) return;
+  const button = document.getElementById("sendbtn");
+  button.disabled = true;
+  button.textContent = "正在中止…";
+  const r = await api("chat.stop", {request_id: CHAT_REQUEST_ID}, true);
+  if (!r.ok || !r.stopped) {
+    button.disabled = false;
+    button.textContent = "中止回答";
+    if (!r.stopped) toast(r.message || "回答已经结束", "");
+  }
+}
+function showChatError(bubble, message) {
+  bubble.innerHTML = `<span style="color:var(--err)">${esc(message)}</span>
+    <button class="btn ghost" style="margin-left:8px;padding:4px 10px"
+      onclick="retryLastChat()">重试</button>`;
+}
+function retryLastChat() {
+  if (!LAST_CHAT_DRAFT) return toast("没有可重试的请求", "err");
+  sendChat({text: LAST_CHAT_DRAFT.text, files: LAST_CHAT_DRAFT.files});
 }
 function handleChatEvent(ev, bubble, log, setAcc) {
   if (ev.type === "meta") {
     const mode = ev.mode === "full" ? "完全" : "仅分析";
     bubble.dataset.meta = `${ev.provider} · ${mode}`;
     if (ev.session_id) CURRENT_SESSION = ev.session_id;
+    if (ev.context) renderContextUsage(ev.context);
   } else if (ev.type === "delta") {
     if (log._timer) { clearInterval(log._timer); log._timer = null;
       if (log._meta) log._meta.textContent = ""; }
@@ -1767,7 +2124,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     const acc = bubble.dataset.acc || "";
     const r = ev.result || {};
     bubble.innerHTML = safeMD(r.answer || acc || "（完成）");
-    if (!r.ok && r.error) toast(r.error, "err");
+    if (!r.ok && r.error && !r.cancelled) toast(r.error, "err");
     if (log._timer) { clearInterval(log._timer); log._timer = null; }
     // 回答一出，过程行整体折叠为一行摘要（Claude Code 式）
     if (log._tools) {
@@ -1802,7 +2159,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
       if (names.length) log._tools.classList.add("collapsed");
     }
     if (log._meta) log._meta.textContent =
-      `完成 · 用时 ${Math.round((Date.now() - (log._t0 || Date.now())) / 1000)}s`
+      `${r.cancelled ? "已中止" : "完成"} · 用时 ${Math.round((Date.now() - (log._t0 || Date.now())) / 1000)}s`
       + ` · ${log.dataset.tc || 0} 次工具调用`;
     // 回答落库后立即刷新会话列表（排序/标题），不等下一次轮询
     if (!loadSessionsbusy) { loadSessionsbusy = true;
@@ -1810,7 +2167,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
   } else if (ev.type === "pending") {
     for (const entry of ev.pending || []) addConfirmCard(log, entry);
   } else if (ev.type === "error") {
-    bubble.innerHTML = `<span style="color:var(--err)">${esc((ev.error || {}).message || "错误")}</span>`;
+    showChatError(bubble, (ev.error || {}).message || "错误");
   }
   log.scrollTop = log.scrollHeight;
 }
@@ -1856,26 +2213,37 @@ function addToolCard(log, ev) {
 function addConfirmCard(log, entry) {
   if (document.getElementById("cf-" + entry.id)) return;
   const card = document.createElement("div");
-  card.className = "confirmcard";
+  const expired = entry.status === "expired";
+  card.className = "confirmcard" + (expired ? " expired" : "");
   card.id = "cf-" + entry.id;
   card.innerHTML = `
-    <h4>🚀 作业提交确认（智能体发起）</h4>
+    <h4>${expired ? "⏱ 审批卡片已过期" : "🚀 作业提交确认（智能体发起）"}</h4>
     <div class="cmeta">服务器 <b class="mono">${esc(entry.server)}</b> ·
       目录 <span class="mono">${esc(entry.directory)}</span> ·
       脚本 <span class="mono">${esc(entry.script)}</span><br>
       ${entry.expires_at ? `有效期至 ${esc(entry.expires_at)}` : ""}</div>
     <pre>${esc(entry.script_content || "（脚本内容不可用——提交前服务端会再次校验）")}</pre>
     <div class="cbtns">
-      <button class="btn" onclick="confirmSubmit('${esc(entry.id)}', true)">批准提交</button>
-      <button class="btn danger" onclick="confirmSubmit('${esc(entry.id)}', false)">拒绝</button>
-      <span style="font-size:11px;color:var(--fg2);align-self:center">批准后按卡片参数执行，脚本若被改动将自动中止</span>
+      ${expired
+        ? `<button class="btn" onclick="regenerateSubmit('${esc(entry.id)}')">重新生成审批卡片</button>
+           <span style="font-size:11px;color:var(--fg2);align-self:center">生成前会校验远端脚本是否被改动</span>`
+        : `<button class="btn" onclick="confirmSubmit('${esc(entry.id)}', true)">批准提交</button>
+           <button class="btn danger" onclick="confirmSubmit('${esc(entry.id)}', false)">拒绝</button>
+           <span style="font-size:11px;color:var(--fg2);align-self:center">批准后按卡片参数执行，脚本若被改动将自动中止</span>`}
     </div>`;
   log.appendChild(card);
   log.scrollTop = log.scrollHeight;
 }
 async function confirmSubmit(id, approve) {
-  const r = await api("submit.confirm", {id, approve});
-  if (!r.ok) return;
+  const r = await api("submit.confirm", {id, approve}, true);
+  if (!r.ok) {
+    const message = r.error?.message || "提交确认失败";
+    if (approve && (message.includes("过期") || message.toLowerCase().includes("expired"))) {
+      return regenerateSubmit(id);
+    }
+    toast(message, "err");
+    return;
+  }
   const card = document.getElementById("cf-" + id);
   if (card) {
     card.style.borderColor = r.settled === "approved" ? "var(--ok)" : "var(--err)";
@@ -1888,12 +2256,32 @@ async function confirmSubmit(id, approve) {
         r.settled === "approved" ? "ok" : "");
   await loadSessions();
 }
+async function regenerateSubmit(id) {
+  const oldCard = document.getElementById("cf-" + id);
+  if (oldCard) {
+    oldCard.classList.add("expired");
+    const buttons = oldCard.querySelector(".cbtns");
+    if (buttons) buttons.innerHTML = "<span style='color:var(--warn)'>审批卡片已过期，正在校验脚本并重新生成…</span>";
+  }
+  const r = await api("submit.regenerate", {id}, true);
+  if (!r.ok) {
+    if (oldCard) {
+      const buttons = oldCard.querySelector(".cbtns");
+      if (buttons) buttons.innerHTML = `<span style="color:var(--err)">${esc(r.error?.message || "重新生成失败")}</span>`;
+    }
+    toast(r.error?.message || "重新生成审批卡片失败", "err");
+    return;
+  }
+  if (oldCard) oldCard.remove();
+  addConfirmCard(document.getElementById("chatlog"), r.entry);
+  toast("原审批卡片已过期，已重新生成，请再次批准", "ok");
+}
 async function pollPendingCards() {
   if (!CURRENT_SESSION) return;
-  const r = await api("submit.pending", {session_id: CURRENT_SESSION});
-  if (r.ok && r.pending) {
+  const r = await api("submit.history", {session_id: CURRENT_SESSION});
+  if (r.ok && r.entries) {
     const log = document.getElementById("chatlog");
-    for (const entry of r.pending) addConfirmCard(log, entry);
+    for (const entry of r.entries) addConfirmCard(log, entry);
   }
   // 会话列表随心跳保持新鲜：updated_at/标题/新会话不会被旧渲染卡住
   if (!loadSessionsbusy) { loadSessionsbusy = true;
@@ -1908,7 +2296,11 @@ function safeMD(src) {
 
   const inline = s => s
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-    .replace(/`([^`]+)`/g, "<code class='ic'>$1</code>");
+    .replace(/~~([^~]+)~~/g, "<s>$1</s>")
+    .replace(/`([^`]+)`/g, "<code class='ic'>$1</code>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+  const renderCode = () => `<div class="codewrap"><button class="copycode" onclick="copyCode(this)">复制</button><pre class="mdcode">${codeBuf.join("\n")}</pre></div>`;
   const flushList = () => {
     if (listBuf) { html += `<${listType}>` + listBuf + `</${listType}>`;
       listBuf = ""; listType = ""; }
@@ -1928,7 +2320,7 @@ function safeMD(src) {
   for (const raw of lines) {
     const line = raw;
     if (line.trim().startsWith("```")) {
-      if (inCode) { html += `<pre class="mdcode">${codeBuf.join("\n")}</pre>`;
+      if (inCode) { html += renderCode();
         codeBuf = []; inCode = false; }
       else { flushList(); flushTable(); inCode = true; }
       continue;
@@ -1949,12 +2341,15 @@ function safeMD(src) {
     if (ol) { if (listType !== "ol") flushList();
       listType = "ol"; listBuf += `<li>${inline(ol[1])}</li>`; continue; }
     flushList();
+    const quote = line.match(/^&gt;\s?(.*)/);
+    if (quote) { html += `<blockquote>${inline(quote[1])}</blockquote>`; continue; }
+    if (/^\s*(?:---|\*\*\*)\s*$/.test(line)) { html += "<hr>"; continue; }
     const h = line.match(/^(#{1,6})\s+(.*)/);
     if (h) { html += `<div class="mdh">${inline(h[2])}</div>`; continue; }
     if (!line.trim()) { html += "<div style='height:5px'></div>"; continue; }
     html += `<div class="mp">${inline(line)}</div>`;
   }
-  if (inCode) html += `<pre class="mdcode">${codeBuf.join("\n")}</pre>`;
+  if (inCode) html += renderCode();
   flushList(); flushTable();
   return html;
 }
@@ -2172,9 +2567,17 @@ function openServerModal(entry) {
   setTimeout(() => document.getElementById(
     entry ? "mtarget" : "mname").focus(), 60);
 }
+async function copyCode(button) {
+  const text = button.parentElement.querySelector("pre")?.textContent || "";
+  try { await navigator.clipboard.writeText(text); button.textContent = "已复制"; }
+  catch (_) { toast("浏览器未允许写入剪贴板", "err"); }
+  setTimeout(() => button.textContent = "复制", 1200);
+}
 function toggleCredentialFields() {
   const direct = document.getElementById("mroute").value === "direct";
-  document.getElementById("mcredentialwrap").style.display = direct ? "" : "none";
+  document.getElementById("mcredentialnote").textContent = direct
+    ? "凭据使用 Windows DPAPI 按当前用户加密；自动连接时只在本机 OpenSSH 子进程内短暂解密。目标 SSH 服务需允许密码/keyboard-interactive 认证。到复核日期后必须再次确认。"
+    : "凭据和 TOTP 种子使用 Windows DPAPI 加密并只保存在本机。自动连接时，密码和当期 6 位验证码通过已验证的 Vlab SSH 通道临时发送；TOTP 种子不会上传或保存在 Vlab。首次主机指纹仍须人工核对。";
 }
 document.getElementById("mroute").addEventListener("change", toggleCredentialFields);
 async function saveServerModal() {
@@ -2241,8 +2644,14 @@ async function openSession(id) {
   if (!r.ok) return;
   const log = document.getElementById("chatlog");
   log.innerHTML = "";
-  for (const m of r.messages || []) addMsg(m.role === "user" ? "user" : "bot", m.content);
-  if (!(r.messages || []).length) addMsg("bot", "（新会话，还没有对话）");
+  const visibleMessages = [...(r.archived_messages || []), ...(r.messages || [])];
+  for (const m of visibleMessages) addMsg(m.role === "user" ? "user" : "bot", m.content);
+  if (!visibleMessages.length) addMsg("bot", "（新会话，还没有对话）");
+  const compacted = Number(r.compacted_messages || 0);
+  document.getElementById("sesshint").textContent =
+    `${visibleMessages.length} 条消息${compacted ? ` · ${compacted} 条已压缩进上下文摘要` : ""}${r.parent_session_id ? " · 分支会话" : ""}`;
+  renderContextUsage(null);
+  await refreshContextUsage();
   pollPendingCards();
 }
 async function newSession(project = "") {
@@ -2253,6 +2662,8 @@ async function newSession(project = "") {
   document.getElementById("chatlog").innerHTML = "";
   addMsg("bot", project ? `新会话（项目：${project}）。有什么要计算的？`
                          : "新会话已创建（记忆从现在开始）。有什么要计算的？");
+  renderContextUsage({estimated_tokens: 0, budget_tokens: 12000,
+                     percent: 0, can_compact: true});
   document.getElementById("chatinput").focus();
 }
 async function clearSession() {
@@ -2260,6 +2671,7 @@ async function clearSession() {
   if (!confirm("清空该会话的记忆？聊天记录将删除且不可恢复。")) return;
   await api("chat.clear", {session_id: CURRENT_SESSION});
   CURRENT_SESSION = "";
+  renderContextUsage(null);
   document.getElementById("chatlog").innerHTML = "";
   addMsg("bot", "记忆已清空。");
   await loadSessions(true);
@@ -2286,6 +2698,7 @@ function renderProjectSidebar(sessions) {
           <small>${p.complete ? "齐全" : "缺 " + esc((p.missing || []).join("/"))}</small></span>
         <button title="${p.pinned ? "取消置顶" : "置顶"}" data-act="pin">${p.pinned ? "★" : "☆"}</button>
         <button title="新建会话" data-act="new">＋</button>
+        <button title="编辑项目信息和输入文件" data-act="edit">编辑</button>
         <button title="删除项目（目录进回收站）" data-act="del">🗑</button>
       </div>
       <div class="psess" style="display:none"></div>`;
@@ -2296,6 +2709,9 @@ function renderProjectSidebar(sessions) {
     };
     div.querySelector('[data-act="new"]').onclick = e => {
       e.stopPropagation(); newSession(p.name);
+    };
+    div.querySelector('[data-act="edit"]').onclick = e => {
+      e.stopPropagation(); openProjectModal(p.name);
     };
     div.querySelector('[data-act="del"]').onclick = async e => {
       e.stopPropagation();
@@ -2370,24 +2786,75 @@ async function validateProject() {
 }
 
 /* ===================== 新建项目模态 ===================== */
-async function openProjectModal() {
+let TEMPLATES_CACHE = [];
+let PM_EDIT_ORIG = "";
+async function openProjectModal(name = "") {
   const back = document.getElementById("projmodalback");
   const tsel = document.getElementById("pmtemplate");
-  const r = await api("project.templates");
-  if (r.ok) {
-    tsel.innerHTML = (r.templates || []).map(t =>
+  PM_EDIT_ORIG = name;
+  if (!TEMPLATES_CACHE.length) {
+    const r = await api("project.templates");
+    TEMPLATES_CACHE = r.ok ? (r.templates || []) : [];
+  }
+  if (TEMPLATES_CACHE.length) {
+    tsel.innerHTML = TEMPLATES_CACHE.map(t =>
       `<option value="${esc(t.name)}">${esc(t.name)} — ${esc(t.description)}</option>`).join("");
     tsel.onchange = () => fillTemplate();
+  }
+  document.getElementById("pmtitle").textContent = name ? "编辑本地项目" : "新建本地项目";
+  document.getElementById("pmsave").textContent = name ? "保存修改" : "创建项目";
+  document.getElementById("pmsessionwrap").style.display = name ? "none" : "";
+  document.getElementById("pmremovepotcar").checked = false;
+  document.getElementById("pmname").value = name;
+  document.getElementById("pmpotcar").value = "";
+  back.classList.add("on");
+  if (name) {
+    tsel.disabled = true;
+    const project = PROJECTS.find(item => item.name === name);
+    document.getElementById("pmremotepotcar").value = project?.potcar_remote || "";
+    const names = ["INCAR", "KPOINTS", "POSCAR"];
+    const documents = await Promise.all(names.map(file =>
+      api("project.read", {name, file}, true)));
+    names.forEach((file, index) => {
+      document.getElementById("pm" + file.toLowerCase()).value =
+        documents[index].ok ? (documents[index].content || "") : "";
+    });
+    const hasPotcar = !!project?.files?.POTCAR;
+    const state = document.getElementById("pmpotcarstate");
+    state.style.display = "";
+    state.textContent = hasPotcar
+      ? "项目已有 POTCAR。保持本地路径为空会保留原文件；选择新文件可替换。"
+      : "项目当前没有 POTCAR；可选择本地文件补充，或登记远端 POTCAR 库路径。";
+    document.getElementById("pmremovepotcarwrap").style.display = hasPotcar ? "flex" : "none";
+  } else {
+    tsel.disabled = false;
+    document.getElementById("pmremotepotcar").value = "";
+    document.getElementById("pmpotcarstate").style.display = "none";
+    document.getElementById("pmremovepotcarwrap").style.display = "none";
     fillTemplate();
   }
-  document.getElementById("pmname").value = "";
-  document.getElementById("pmpotcar").value = "";
-  document.getElementById("pmremotepotcar").value = "";
-  back.classList.add("on");
   setTimeout(() => document.getElementById("pmname").focus(), 60);
 }
-let TEMPLATES_CACHE = [];
+async function forkSession() {
+  if (!CURRENT_SESSION) return toast("当前没有可分支的会话", "err");
+  const r = await api("chat.fork", {session_id: CURRENT_SESSION});
+  if (!r.ok) return;
+  CURRENT_SESSION = r.session_id;
+  await loadSessions();
+  await openSession(CURRENT_SESSION);
+  toast("已创建独立分支；后续消息不会影响原会话", "ok");
+}
+async function compactSession() {
+  if (!CURRENT_SESSION) return toast("当前没有会话", "err");
+  const r = await api("chat.compact", {session_id: CURRENT_SESSION, keep_last: 8});
+  if (!r.ok) return;
+  if (!r.compacted_now) return toast("上下文已经很短，无需压缩", "info");
+  await loadSessions();
+  await openSession(CURRENT_SESSION);
+  toast(`已将 ${r.compacted_now} 条旧消息压缩为摘要；完整记录仍可查看`, "ok");
+}
 async function fillTemplate() {
+  if (PM_EDIT_ORIG) return;
   if (!TEMPLATES_CACHE.length) {
     const r = await api("project.templates");
     TEMPLATES_CACHE = r.ok ? (r.templates || []) : [];
@@ -2401,8 +2868,13 @@ async function fillTemplate() {
 async function saveProjectModal() {
   const name = document.getElementById("pmname").value.trim();
   if (!name) return toast("项目名称必填", "err");
-  const r = await api("project.create", {
-    name,
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name))
+    return toast("项目名称只能包含字母、数字、点、下划线和连字符，最长 64 个字符", "err");
+  const save = document.getElementById("pmsave");
+  save.disabled = true;
+  const body = {
+    name: PM_EDIT_ORIG || name,
+    new_name: name,
     files: {
       INCAR: document.getElementById("pmincar").value,
       KPOINTS: document.getElementById("pmkpoints").value,
@@ -2410,14 +2882,23 @@ async function saveProjectModal() {
     },
     potcar_path: document.getElementById("pmpotcar").value.trim() || null,
     potcar_remote: document.getElementById("pmremotepotcar").value.trim() || "",
-  });
-  if (!r.ok) return;
-  toast(`项目 ${name} 已创建：${r.path}`, "ok");
-  document.getElementById("projmodalback").classList.remove("on");
-  await refreshProjects();
-  document.getElementById("wproj").value = name;
-  pickProject();
-  if (document.getElementById("pmsession").value === "yes") await newSession(name);
+    remove_potcar: document.getElementById("pmremovepotcar").checked,
+  };
+  try {
+    const editing = !!PM_EDIT_ORIG;
+    const r = await api(editing ? "project.update" : "project.create", body);
+    if (!r.ok) return;
+    toast(editing ? `项目 ${name} 已更新` : `项目 ${name} 已创建：${r.path}`, "ok");
+    document.getElementById("projmodalback").classList.remove("on");
+    PM_EDIT_ORIG = "";
+    await Promise.all([refreshProjects(), loadSessions()]);
+    document.getElementById("wproj").value = name;
+    pickProject();
+    if (!editing && document.getElementById("pmsession").value === "yes")
+      await newSession(name);
+  } finally {
+    save.disabled = false;
+  }
 }
 
 /* ===================== 编辑项目文件模态 ===================== */
@@ -2953,12 +3434,20 @@ async function removeWebKey() {
 function renderWebsearch(w) {
   if (!w) return;
   document.getElementById("webprovider").value = w.provider || "zhipu";
+  updateWebsearchKeyHint();
   document.getElementById("webenabled").checked = !!w.enabled;
   const keyBadge = w.provider === "bing"
     ? badge("免密钥", "info")
     : (w.key_saved ? badge("Key 已保存（加密）", "ok") : badge("未存 Key", "warn"));
   document.getElementById("webbadge").innerHTML = keyBadge + " " +
     (w.enabled ? badge("已启用", "ok") : badge("未启用", "info"));
+}
+function updateWebsearchKeyHint() {
+  const provider = document.getElementById("webprovider").value;
+  const key = document.getElementById("webkey");
+  key.disabled = provider === "bing";
+  key.placeholder = provider === "bing" ? "必应免密钥"
+    : provider === "tavily" ? "tvly-…" : "sk-…";
 }
 async function loadSkills() {
   const r = await api("skill.list");

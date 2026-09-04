@@ -145,6 +145,31 @@ class TestFileAccess:
         listing = {p["name"]: p for p in store.list()}
         assert "POTCAR" not in listing["late"]["missing"]
 
+    def test_update_renames_and_replaces_project_information(self, store, tmp_path):
+        source = tmp_path / "POTCAR.Fe"
+        source.write_bytes(b"  TITEL  = PAW Fe\n")
+        store.create("before", {"INCAR": "NSW=0\n"}, potcar_path=source,
+                     potcar_remote="/old/POTCAR")
+        result = store.update(
+            "before", new_name="after",
+            files={"INCAR": "NSW=12\n", "KPOINTS": "mesh\n",
+                   "POSCAR": "structure\n"},
+            potcar_remote="/new/POTCAR", remove_potcar=True)
+        assert result["name"] == "after" and result["potcar_removed"] is True
+        assert not (store.root / "before").exists()
+        assert store.read_file("after", "INCAR")["content"] == "NSW=12\n"
+        entry = next(item for item in store.list() if item["name"] == "after")
+        assert entry["potcar_remote"] == "/new/POTCAR"
+        assert entry["files"]["POTCAR"] is False
+
+    def test_update_rejects_duplicate_rename_before_writing(self, store):
+        store.create("first", {"INCAR": "NSW=1\n"})
+        store.create("second", {"INCAR": "NSW=2\n"})
+        with pytest.raises(ValidationError):
+            store.update("first", new_name="second",
+                         files={"INCAR": "NSW=99\n"})
+        assert store.read_file("first", "INCAR")["content"] == "NSW=1\n"
+
 
 class TestValidate:
     def test_validate_uses_vasp_rules(self, store):
