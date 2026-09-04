@@ -646,7 +646,14 @@ def _pbs_parse_qstat_f(raw: str) -> dict[str, dict]:
         if line.startswith(("    ", "\t")) and " = " in stripped \
                 and not stripped.startswith(" " * 6 + "&&"):
             key, _, value = stripped.partition(" = ")
-            key = key.strip().split(".")[-1]        # strip resources_used.
+            key = key.strip()
+            if key in ("resources_used.walltime",
+                       "resources_assigned.walltime"):
+                # 同名键：分别保留实际用时与申请上限，后者不得覆盖前者
+                key = ("used_walltime" if key.startswith("resources_used.")
+                       else "assigned_walltime")
+            else:
+                key = key.split(".")[-1]
             current[key] = value.strip()
             last_key = key
         elif last_key and stripped and not stripped.startswith(("+++", "===")):
@@ -659,8 +666,10 @@ def _pbs_parse_qstat_f(raw: str) -> dict[str, dict]:
             state = "FAILED"
         job["state"] = state
         job["name"] = job.pop("Job_Name", "")
-        if "walltime" in job:
-            job["elapsed"] = job.pop("walltime")
+        if "used_walltime" in job:
+            job["elapsed"] = job.pop("used_walltime")
+        if "assigned_walltime" in job:
+            job["limit"] = job.pop("assigned_walltime")
         if "mtime" in job and state in ("COMPLETED", "FAILED", "EXITING"):
             try:
                 job["completed_at"] = datetime.strptime(
@@ -1148,7 +1157,8 @@ def op_jobs(args) -> int:
                          "SUSPENDED")
         jobs = [{"job_id": j["job_id"], "state": j["state"],
                  "elapsed": j.get("elapsed", ""),
-                 "limit": j.get("walltime", j.get("limit", "")),
+                 "limit": j.get("assigned_walltime",
+                                j.get("walltime", j.get("limit", ""))),
                  "partition": j.get("queue", ""),
                  "name": j.get("name", ""),
                  "nodes": j.get("exec_host", "")[:80]}

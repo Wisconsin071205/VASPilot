@@ -72,7 +72,8 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         raise last_error or ProviderError("provider request failed")
 
     # -- streaming ----------------------------------------------------------------
-    def _stream_events(self, payload: dict, timeout: int = 120):
+    def _stream_events(self, payload: dict, timeout: int = 120,
+                       state: dict | None = None):
         with self._request(payload, stream=True, timeout=timeout) as response:
             for raw_line in response:
                 line = raw_line.decode("utf-8", errors="replace").strip()
@@ -80,6 +81,8 @@ class OpenAIChatCompatibleProvider(BaseProvider):
                     continue
                 data = line[5:].strip()
                 if data == "[DONE]":
+                    if state is not None:
+                        state["done"] = True
                     break
                 try:
                     event = json.loads(data)
@@ -106,7 +109,9 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         acc: dict[int, dict] = {}
         usage: dict = {}
         events = 0
-        for event in self._stream_events({**payload, "stream": True}):
+        stream_state: dict = {}
+        for event in self._stream_events({**payload, "stream": True},
+                                         state=stream_state):
             events += 1
             usage = event.get("usage") or usage
             choices = event.get("choices") or []
@@ -136,6 +141,13 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         if not events:
             # stream unsupported or failed: single-shot fallback
             return self._chat_blocking(payload)
+        if not stream_state.get("done") and text_parts:
+            # 上游连接在生成中途断开：明示回答可能不完整，而不是
+            # 把半截话当作完整回答收尾
+            note = "\n\n⚠️ 上游流式连接中断，本回答可能不完整。"
+            text_parts.append(note)
+            if stream_cb:
+                stream_cb(note)
         merged: list[ToolCall] = []
         for index in sorted(acc):
             slot = acc[index]

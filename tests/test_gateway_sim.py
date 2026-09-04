@@ -523,11 +523,15 @@ class TestPbsQstatFParsing:
         assert set(active) == {"5001"}
         assert active["5001"]["state"] == "RUNNING"
         assert active["5001"]["elapsed"] == "00:12:34"
+        # 申请上限不得覆盖实际用时（v1.5.1 回归）
+        assert active["5001"]["limit"] == "72:00:00"
         assert active["5001"]["name"] == "relax_case1"
 
         recent = run("recent", "--server", "pbst")
         rows = {j["job_id"]: j for j in recent["jobs"]}
         assert set(rows) == {"5000", "5001"}
+        # 完成作业的耗时是实际用量，不是申请上限
+        assert rows["5000"]["elapsed"] == "01:02:03"
         done = rows["5000"]
         assert done["state"] == "COMPLETED"
         assert done["elapsed"] == "01:02:03"
