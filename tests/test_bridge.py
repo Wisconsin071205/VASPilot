@@ -96,7 +96,7 @@ class TestBridgeStatRemove:
 class TestDiscoveryFile:
     def test_ui_json_written_on_serve(self, ui):
         """The bridge extension discovers the console through ui.json."""
-        home = Path(os.environ["VASPILOT_HOME"])
+        home = Path(os.environ["VASPLOOM_HOME"])
         doc = json.loads((home / "ui.json").read_text(encoding="utf-8"))
         assert doc["url"].startswith("http://127.0.0.1:")
         assert doc["token"] == ui["token"]

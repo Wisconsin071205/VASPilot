@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-from vaspilot.agents.runtime import AgentRuntime
-from vaspilot.core.audit import AuditLog, sanitize
-from vaspilot.core.config import Config
-from vaspilot.core.errors import ToolNotAllowedError
-from vaspilot.providers.base import ANALYSIS_ONLY, FULL, ProviderReply, ToolCall
+from vasploom.agents.runtime import AgentRuntime
+from vasploom.core.audit import AuditLog, sanitize
+from vasploom.core.config import Config
+from vasploom.core.errors import ToolNotAllowedError
+from vasploom.providers.base import ANALYSIS_ONLY, FULL, ProviderReply, ToolCall
 
 
 class ScriptedProvider:
@@ -47,12 +47,38 @@ class TestAgentRuntime:
         assert result["tool_calls"] == ["remote_pwd"]
         assert "remote root" in result["answer"]
 
+    def test_tool_turn_preamble_is_not_forwarded(self, app_with_fake):
+        app, registry = _registry_of(app_with_fake)
+        visible: list[str] = []
+
+        class NarratingProvider(ScriptedProvider):
+            def chat(self, messages, tools, *, stream_cb=None):
+                if len(self.calls) == 0:
+                    self.calls.append((list(messages), list(tools)))
+                    if stream_cb:
+                        stream_cb("让我查看远端作业状态……")
+                    return ProviderReply(
+                        tool_calls=[ToolCall(call_id="1", name="remote_pwd",
+                                             arguments={})])
+                self.calls.append((list(messages), list(tools)))
+                if stream_cb:
+                    stream_cb("作业状态已确认。")
+                return ProviderReply(text="作业状态已确认。")
+
+        runtime = AgentRuntime(provider=NarratingProvider([]),
+                               registry=registry, mode=FULL,
+                               stream_cb=visible.append)
+        result = runtime.run("查看作业状态")
+
+        assert result["ok"] is True
+        assert visible == ["作业状态已确认。"]
+
     def test_analysis_only_blocks_write_tools(self, app_with_fake):
         app, registry = _registry_of(app_with_fake)
         provider = ScriptedProvider([
             {"tool_calls": [ToolCall(call_id="1", name="remote_mkdir",
                                     arguments={"path":
-                                               "/hpc/home/tester/vaspilot-root/x"})]},
+                                               "/hpc/home/tester/vasploom-root/x"})]},
             {"text": "mkdir was refused; nothing was changed"},
         ])
         runtime = AgentRuntime(provider=provider, registry=registry,
@@ -68,7 +94,7 @@ class TestAgentRuntime:
         app, registry = _registry_of(app_with_fake)
         with pytest.raises(ToolNotAllowedError):
             registry.dispatch("remote_mkdir",
-                              {"path": "/hpc/home/tester/vaspilot-root/x"},
+                              {"path": "/hpc/home/tester/vasploom-root/x"},
                               provider_mode=ANALYSIS_ONLY)
         # read tools stay available
         outcome = registry.dispatch("remote_pwd", {},
@@ -77,7 +103,7 @@ class TestAgentRuntime:
 
     def test_unknown_tool_rejected(self, app_with_fake):
         app, registry = _registry_of(app_with_fake)
-        from vaspilot.core.errors import ValidationError
+        from vasploom.core.errors import ValidationError
         with pytest.raises(ValidationError):
             registry.dispatch("run_shell", {}, provider_mode=FULL)
 
@@ -226,7 +252,7 @@ class TestShellTools:
 
     def test_shell_audited(self, app_with_fake):
         app, _ = _registry_of(app_with_fake)
-        from vaspilot.tools.registry import ToolContext, ToolRegistry
+        from vasploom.tools.registry import ToolContext, ToolRegistry
         audit_calls = []
         context = ToolContext(config=app.config, client=app.client(),
                               audit=type("A", (), {"record":
@@ -241,7 +267,7 @@ class TestShellTools:
 
 class TestJobSubmitTiers:
     ARGS = {"server": "cl9",
-            "directory": "/hpc/home/tester/vaspilot-root/runs/t",
+            "directory": "/hpc/home/tester/vasploom-root/runs/t",
             "script": "run.job.sh"}
 
     def test_confirm_mode_queues_pending(self, app_with_fake):
@@ -251,7 +277,7 @@ class TestJobSubmitTiers:
         assert result["ok"] is True
         assert result["status"] == "pending_confirmation"
         assert result["id"].startswith("ps-")
-        from vaspilot.workflow.pending import PendingSubmitStore
+        from vasploom.workflow.pending import PendingSubmitStore
         pending = PendingSubmitStore(app.config.pending_submits_path).pending()
         assert len(pending) == 1
         assert pending[0]["directory"] == self.ARGS["directory"]
@@ -295,7 +321,7 @@ class TestProjectAndSkillTools:
         app, registry = _registry_of(app_with_fake)
         registry.dispatch("project_create", {"name": "np",
                                              "incar": "NSW=0\n"})
-        from vaspilot.core.errors import ValidationError
+        from vasploom.core.errors import ValidationError
         with pytest.raises(ValidationError):
             registry.dispatch("project_write", {
                 "project": "np", "file": "POTCAR", "content": "TITEL=x"})
@@ -323,7 +349,7 @@ class TestProjectAndSkillTools:
 
     def test_skill_index_in_prompt(self, app_with_fake):
         app, _ = _registry_of(app_with_fake)
-        from vaspilot.agents.skills import SkillStore
+        from vasploom.agents.skills import SkillStore
         store = SkillStore(app.config.skills_dir)
         store.write("demo", "a demo skill", "do the thing")
         index = store.index_prompt()
@@ -396,7 +422,7 @@ class TestLegacyMigration:
         providers = config.load_providers()
         assert [p.id for p in providers] == ["deepseek"]
         assert providers[0].protocol == "openai-chat-compatible"
-        assert providers[0].api_key_env == "VASPILOT_API_KEY_DEEPSEEK"
+        assert providers[0].api_key_env == "VASPLOOM_API_KEY_DEEPSEEK"
         # secrets are never copied
         stored = json.loads((config_home / "settings.json").read_text(
             encoding="utf-8"))

@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from vaspilot.cli.main import main
+from vasploom.cli.main import main
 
 
 def run_cli(argv, monkeypatch, stdin=None):
@@ -45,13 +45,13 @@ def run_cli(argv, monkeypatch, stdin=None):
 
 @pytest.fixture()
 def cli(config_home, fake_state, monkeypatch):
-    from vaspilot.cli.main import App
-    from vaspilot.core.config import Config, ServerEntry
+    from vasploom.cli.main import App
+    from vasploom.core.config import Config, ServerEntry
     from tests.conftest import FakeTransport
 
     config = Config(config_home)
     config.upsert_server(ServerEntry(name="cl9", target="user@cl9", port=22,
-                                     remote_root="/hpc/home/tester/vaspilot-root",
+                                     remote_root="/hpc/home/tester/vasploom-root",
                                      persist="8h", scheduler="slurm"))
     config.set_default_server("cl9")
     transport = FakeTransport(fake_state)
@@ -93,7 +93,7 @@ class TestRemoteCommands:
         assert document["error"]["code"] == "validation_error"
 
     def test_read_refuses_potcar(self, cli, monkeypatch):
-        path = "/hpc/home/tester/vaspilot-root/run/POTCAR"
+        path = "/hpc/home/tester/vasploom-root/run/POTCAR"
         code, document, _, _ = run_cli(["remote", "read", path], monkeypatch)
         assert code == 5
         assert "POTCAR" in document["error"]["message"]
@@ -104,26 +104,26 @@ class TestRemoteCommands:
         local.write_text("SYSTEM = x\n", encoding="utf-8")
         code, document, _, _ = run_cli(
             ["remote", "upload", str(local),
-             "/hpc/home/tester/vaspilot-root/run/INCAR"], monkeypatch)
+             "/hpc/home/tester/vasploom-root/run/INCAR"], monkeypatch)
         assert code == 0
         assert document["sha256"]
         target = tmp_path / "downloaded"
         code, document, _, _ = run_cli(
             ["remote", "download",
-             "/hpc/home/tester/vaspilot-root/run/INCAR", str(target)],
+             "/hpc/home/tester/vasploom-root/run/INCAR", str(target)],
             monkeypatch)
         assert code == 0
         assert target.read_text(encoding="utf-8") == "SYSTEM = x\n"
         # downloads never overwrite
         code, document, _, _ = run_cli(
             ["remote", "download",
-             "/hpc/home/tester/vaspilot-root/run/INCAR", str(target)],
+             "/hpc/home/tester/vasploom-root/run/INCAR", str(target)],
             monkeypatch)
         assert code == 5
 
     def test_purge_requires_double_match(self, cli, fake_state, monkeypatch):
         code, document, _, _ = run_cli(
-            ["remote", "trash", "/hpc/home/tester/vaspilot-root/runs/bad"],
+            ["remote", "trash", "/hpc/home/tester/vasploom-root/runs/bad"],
             monkeypatch)
         assert code == 0
         trash_id = document["trash_id"]
@@ -141,7 +141,7 @@ class TestRemoteCommands:
 
 class TestWorkspaceCommands:
     def test_open_uses_vlab_workspace_gateway_not_remote_ssh(self, cli, monkeypatch):
-        path = "/hpc/home/tester/vaspilot-root/runs/relax"
+        path = "/hpc/home/tester/vasploom-root/runs/relax"
         code, document, _, _ = run_cli(
             ["workspace", "open", "--server", "cl9", "--path", path], monkeypatch)
         assert code == 0
@@ -152,7 +152,7 @@ class TestWorkspaceCommands:
 
     def test_status_and_close_are_structured(self, cli, monkeypatch):
         run_cli(["workspace", "open", "--server", "cl9", "--path",
-                 "/hpc/home/tester/vaspilot-root/runs/relax"], monkeypatch)
+                 "/hpc/home/tester/vasploom-root/runs/relax"], monkeypatch)
         code, document, _, _ = run_cli(
             ["workspace", "status", "--workspace", "ws-1234abcd"], monkeypatch)
         assert code == 0
@@ -166,7 +166,7 @@ class TestWorkspaceCommands:
 class TestJobCommands:
     def test_progress_reports_science_only(self, cli, monkeypatch):
         code, document, _, _ = run_cli(
-            ["job", "progress", "/hpc/home/tester/vaspilot-root/runs/good"],
+            ["job", "progress", "/hpc/home/tester/vasploom-root/runs/good"],
             monkeypatch)
         assert code == 0
         assert document["scientific_converged"] is True

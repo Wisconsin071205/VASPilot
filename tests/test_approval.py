@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from vaspilot.core.errors import ApprovalError
-from vaspilot.workflow.approval import (decode_token, issue_token,
+from vasploom.core.errors import ApprovalError
+from vasploom.workflow.approval import (decode_token, issue_token,
                                         verify_token)
 
 KEY = b"k" * 48
@@ -85,7 +85,7 @@ class TestIssueVerify:
 
     def test_model_cannot_mint_without_key(self):
         """A forged unsigned payload fails signature verification."""
-        from vaspilot.core.hashing import canonical_json
+        from vasploom.core.hashing import canonical_json
         import base64
         payload = {"token_id": "0" * 16, "server": SERVER, "plan_hash": PLAN,
                    "files_hash": FILES, "action": "workflow_run",

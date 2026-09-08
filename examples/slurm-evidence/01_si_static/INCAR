@@ -1,0 +1,17 @@
+SYSTEM = Si-static
+ENCUT  = 400
+PREC   = Accurate
+EDIFF  = 1E-6
+ALGO   = Normal
+
+IBRION = -1
+NSW    = 0
+
+ISMEAR = 0
+SIGMA  = 0.05
+LREAL  = .FALSE.
+LASPH  = .TRUE.
+
+LWAVE  = .FALSE.
+LCHARG = .FALSE.
+

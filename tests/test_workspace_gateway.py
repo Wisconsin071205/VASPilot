@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 
-ROOT = "/hpc/home/tester/vaspilot-root"
+ROOT = "/hpc/home/tester/vasploom-root"
 MODULE_PATH = (Path(__file__).resolve().parents[1] / "gateway" /
                "huwei-workspace-gateway" / "huwei_workspace_gateway.py")
 SPEC = importlib.util.spec_from_file_location("huwei_workspace_gateway", MODULE_PATH)
@@ -31,7 +31,7 @@ def gateway(tmp_path):
         "remote_root": ROOT, "auth_mode": "key", "auto_connect": True,
     }}}), encoding="utf-8")
     return gateway_module.WorkspaceGateway(root=tmp_path / "workspaces",
-                                           vaspilot_config=catalog)
+                                           vasploom_config=catalog)
 
 
 def test_workspace_defaults_use_writes_not_full(gateway):
