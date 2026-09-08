@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-GATEWAY = SRC / "vaspilot" / "gateway" / "vaspilot_gateway.py"
-ROOT = "/hpc/home/tester/vaspilot-root"
+GATEWAY = SRC / "vasploom" / "gateway" / "vasploom_gateway.py"
+ROOT = "/hpc/home/tester/vasploom-root"
 
 
 @pytest.fixture()
@@ -38,13 +38,13 @@ def gateway_env(tmp_path, monkeypatch):
                             "scheduler": "slurm"}},
         "stage_dir": str(stage), "next_job_id": 2000, "jobs": {},
     }), encoding="utf-8")
-    monkeypatch.setenv("VASPILOT_GATEWAY_CONFIG", str(config_dir))
-    monkeypatch.setenv("VASPILOT_GATEWAY_CACHE", str(cache_dir))
-    monkeypatch.setenv("VASPILOT_FAKE_HPC", str(Path(__file__).parent / "fake_hpc.py"))
-    monkeypatch.setenv("VASPILOT_FAKE_HPC_CONFIG", str(fake_config))
+    monkeypatch.setenv("VASPLOOM_GATEWAY_CONFIG", str(config_dir))
+    monkeypatch.setenv("VASPLOOM_GATEWAY_CACHE", str(cache_dir))
+    monkeypatch.setenv("VASPLOOM_FAKE_HPC", str(Path(__file__).parent / "fake_hpc.py"))
+    monkeypatch.setenv("VASPLOOM_FAKE_HPC_CONFIG", str(fake_config))
     # gateway-local stage reads resolve into the fixture stage dir
-    monkeypatch.setenv("VASPILOT_GATEWAY_STAGE_DIR", str(stage))
-    # the gateway generates per-server keys under ~/.ssh/vaspilot —
+    monkeypatch.setenv("VASPLOOM_GATEWAY_STAGE_DIR", str(stage))
+    # the gateway generates per-server keys under ~/.ssh/vasploom —
     # redirect HOME/USERPROFILE so tests never touch the real home
     monkeypatch.setenv("HOME", str(vlab_home))
     monkeypatch.setenv("USERPROFILE", str(vlab_home))
@@ -133,21 +133,21 @@ class TestFileOperations:
         import hashlib
         sha = hashlib.sha256(b"payload-bytes").hexdigest()
         # tampered hash -> mismatch
-        result = run("upload", "--server", "cl9", "/tmp/vaspilot-abcdef0123456789",
+        result = run("upload", "--server", "cl9", "/tmp/vasploom-abcdef0123456789",
                      f"{ROOT}/up/INCAR", "0" * 64)
         assert result is None or not result.get("ok")
         # write the stage where the fake expects it, then upload for real
-        expected_stage = stage / "vaspilot-abcdef0123456789"
+        expected_stage = stage / "vasploom-abcdef0123456789"
         expected_stage.parent.mkdir(parents=True, exist_ok=True)
         expected_stage.write_bytes(b"payload-bytes")
         result = run("upload", "--server", "cl9",
-                     "/tmp/vaspilot-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
+                     "/tmp/vasploom-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
         assert result["ok"]
         assert (fs / "up" / "INCAR").read_bytes() == b"payload-bytes"
         # a second identical upload is idempotent; the CLI re-stages each time
         expected_stage.write_bytes(b"payload-bytes")
         result = run("upload", "--server", "cl9",
-                     "/tmp/vaspilot-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
+                     "/tmp/vasploom-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
         assert result["ok"] and result["status"] == "identical"
 
     def test_download_reports_sha(self, gateway_env):
@@ -155,7 +155,7 @@ class TestFileOperations:
         (fs / "dl").mkdir(exist_ok=True)
         (fs / "dl" / "OSZICAR").write_bytes(b"   1 F= -.1E+02\n")
         result = run("download", "--server", "cl9", f"{ROOT}/dl/OSZICAR",
-                     "/tmp/vaspilot-0011223344556677")
+                     "/tmp/vasploom-0011223344556677")
         assert result["ok"]
         import hashlib
         assert result["sha256"] == hashlib.sha256(b"   1 F= -.1E+02\n").hexdigest()
@@ -289,7 +289,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.3.4"
+        assert result["gateway_version"] == "1.3.5"
 
     def test_transient_credential_connect_is_not_persisted(self, gateway_env):
         password = "transient-password!"
@@ -330,11 +330,11 @@ class TestCatalogAndSessions:
         clean update, denylist refusal — all through the real gateway."""
         import hashlib
         stage = gateway_env["stage"]
-        stage_arg = "/tmp/vaspilot-aaaa1111"
+        stage_arg = "/tmp/vasploom-aaaa1111"
         target = f"{ROOT}/runs/written.txt"
 
         content = b"hello structured write\n"
-        (stage / "vaspilot-aaaa1111").write_bytes(content)
+        (stage / "vasploom-aaaa1111").write_bytes(content)
         doc = gateway_env["run"]("write", "--server", "cl9",
                                  "--expected-sha", "",
                                  stage_arg, target, check=True)
@@ -344,7 +344,7 @@ class TestCatalogAndSessions:
         assert real.read_bytes() == content
 
         # stale baseline -> remote_changed, original file untouched
-        (stage / "vaspilot-aaaa1111").write_bytes(b"second attempt\n")
+        (stage / "vasploom-aaaa1111").write_bytes(b"second attempt\n")
         doc = gateway_env["run"]("write", "--server", "cl9",
                                  "--expected-sha", "0" * 64,
                                  stage_arg, target)
@@ -352,7 +352,7 @@ class TestCatalogAndSessions:
         assert real.read_bytes() == content
 
         # clean update with the correct baseline (current remote sha)
-        (stage / "vaspilot-aaaa1111").write_bytes(b"second attempt\n")
+        (stage / "vasploom-aaaa1111").write_bytes(b"second attempt\n")
         doc = gateway_env["run"]("write", "--server", "cl9",
                                  "--expected-sha", baseline,
                                  stage_arg, target, check=True)
@@ -401,7 +401,7 @@ class TestCatalogAndSessions:
 def test_pbs_sched_section_columns():
     """qstat -q columns must map to state/run/queued correctly (v1.2.0 fix:
     previously 状态 showed the Run count)."""
-    from vaspilot.gateway.client import _parse_metric_sections
+    from vasploom.gateway.client import _parse_metric_sections
     parsed = _parse_metric_sections({
         "sched": "pbs\n"
                  "Queue Memory CPU_Time Time_In_Q Run Que Lm State\n"

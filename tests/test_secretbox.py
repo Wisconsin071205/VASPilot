@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vaspilot.core import secretbox
+from vasploom.core import secretbox
 
 pytestmark = pytest.mark.skipif(
     not secretbox.available(), reason="DPAPI requires Windows")
@@ -35,7 +35,7 @@ def test_b64_helpers():
 
 class TestProviderKeyVault:
     def test_store_read_delete(self, config_home):
-        from vaspilot.core.config import Config
+        from vasploom.core.config import Config
         config = Config(config_home)
         config.set_provider_key("glm", "sk-live-abc")
         assert config.provider_key_saved("glm") is True
@@ -45,7 +45,7 @@ class TestProviderKeyVault:
         assert config.get_provider_key("glm") == ""
 
     def test_key_never_appears_in_settings_json(self, config_home):
-        from vaspilot.core.config import Config
+        from vasploom.core.config import Config
         config = Config(config_home)
         config.set_provider_key("glm", "SK-PLAINTEXT-MARKER")
         raw = (config_home / "settings.json").read_text(encoding="utf-8")

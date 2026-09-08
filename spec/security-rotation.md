@@ -6,7 +6,7 @@
 ## 本机加密凭据策略
 
 - Vlab 中转和直连服务器都可选择保存登录密码和 TOTP 种子；二者以 Windows DPAPI
-  `CurrentUser` 作用域加密，写入 `~/.vaspilot/settings.json` 的仅是密文。
+  `CurrentUser` 作用域加密，写入 `~/.vasploom/settings.json` 的仅是密文。
 - 密文只在发起认证时短暂解密，不进入计划、审计或聊天导出。直连由本机
   OpenSSH 使用；Vlab 中转只经已验证的 SSH 通道发送密码和即时生成的六位码，
   TOTP 种子不离开本机，Vlab 不落盘保存密码或验证码。

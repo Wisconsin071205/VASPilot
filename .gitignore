@@ -10,6 +10,11 @@ ENV/
 .pytest_cache/
 pytest-cache-files-*/
 .test-tmp/
+/.audit-pytest/
+/.pytest-tmp/
+/.pytest-delete-tmp*/
+/rename-test-temp/
+/tmp1s_t776w/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -19,9 +24,24 @@ htmlcov/
 # Build and local tool output
 build/
 dist/
+/build-submission.log
 .zcode/
 .tmp_manual_render/
-artifacts/vaspilot_manual/render*/
+artifacts/vasploom_manual/render*/
+/.doc-work/
+/artifacts/evidence-*-tmp/
+/artifacts/competition_submission/03-program/
+*.vsix
+*.whl
+*.spec.bak
+
+# OS/editor temporary files (keep shared .vscode project settings)
+.DS_Store
+Thumbs.db
+Desktop.ini
+~$*
+*.swp
+*.swo
 
 # Node bridge dependencies and compiled output
 apps/huwei-agent-vscode-bridge/node_modules/
@@ -30,8 +50,40 @@ apps/huwei-agent-vscode-bridge/out/
 # Local documents and generated presentation exports
 build_ppt/
 *.pptx
+/VaspLoom_详细使用手册.docx
+/artifacts/**/*.docx
+/artifacts/**/*.pdf
+/artifacts/**/*.mp4
+/artifacts/design_document/render/
+/artifacts/design_document/final-render/
+/artifacts/design_document/revision-review/
 
 # Local secrets/config overrides
 .env
 .env.*
 !.env.example
+!.env.*.example
+*.pem
+*.key
+/.vasploom/
+
+# Generated/licensed files from the small Slurm VASP examples
+examples/slurm-evidence/**/POTCAR
+examples/slurm-evidence/**/CHG
+examples/slurm-evidence/**/CHGCAR
+examples/slurm-evidence/**/CONTCAR
+examples/slurm-evidence/**/DOSCAR
+examples/slurm-evidence/**/EIGENVAL
+examples/slurm-evidence/**/IBZKPT
+examples/slurm-evidence/**/OSZICAR
+examples/slurm-evidence/**/OUTCAR
+examples/slurm-evidence/**/PCDAT
+examples/slurm-evidence/**/PROCAR
+examples/slurm-evidence/**/REPORT
+examples/slurm-evidence/**/vasprun.xml
+examples/slurm-evidence/**/WAVECAR
+examples/slurm-evidence/**/XDATCAR
+examples/slurm-evidence/**/vasp.out
+examples/slurm-evidence/**/vasploom-*.out
+examples/slurm-evidence/**/vasploom-*.err
+examples/slurm-evidence/**/evidence-*/

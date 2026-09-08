@@ -1,4 +1,4 @@
-# vasp 调度计算智能体 Workspace Gateway
+# 晶织：VASP 服务端计算控制智能体 Workspace Gateway
 
 此单文件组件运行在 Vlab，管理“完整工作区模式”的 rclone SFTP 挂载。它不在
 `cl12`、`minus` 等目标服务器部署程序；VS Code Remote-SSH 只进入 Vlab。
@@ -23,7 +23,7 @@
 ## 前提
 
 1. Vlab 已安装 `rclone` 和 FUSE/fusermount。
-2. 服务器在 `~/.config/vaspilot/servers.json` 中登记了非宽泛的 `remote_root`。
+2. 服务器在 `~/.config/vasploom/servers.json` 中登记了非宽泛的 `remote_root`。
 3. 该服务器已经完成 Vlab 专用密钥登录；目标主机密钥已存在于 Vlab 的
    `~/.ssh/known_hosts`。
 4. 先运行 `huwei workspace doctor --server cl12 --path /.../01_relax`。

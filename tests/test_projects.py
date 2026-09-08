@@ -11,9 +11,9 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vaspilot.core.config import Config
-from vaspilot.core.errors import ValidationError
-from vaspilot.workflow.projects import ProjectStore, TEMPLATES
+from vasploom.core.config import Config
+from vasploom.core.errors import ValidationError
+from vasploom.workflow.projects import ProjectStore, TEMPLATES
 
 
 @pytest.fixture()

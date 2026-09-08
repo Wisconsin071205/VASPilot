@@ -7,15 +7,15 @@ import subprocess
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.gateway.transport import SshTransport
+from vasploom.core.errors import ValidationError
+from vasploom.gateway.transport import SshTransport
 
 
 @pytest.fixture()
 def transport():
     return SshTransport(host="vlab.ustc.edu.cn", user="ubuntu", port=22,
                         identity_file=r"C:\u\id.pem",
-                        gateway_path="~/bin/vaspilot-gateway")
+                        gateway_path="~/bin/vasploom-gateway")
 
 
 class TestOpenConnectTerminal:
@@ -50,7 +50,7 @@ class TestOpenConnectTerminal:
         # already-connected check runs BEFORE the master spawn
         assert joined.index("-O check") < joined.index("-fN")
         # no legacy gateway-script indirection left in the path
-        assert "vaspilot-gateway" not in joined
+        assert "vasploom-gateway" not in joined
 
     def test_invalid_server_or_target_rejected(self, transport, monkeypatch):
         def fake_popen(cmd, creationflags=0, **kw):
@@ -101,7 +101,7 @@ class TestOpenConnectTerminal:
                 assert "-O" in cmd
                 return 0, "", ""
             if "mv -f" in joined:
-                return 0, "VASPilot gateway version 1.5.0", ""
+                return 0, "VaspLoom gateway version 1.5.0", ""
             return 0, json.dumps({"ok": True, "servers": {}}), ""
 
         t = SshTransport(host="vlab.ustc.edu.cn", user="ubuntu",
@@ -120,15 +120,15 @@ class TestOpenConnectTerminal:
             joined = " ".join(cmd)
             if "test -x" in joined:
                 return 0, "", ""
-            if joined.endswith("vaspilot-gateway version"):
+            if joined.endswith("vasploom-gateway version"):
                 return 0, json.dumps({
-                    "ok": True, "gateway_version": "1.3.3",
+                    "ok": True, "gateway_version": "1.3.4",
                     "protocol": "2"}), ""
             if cmd[0] == "scp":
                 return 0, "", ""
             if "mv -f" in joined:
                 return 0, json.dumps({
-                    "ok": True, "gateway_version": "1.3.4",
+                    "ok": True, "gateway_version": "1.3.5",
                     "protocol": "2"}), ""
             return 0, json.dumps({"ok": True, "servers": {}}), ""
 

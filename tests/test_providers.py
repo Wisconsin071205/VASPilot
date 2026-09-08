@@ -13,10 +13,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from vaspilot.core.config import ProviderEntry
-from vaspilot.core.errors import ProviderError
-from vaspilot.providers import build_provider
-from vaspilot.providers.base import ANALYSIS_ONLY, FULL
+from vasploom.core.config import ProviderEntry
+from vasploom.core.errors import ProviderError
+from vasploom.providers import build_provider
+from vasploom.providers.base import ANALYSIS_ONLY, FULL
 
 
 def _sse(handler, events):
@@ -169,7 +169,7 @@ def mock_backend():
 def _entry(protocol, port, model="test-model", pid="p1"):
     return ProviderEntry(id=pid, name="Test", protocol=protocol,
                          base_url=f"http://127.0.0.1:{port}/v1",
-                         model=model, api_key_env="VASPILOT_TEST_KEY")
+                         model=model, api_key_env="VASPLOOM_TEST_KEY")
 
 
 def _tools():
@@ -182,7 +182,7 @@ def _tools():
 
 class TestChatCompatible:
     def test_streaming_tool_calls(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "sse_tools"
         provider = build_provider(_entry("openai-chat-compatible",
                                          mock_backend.server_address[1]))
@@ -194,7 +194,7 @@ class TestChatCompatible:
 
     def test_invalid_json_content_passes_through(self, mock_backend,
                                                  monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "bad_json"
         provider = build_provider(_entry("openai-chat-compatible",
                                          mock_backend.server_address[1]))
@@ -204,7 +204,7 @@ class TestChatCompatible:
 
     def test_interrupted_multi_tool_arguments(self, mock_backend, monkeypatch):
         """A truncated second call must surface as a hard JSON error."""
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "interrupted"
         provider = build_provider(_entry("openai-chat-compatible",
                                          mock_backend.server_address[1]))
@@ -212,7 +212,7 @@ class TestChatCompatible:
             provider.chat([{"role": "user", "content": "go"}], _tools())
 
     def test_probe_full_mode(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
 
         def route(body):
             if any(t.get("function", {}).get("name") == "probe_echo"
@@ -233,7 +233,7 @@ class TestChatCompatible:
         assert report.mode == FULL
 
     def test_probe_degrades_to_analysis_only(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         provider = build_provider(_entry("openai-chat-compatible",
                                          mock_backend.server_address[1]))
         report = provider.probe()
@@ -247,7 +247,7 @@ class TestChatCompatible:
         """An endpoint without response_format support stays FULL when
         reachability/streaming/tool-calling all pass (common with GLM web
         proxies): the runtime never consumes json_object mode."""
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
 
         def route(body):
             if any(t.get("function", {}).get("name") == "probe_echo"
@@ -267,7 +267,7 @@ class TestChatCompatible:
         assert "informational only" in report.detail
 
     def test_rate_limit_retry_then_success(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "tools"
         mock_backend.status = 429
         mock_backend.fail_times = 1
@@ -278,7 +278,7 @@ class TestChatCompatible:
         assert reply.finish == "tools"
 
     def test_unreachable_provider(self, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         provider = build_provider(_entry("openai-chat-compatible", 1, pid="dead"))
         report = provider.probe()
         assert report.reachable is False
@@ -289,7 +289,7 @@ class TestChatCompatible:
 
 class TestResponsesProtocol:
     def test_streaming_function_call(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "sse_tools"
         provider = build_provider(_entry("openai-responses",
                                          mock_backend.server_address[1]))
@@ -299,7 +299,7 @@ class TestResponsesProtocol:
         assert reply.tool_calls[0].arguments == {"server": "cl9"}
 
     def test_blocking_text(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "text"
         provider = build_provider(_entry("openai-responses",
                                          mock_backend.server_address[1]))
@@ -307,7 +307,7 @@ class TestResponsesProtocol:
         assert reply.text == "hello"
 
     def test_rate_limit_retry_then_success(self, mock_backend, monkeypatch):
-        monkeypatch.setenv("VASPILOT_TEST_KEY", "k")
+        monkeypatch.setenv("VASPLOOM_TEST_KEY", "k")
         mock_backend.behavior = "text"
         mock_backend.status = 429
         mock_backend.fail_times = 1
@@ -343,7 +343,7 @@ class TestCodexBridge:
             "live:{json:false,stream:false,tool_call:false},"
             "detail:'offline probe'})+'\\n');\n"
             "});\n")
-        monkeypatch.setenv("VASPILOT_CODEX_BRIDGE_FAKE",
+        monkeypatch.setenv("VASPLOOM_CODEX_BRIDGE_FAKE",
                            _fake_bridge(tmp_path, script))
         provider = build_provider(_codex_entry())
         report = provider.probe(offline=True)
@@ -366,7 +366,7 @@ class TestCodexBridge:
             "[{\"name\":\"remote_list\",\"arguments\":"
             "{\"server\":\"cl9\"}}]}',usage:{}})+'\\n');\n"
             "});\n")
-        monkeypatch.setenv("VASPILOT_CODEX_BRIDGE_FAKE",
+        monkeypatch.setenv("VASPLOOM_CODEX_BRIDGE_FAKE",
                            _fake_bridge(tmp_path, script))
         provider = build_provider(_codex_entry())
         reply = provider.chat([{"role": "user", "content": "list"}], _tools())
@@ -385,7 +385,7 @@ class TestCodexBridge:
             "type:'final',text:'{\"action\":\"final\",\"text\":"
             "\"all good\"}',usage:{}})+'\\n');\n"
             "});\n")
-        monkeypatch.setenv("VASPILOT_CODEX_BRIDGE_FAKE",
+        monkeypatch.setenv("VASPLOOM_CODEX_BRIDGE_FAKE",
                            _fake_bridge(tmp_path, script))
         provider = build_provider(_codex_entry())
         reply = provider.chat([{"role": "user", "content": "status?"}], [])
@@ -405,7 +405,7 @@ class TestCodexBridge:
             "live:{json:false,stream:false,tool_call:false},"
             "detail:'neither available'})+'\\n');\n"
             "});\n")
-        monkeypatch.setenv("VASPILOT_CODEX_BRIDGE_FAKE",
+        monkeypatch.setenv("VASPLOOM_CODEX_BRIDGE_FAKE",
                            _fake_bridge(tmp_path, script))
         provider = build_provider(_codex_entry())
         report = provider.probe(offline=True)
@@ -414,7 +414,7 @@ class TestCodexBridge:
 
     def test_real_bridge_probe_offline(self, monkeypatch):
         """The shipped bridge must at least report a backend without calls."""
-        monkeypatch.delenv("VASPILOT_CODEX_BRIDGE_FAKE", raising=False)
+        monkeypatch.delenv("VASPLOOM_CODEX_BRIDGE_FAKE", raising=False)
         provider = build_provider(_codex_entry())
         report = provider.probe(offline=True)
         # node exists on this machine, so the bridge replies; without any
@@ -426,22 +426,22 @@ def _remote_entry_no_key():
     return ProviderEntry(id="nk", name="NoKey",
                          protocol="openai-chat-compatible",
                          base_url="https://api.example.com/v1",
-                         model="m", api_key_env="VASPILOT_DEFINITELY_UNSET_XYZ")
+                         model="m", api_key_env="VASPLOOM_DEFINITELY_UNSET_XYZ")
 
 
 class TestAuthFailFast:
     def test_remote_without_key_raises_clear_error(self, monkeypatch):
-        monkeypatch.delenv("VASPILOT_DEFINITELY_UNSET_XYZ", raising=False)
-        with pytest.raises(ProviderError, match="VASPILOT_DEFINITELY_UNSET_XYZ"):
+        monkeypatch.delenv("VASPLOOM_DEFINITELY_UNSET_XYZ", raising=False)
+        with pytest.raises(ProviderError, match="VASPLOOM_DEFINITELY_UNSET_XYZ"):
             build_provider(_remote_entry_no_key())
 
     def test_remote_with_key_constructs(self, monkeypatch):
-        monkeypatch.setenv("VASPILOT_DEFINITELY_UNSET_XYZ", "k")
+        monkeypatch.setenv("VASPLOOM_DEFINITELY_UNSET_XYZ", "k")
         provider = build_provider(_remote_entry_no_key())
         assert provider.api_key == "k"
 
     def test_local_backend_exempt_from_key(self, monkeypatch):
-        monkeypatch.delenv("VASPILOT_DEFINITELY_UNSET_XYZ", raising=False)
+        monkeypatch.delenv("VASPLOOM_DEFINITELY_UNSET_XYZ", raising=False)
         entry = ProviderEntry(id="local", name="L",
                               protocol="openai-chat-compatible",
                               base_url="http://127.0.0.1:11434/v1",

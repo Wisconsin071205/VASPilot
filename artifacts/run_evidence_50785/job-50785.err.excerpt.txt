@@ -1,0 +1,3 @@
+Loading vasp/5.4.4-oneapi-2024.1
+  Loading requirement: tbb/latest compiler-rt/latest oclfpga/latest
+    compiler/latest mpi/latest mkl/latest

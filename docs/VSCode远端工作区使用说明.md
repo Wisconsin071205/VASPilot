@@ -1,4 +1,4 @@
-# vasp 调度计算智能体：单版本 VS Code 远端工作区
+# 晶织：VASP 服务端计算控制智能体：单版本 VS Code 远端工作区
 
 本项目只使用一个最新版 VS Code。请不要安装 VS Code 1.85 或为老服务器保留第二个
 VS Code。`cl12`、`minus` 等 CentOS 7 服务器不安装 VS Code Server，也不会被
@@ -82,7 +82,7 @@ VS Code Server 只会出现在 Vlab，不会出现在 `cl12/minus`。
 5. 查看底部状态栏：
 
    ```text
-   vasp 调度计算智能体: cl12 · 01_relax · 已同步
+   晶织：VASP 服务端计算控制智能体: cl12 · 01_relax · 已同步
    ```
 
    图标含义：勾号为已同步、蓝色旋转图标为上传中、黄色警告为存在未同步修改、锁为
@@ -147,7 +147,7 @@ huwei workspace cleanup --apply --confirm CLEANUP-CLOSED-WORKSPACES
 也可在服务器编辑窗口将密码和 TOTP 种子按 Windows DPAPI 加密保存，按周期
 确认后自动连接。完整工作区本身仍只通过 Vlab。
 
-**提示写入租约冲突**：说明已有 vasp 调度计算智能体创建的重叠可写工作区。关闭前一个，
+**提示写入租约冲突**：说明已有 晶织：VASP 服务端计算控制智能体创建的重叠可写工作区。关闭前一个，
 或将当前目录改为只读打开。
 
 **提示同步未完成，不能关闭**：这是保护行为。保持工作区，稍后重试关闭或使用

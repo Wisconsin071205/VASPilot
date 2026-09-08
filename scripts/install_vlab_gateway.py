@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Deploy both VASPilot gateway helpers onto the Vlab host.
+"""Deploy both VaspLoom gateway helpers onto the Vlab host.
 
 scp the gateway script to a staging path, normalize CRLF, byte-compile it for
 validation, then atomically replace the live helper. The previous version
 stays untouched when validation fails. No credentials are handled here: ssh
-uses your key/agent exactly like every other VASPilot operation.
+uses your key/agent exactly like every other VaspLoom operation.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-GATEWAY = REPO / "src" / "vaspilot" / "gateway" / "vaspilot_gateway.py"
+GATEWAY = REPO / "src" / "vasploom" / "gateway" / "vasploom_gateway.py"
 WORKSPACE_GATEWAY = (REPO / "gateway" / "huwei-workspace-gateway"
                      / "huwei_workspace_gateway.py")
 
@@ -23,11 +23,11 @@ WORKSPACE_GATEWAY = (REPO / "gateway" / "huwei-workspace-gateway"
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--identity-file", default="",
-                        help="Vlab PEM path (or set VASPILOT_IDENTITY_FILE)")
+                        help="Vlab PEM path (or set VASPLOOM_IDENTITY_FILE)")
     parser.add_argument("--host", default="vlab.ustc.edu.cn")
     parser.add_argument("--user", default="ubuntu")
     parser.add_argument("--port", type=int, default=22)
-    parser.add_argument("--remote-path", default="~/bin/vaspilot-gateway")
+    parser.add_argument("--remote-path", default="~/bin/vasploom-gateway")
     parser.add_argument("--workspace-remote-path",
                         default="~/bin/huwei-workspace-gateway")
     args = parser.parse_args()
@@ -39,9 +39,9 @@ def main() -> int:
     identity = args.identity_file.strip()
     if not identity:
         import os
-        identity = os.environ.get("VASPILOT_IDENTITY_FILE", "").strip()
+        identity = os.environ.get("VASPLOOM_IDENTITY_FILE", "").strip()
     if not identity:
-        print("provide --identity-file or set VASPILOT_IDENTITY_FILE",
+        print("provide --identity-file or set VASPLOOM_IDENTITY_FILE",
               file=sys.stderr)
         return 1
 
@@ -52,16 +52,16 @@ def main() -> int:
     print(f"deploying the gateway helper to {target}:{args.remote_path} ...")
     prepare = subprocess.run(
         ["ssh", "-q", *base, target,
-         "mkdir -p ~/bin ~/.config/vaspilot ~/.cache/vaspilot && "
+         "mkdir -p ~/bin ~/.config/vasploom ~/.cache/vasploom && "
          "mkdir -p ~/.huwei-agent/workspaces && "
-         "chmod 700 ~/bin ~/.config/vaspilot ~/.cache/vaspilot "
+         "chmod 700 ~/bin ~/.config/vasploom ~/.cache/vasploom "
          "~/.huwei-agent ~/.huwei-agent/workspaces"])
     if prepare.returncode != 0:
         print("could not prepare the Vlab directories", file=sys.stderr)
         return prepare.returncode
 
     helpers = (
-        (GATEWAY, args.remote_path, "/tmp/vaspilot-gateway.new"),
+        (GATEWAY, args.remote_path, "/tmp/vasploom-gateway.new"),
         (WORKSPACE_GATEWAY, args.workspace_remote_path,
          "/tmp/huwei-workspace-gateway.new"),
     )

@@ -17,7 +17,7 @@ from tests.conftest import ROOT
 
 # ----------------------------------------------------------------- config
 def test_legacy_entry_migrates_to_interactive():
-    from vaspilot.core.config import ServerEntry
+    from vasploom.core.config import ServerEntry
     entry = ServerEntry.from_dict({
         "name": "cl9", "target": "u@h", "port": 22,
         "remote_root": ROOT, "persist": "8h", "scheduler": "pbs",
@@ -27,7 +27,7 @@ def test_legacy_entry_migrates_to_interactive():
 
 
 def test_key_mode_round_trip():
-    from vaspilot.core.config import ServerEntry
+    from vasploom.core.config import ServerEntry
     entry = ServerEntry(name="cl9", target="u@h", port=22,
                         remote_root=ROOT, persist="8h", scheduler="pbs",
                         auth_mode="key", auto_connect=True)
@@ -38,19 +38,19 @@ def test_key_mode_round_trip():
 
 
 def test_bad_auth_mode_falls_back():
-    from vaspilot.core.config import ServerEntry
+    from vasploom.core.config import ServerEntry
     entry = ServerEntry(name="x", target="u@x", auth_mode="password123")
     assert entry.auth_mode == "interactive"
 
 
 # ------------------------------------------------------ name-injection guard
 def test_key_paths_reject_injected_names():
-    from vaspilot.gateway import vaspilot_gateway as gw
+    from vasploom.gateway import vasploom_gateway as gw
     for bad in ("../evil", "a/b", ".", "..", "x y"):
         with pytest.raises(Exception):
             gw._key_paths(bad)
     priv, pub = gw._key_paths("cl9")
-    assert priv.parent.name == "vaspilot" and pub.suffix == ".pub"
+    assert priv.parent.name == "vasploom" and pub.suffix == ".pub"
 
 
 # ------------------------------------------------------- client-level flows
@@ -72,7 +72,7 @@ def test_key_status_never_leaks_material(app_with_fake):
     client.key_generate("cl9")
     payload = client.key_status("cl9")
     blob = json.dumps(payload, ensure_ascii=False)
-    assert "vaspilot/" not in blob          # key directory name
+    assert "vasploom/" not in blob          # key directory name
     assert "PRIVATE" not in blob
     assert "FAKEPUB" not in blob
     assert payload["key_material_present"] is True
@@ -108,7 +108,7 @@ def test_key_revoke_needs_exact_confirm(app_with_fake):
 def test_interactive_connect_never_autofills(app_with_fake):
     app, transport = app_with_fake
     client = app.client()
-    from vaspilot.core.errors import AuthRequiredError
+    from vasploom.core.errors import AuthRequiredError
     with pytest.raises(AuthRequiredError):
         client.connect("cl9")               # interactive server
 

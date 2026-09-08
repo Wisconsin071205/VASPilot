@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vaspilot"
-version = "1.3.0"
+name = "vasploom"
+version = "1.5.0"
 description = "CLI-first, multi-model VASP/HPC agent with restricted, auditable remote operations"
 requires-python = ">=3.11"
 license = { text = "Proprietary (research prototype)" }
@@ -18,8 +18,8 @@ provenance = ["aiida-core"]
 automation = ["pymatgen", "custodian", "atomate2", "dpdispatcher", "aiida-core"]
 
 [project.scripts]
-vaspilot = "vaspilot.cli.main:main"
-huwei = "vaspilot.cli.main:main"
+vasploom = "vasploom.cli.main:main"
+huwei = "vasploom.cli.main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -28,9 +28,10 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vaspilot.gateway" = ["codex_bridge.mjs"]
+"vasploom.providers" = ["codex_bridge.mjs"]
+"vasploom.ui" = ["static/*.html"]
 
 [tool.pytest.ini_options]
-# Tests must exercise this checkout even when another VASPilot install exists.
+# Tests must exercise this checkout even when another VaspLoom install exists.
 pythonpath = ["src"]
 testpaths = ["tests"]

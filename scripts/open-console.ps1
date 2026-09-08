@@ -1,7 +1,7 @@
-﻿# vasp 调度计算智能体 —— 点击直达控制台
+﻿# 晶织：VASP 服务端计算控制智能体 —— 点击直达控制台
 # 已有实例 -> 直接打开最近就绪地址；没有 -> 启动服务（自带自动开浏览器）
 $ErrorActionPreference = 'SilentlyContinue'
-$log = Join-Path $env:USERPROFILE '.vaspilot\ui.log'
+$log = Join-Path $env:USERPROFILE '.vasploom\ui.log'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 $alive = $false

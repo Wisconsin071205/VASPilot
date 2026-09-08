@@ -17,9 +17,9 @@ from tests.conftest import ROOT
 @pytest.fixture()
 def ui(config_home, fake_state, monkeypatch):
     """A running UI server wired to the fake gateway transport."""
-    from vaspilot.ui import server as ui_server
-    from vaspilot.cli.main import App
-    from vaspilot.core.config import Config, ServerEntry, ProviderEntry
+    from vasploom.ui import server as ui_server
+    from vasploom.cli.main import App
+    from vasploom.core.config import Config, ServerEntry, ProviderEntry
     from tests.conftest import FakeTransport
 
     config = Config(config_home)
@@ -36,14 +36,14 @@ def ui(config_home, fake_state, monkeypatch):
     transport = FakeTransport(fake_state)
     monkeypatch.setattr(App, "transport", lambda self: transport)
     # bind a scripted provider so agent chat works without network; patch the
-    # name as imported INSIDE vaspilot.cli.agent (module-level import)
+    # name as imported INSIDE vasploom.cli.agent (module-level import)
     scripted = ScriptedProvider([
         {"tool_calls": [type("C", (), {"call_id": "1", "name": "remote_pwd",
                                        "arguments": {}})()]},
         {"text": "远端根目录已确认。"},
     ])
     monkeypatch.setattr(
-        "vaspilot.cli.agent.provider_by_id",
+        "vasploom.cli.agent.provider_by_id",
         lambda config, pid: (config.load_providers()[0], scripted))
 
     httpd, url = ui_server.serve(app, host="127.0.0.1", port=0,
@@ -70,7 +70,7 @@ class ScriptedProvider:
                                     "api_key_env": ""})()
 
     def probe(self):
-        from vaspilot.providers.base import CapabilityProbe
+        from vasploom.providers.base import CapabilityProbe
         from datetime import datetime, timezone
         return CapabilityProbe(reachable=True, streaming=True,
                                tool_calling=True, structured_json=True,
@@ -79,7 +79,7 @@ class ScriptedProvider:
                                .isoformat(timespec="seconds"))
 
     def chat(self, messages, tools, *, stream_cb=None):
-        from vaspilot.providers.base import ProviderReply
+        from vasploom.providers.base import ProviderReply
         self.calls.append([dict(m) for m in messages])
         action = self.script.pop(0)
         return ProviderReply(**action)
@@ -97,7 +97,7 @@ def call(ui, action, body=None, token=None, method=None):
         data = json.dumps(body or {}).encode()
     req = urllib.request.Request(url, data=data, method=method or "POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Vaspilot-Token", token if token is not None else ui["token"])
+    req.add_header("X-VaspLoom-Token", token if token is not None else ui["token"])
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -119,18 +119,18 @@ class TestTokenGuard:
             urllib.request.urlopen(f"{ui['base']}/t/old-token", timeout=10)
         body = exc.value.read().decode("utf-8")
         assert exc.value.code == 403
-        assert "会话已过期" in body and "vaspilot ui" in body
+        assert "会话已过期" in body and "vasploom ui" in body
 
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "vasp 调度计算智能体" in body and "vaspilot ui" in body
+        assert "晶织：VASP 服务端计算控制智能体" in body and "vasploom ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "vasp 调度计算智能体" in html and "chatinput" in html
+        assert "晶织：VASP 服务端计算控制智能体" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
@@ -153,7 +153,7 @@ class TestTokenGuard:
         assert "project.update" in html and 'data-act="edit"' in html
 
     def test_local_path_picker_returns_selected_path(self, ui, monkeypatch):
-        from vaspilot.ui import server as ui_server
+        from vasploom.ui import server as ui_server
         monkeypatch.setattr(
             ui_server, "_pick_local_path",
             lambda kind, *, title, initial: (
@@ -179,7 +179,7 @@ class TestPortFallback:
         Windows SO_REUSEADDR would let a second bind succeed silently, so
         the failure is injected at the constructor instead.
         """
-        from vaspilot.ui import server as ui_server
+        from vasploom.ui import server as ui_server
         base_port = int(ui["base"].rsplit(":", 1)[1])
         real_server = ui_server.ThreadingHTTPServer
 
@@ -312,6 +312,23 @@ class TestViews:
         assert report["status"] == "需要处理"
         assert "内存不足" in report["findings"][0]
         assert report["engine"] == "builtin-rules-v1"
+        assert report["evidence"]["job_id"] == "50481"
+        assert "oom-kill" in report["evidence_markdown"]
+        assert report["evidence"]["logs"][0]["scope"]
+
+    def test_job_evidence_survives_missing_vasp_files(self, ui, monkeypatch):
+        from vasploom.gateway.client import GatewayClient
+        from tests.test_evidence import snapshot
+        monkeypatch.setattr(GatewayClient, "job_evidence", lambda *a, **kw: snapshot())
+        def unavailable(*a, **kw):
+            raise RuntimeError("files not yet available")
+        monkeypatch.setattr(GatewayClient, "vasp_progress", unavailable)
+        report = call(ui, "job.analyze", {"server": "cl9", "job_id": "42",
+                       "directory": f"{ROOT}/runs/good", "scheduler_state": "PENDING"})
+        assert report["ok"]
+        assert report["scheduler_state"] == "COMPLETED"
+        assert report["evidence"]["summary"]["queue_wait_seconds"] == 300
+        assert any("进度读取失败" in w for w in report["evidence"]["warnings"])
 
     def test_automation_stack_status_is_honest(self, ui):
         report = call(ui, "automation.stack")
@@ -410,7 +427,7 @@ class TestChatStream:
                              "message": "查看远端根目录"}).encode(),
             method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-Vaspilot-Token", ui["token"])
+        req.add_header("X-VaspLoom-Token", ui["token"])
         with urllib.request.urlopen(req, timeout=60) as response:
             body = response.read().decode("utf-8")
         frames = [json.loads(line[5:])
@@ -420,6 +437,7 @@ class TestChatStream:
         assert "meta" in kinds
         assert "tool" in kinds
         assert "final" in kinds
+        assert kinds.count("final") == 1
         tool = next(f for f in frames if f["type"] == "tool")
         assert tool["tool"] == "remote_pwd" and tool["ok"] is True
         final = next(f for f in frames if f.get("type") == "final"
@@ -436,7 +454,7 @@ class TestChatStream:
         assert exc.value.code == 404
 
     def test_answer_can_be_cancelled(self, ui, monkeypatch):
-        from vaspilot.providers.base import CapabilityProbe, ProviderReply
+        from vasploom.providers.base import CapabilityProbe, ProviderReply
 
         started = threading.Event()
         finished: list[list[dict]] = []
@@ -461,7 +479,7 @@ class TestChatStream:
         provider = SlowProvider()
         entry = ui["app"].config.load_providers()[0]
         monkeypatch.setattr(
-            "vaspilot.cli.agent.provider_by_id",
+            "vasploom.cli.agent.provider_by_id",
             lambda config, pid: (entry, provider))
         request_id = "cancel-test-request"
         thread = threading.Thread(target=lambda: finished.append(sse_chat(ui, {
@@ -486,7 +504,7 @@ class TestSettingsApi:
     """The 配置 page: providers CRUD + DPAPI key vault + vlab settings."""
 
     def test_save_provider_with_key_roundtrip(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPILOT_API_KEY_WEB_X", raising=False)
+        monkeypatch.delenv("VASPLOOM_API_KEY_WEB_X", raising=False)
         payload = {"id": "web1", "name": "Web GLM",
                    "protocol": "openai-chat-compatible",
                    "base_url": "https://api.example.com/v1",
@@ -506,7 +524,7 @@ class TestSettingsApi:
 
         # a FRESH resolution (no env var) finds the key via the vault —
         # this is the exact path chat/probe uses
-        from vaspilot.providers import provider_by_id
+        from vasploom.providers import provider_by_id
         entry, provider = provider_by_id(ui["app"].config, "web1")
         assert provider.api_key == "sk-secret-123"
 
@@ -520,7 +538,7 @@ class TestSettingsApi:
         assert provider2.entry.model == "glm-web-2"
 
     def test_save_reports_missing_auth_but_still_saves(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPILOT_UNSET_REMOTE_Y", raising=False)
+        monkeypatch.delenv("VASPLOOM_UNSET_REMOTE_Y", raising=False)
         saved = call(ui, "provider.save", {
             "id": "noserver", "name": "NoKey Cloud",
             "protocol": "openai-chat-compatible",
@@ -529,8 +547,8 @@ class TestSettingsApi:
         assert saved["ok"] is True
         assert saved["auth_ready"] is False
         # chat would fail with the actionable message, not 401
-        from vaspilot.providers import provider_by_id
-        from vaspilot.core.errors import ProviderError
+        from vasploom.providers import provider_by_id
+        from vasploom.core.errors import ProviderError
         with pytest.raises(ProviderError, match="noserver"):
             provider_by_id(ui["app"].config, "noserver")
 
@@ -642,7 +660,7 @@ def sse_chat(ui, body):
         f"{ui['base']}/api/agent/chat",
         data=json.dumps(body).encode(), method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Vaspilot-Token", ui["token"])
+    req.add_header("X-VaspLoom-Token", ui["token"])
     with urllib.request.urlopen(req, timeout=60) as response:
         text = response.read().decode("utf-8")
     frames = [json.loads(line[5:])
@@ -705,12 +723,24 @@ class TestChatMemory:
         missing = call(ui, "chat.load", {"session_id": session_id})
         assert missing["ok"] is False
 
+    def test_chat_delete_removes_one_session(self, ui):
+        first = call(ui, "chat.new", {"title": "保留的对话"})["session_id"]
+        second = call(ui, "chat.new", {"title": "待删除的对话"})["session_id"]
+
+        deleted = call(ui, "chat.delete", {"session_id": second})
+
+        assert deleted["ok"] and deleted["deleted"] is True
+        assert call(ui, "chat.load", {"session_id": second})["ok"] is False
+        sessions = call(ui, "chat.sessions")["sessions"]
+        assert second not in {row["session_id"] for row in sessions}
+        assert first in {row["session_id"] for row in sessions}
+
     def test_sessions_listed_with_pending_counts(self, ui):
         listing = call(ui, "chat.sessions")
         assert listing["ok"] and "sessions" in listing
 
     def test_fork_and_compact_keep_visible_history(self, ui):
-        from vaspilot.agents.memory import ConversationStore
+        from vasploom.agents.memory import ConversationStore
 
         session_id = call(ui, "chat.new", {"title": "原会话"})["session_id"]
         memory = ConversationStore(ui["app"].config.chat_dir)
@@ -738,7 +768,7 @@ class TestChatMemory:
         assert not any(row.get("content") == "问题 0" for row in sent[1:])
 
     def test_context_meter_and_auto_compaction(self, ui):
-        from vaspilot.agents.memory import ConversationStore
+        from vasploom.agents.memory import ConversationStore
 
         session_id = call(ui, "chat.new", {})["session_id"]
         memory = ConversationStore(ui["app"].config.chat_dir)
@@ -780,6 +810,43 @@ class TestChatMemory:
 
 
 class TestProjectFlow:
+    def test_empty_project_user_and_agent_share_inputs(self, ui):
+        from vasploom.providers.base import ToolCall
+
+        created = call(ui, "project.create", {"name": "draft"})
+        assert created["ok"] and created["files"] == []
+        assert call(ui, "project.potcar_remote", {
+            "name": "draft", "path": "/home/user/POTCAR.Fe"
+        })["ok"]
+        assert call(ui, "project.update", {
+            "name": "draft", "files": {"INCAR": "ENCUT=520\nNSW=0\n"}
+        })["ok"]
+        session = call(ui, "chat.new", {"project": "draft"})["session_id"]
+        ui["scripted"].script = [
+            {"tool_calls": [ToolCall(call_id="read", name="project_read",
+                                    arguments={"file": "INCAR"})]},
+            {"tool_calls": [ToolCall(call_id="write", name="project_write",
+                                    arguments={"file": "INCAR",
+                                               "content": "ENCUT=520\nNSW=60\n"})]},
+            {"text": "已更新项目输入。"},
+        ]
+        frames = sse_chat(ui, {"provider": "mock", "session_id": session,
+                               "message": "把优化步数改为60，保留其他参数"})
+        events = [frame for frame in frames if frame.get("type") == "tool"]
+        assert [ev["tool"] for ev in events] == ["project_read", "project_write"]
+        assert all(ev["ok"] for ev in events)
+        assert events[0]["outcome"]["content"] == "ENCUT=520\nNSW=0\n"
+        assert call(ui, "project.read", {"name": "draft", "file": "INCAR"})[
+            "content"] == "ENCUT=520\nNSW=60\n"
+        listing = call(ui, "project.list")["projects"]
+        assert next(p for p in listing if p["name"] == "draft")[
+            "potcar_remote"] == "/home/user/POTCAR.Fe"
+        assert call(ui, "project.update", {
+            "name": "draft", "files": {"KPOINTS": "mesh\n"}
+        })["ok"]
+        assert call(ui, "project.read", {"name": "draft", "file": "INCAR"})[
+            "content"] == "ENCUT=520\nNSW=60\n"
+
     def test_project_create_then_workflow_prepare(self, ui):
         created = call(ui, "project.create", {
             "name": "ui-case", "files": {
@@ -881,7 +948,7 @@ class TestProjectFlow:
                              "session_id": session_id}).encode(),
             method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-Vaspilot-Token", ui["token"])
+        req.add_header("X-VaspLoom-Token", ui["token"])
         with urllib.request.urlopen(req, timeout=60) as response:
             sse_body = response.read().decode("utf-8")
         # drain done; the final (or error) frame explains any short-circuit
@@ -901,7 +968,7 @@ class TestProjectFlow:
 
 class TestSubmitConfirmation:
     def test_expired_card_can_be_regenerated(self, ui):
-        from vaspilot.workflow.pending import PendingSubmitStore
+        from vasploom.workflow.pending import PendingSubmitStore
 
         app = ui["app"]
         store = PendingSubmitStore(app.config.pending_submits_path)
@@ -919,8 +986,8 @@ class TestSubmitConfirmation:
     def test_confirm_flow_executes_frozen_params(self, ui):
         app = ui["app"]
         app.config.set_agent_submit_mode("confirm")
-        from vaspilot.core.hashing import text_sha256
-        from vaspilot.workflow.pending import PendingSubmitStore
+        from vasploom.core.hashing import text_sha256
+        from vasploom.workflow.pending import PendingSubmitStore
         directory = f"{ROOT}/runs/confirm-case"
         ui["state"].files["cl9"][f"{directory}/run.job.sh"] = b"#!/bin/bash\n"
         store = PendingSubmitStore(app.config.pending_submits_path)
@@ -946,7 +1013,7 @@ class TestSubmitConfirmation:
                         {"id": entry["id"], "approve": True})
         assert approved["ok"] is True and approved["settled"] == "approved"
         assert approved["result"]["job_id"]
-        from vaspilot.core.jobhistory import JobLedger
+        from vasploom.core.jobhistory import JobLedger
         saved = next(row for row in JobLedger(app.config.jobs_dir).merged("cl9")
                      if row["job_id"] == approved["result"]["job_id"])
         assert saved["directory"] == directory
@@ -957,7 +1024,7 @@ class TestSubmitConfirmation:
 
     def test_reject_flow_never_submits(self, ui):
         app = ui["app"]
-        from vaspilot.workflow.pending import PendingSubmitStore
+        from vasploom.workflow.pending import PendingSubmitStore
         store = PendingSubmitStore(app.config.pending_submits_path)
         entry = store.create(server="cl9", directory=f"{ROOT}/runs/rej",
                              script="run.job.sh")
@@ -1010,7 +1077,7 @@ class TestServerMetricsApi:
 
 class TestWebsearchSettingsApi:
     def test_save_and_toggle(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPILOT_WEBSEARCH_KEY", raising=False)
+        monkeypatch.delenv("VASPLOOM_WEBSEARCH_KEY", raising=False)
         saved = call(ui, "websearch.save", {"provider": "bocha",
                                             "enabled": True})
         assert saved["ok"] and saved["websearch"]["provider"] == "bocha"
@@ -1063,7 +1130,7 @@ class TestJobLedger:
 
     def test_parallel_writes_are_serialized(self, ui):
         from concurrent.futures import ThreadPoolExecutor
-        from vaspilot.core.jobhistory import JobLedger
+        from vasploom.core.jobhistory import JobLedger
 
         directory = ui["app"].config.jobs_dir
 
@@ -1151,7 +1218,7 @@ class TestMonitorApi:
         r = call(ui, "server.metrics", {"server": "cl9"})
         assert r["ok"] and any(g.get("util_pct") is not None
                                for g in r["gpus"])
-        from vaspilot.core.metricsstore import MetricsStore
+        from vasploom.core.metricsstore import MetricsStore
         bucket = MetricsStore(ui["app"].config.metrics_dir).latest("cl9")
         assert bucket and bucket["g"]["0"][0] == pytest.approx(5.0)
 

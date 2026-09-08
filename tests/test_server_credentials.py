@@ -6,8 +6,8 @@ import json
 
 import pytest
 
-from vaspilot.core import secretbox
-from vaspilot.core.credentials import normalize_totp_seed, totp_code
+from vasploom.core import secretbox
+from vasploom.core.credentials import normalize_totp_seed, totp_code
 
 pytestmark = pytest.mark.skipif(
     not secretbox.available(), reason="server credential vault uses Windows DPAPI")
@@ -19,7 +19,7 @@ def test_totp_normalization_and_rfc_vector():
 
 
 def test_server_credentials_are_encrypted_and_need_confirmation(config_home):
-    from vaspilot.core.config import Config, ServerEntry
+    from vasploom.core.config import Config, ServerEntry
 
     config = Config(config_home)
     config.upsert_server(ServerEntry("cl12", "user@cl12", route="direct"))
