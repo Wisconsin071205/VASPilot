@@ -292,7 +292,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.3.3"
+        assert result["gateway_version"] == "1.5.1"
 
     def test_exec_passthrough(self, gateway_env):
         result = gateway_env["run"]("exec", "--server", "cl9",

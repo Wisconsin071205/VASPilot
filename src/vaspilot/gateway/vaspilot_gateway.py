@@ -47,7 +47,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-GATEWAY_VERSION = "1.3.3"
+# Keep in step with vaspilot.__version__ (this file is standalone by design
+# and may not import the package). PROTOCOL_VERSION is the real compatibility
+# contract; this string lets `server doctor` spot a stale deployed gateway.
+GATEWAY_VERSION = "1.5.1"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
