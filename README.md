@@ -4,10 +4,13 @@
 > 「远端控制智能体」。也可使用更简短的 `huwei` 命令。
 
 CLI-first, multi-model VASP/HPC agent: after the user completes SSH
-authentication by hand, it performs **restricted, auditable** file transfer,
-job submission, status monitoring and VASP workflows across
-`Windows → USTC Vlab → multiple remote HPC servers`. No model is ever given
-an arbitrary remote shell — every action is a named, validated tool.
+authentication by hand, it performs **auditable** file transfer, job
+submission, status monitoring and VASP workflows across
+`Windows → USTC Vlab → multiple remote HPC servers`. Every action is a named
+tool. Most of them are path-confined and validated; two — `shell_run` and
+`remote_run` — deliberately trade that confinement for autonomy and are
+governed by the audit log instead. See
+[Shell access](#shell-access-explicit-operator-policy).
 
 ```
 本地 CLI / 智能体层        Vlab 网关层                HPC 适配层
@@ -23,7 +26,7 @@ an arbitrary remote shell — every action is a named, validated tool.
 ```powershell
 py -3.12 -m pip install -e .[dev]
 huwei --help               # 兼容命令: vaspilot --help
-py -3.12 -m pytest         # 134 tests, fully offline
+py -3.12 -m pytest         # 314 tests, fully offline
 ```
 
 **Note:** an older `vaspilot` 0.3.0 may be installed globally on this machine
@@ -127,6 +130,32 @@ Scheduler `COMPLETED` is **never** reported as scientific convergence — the
 run state records `scheduler_state` and `scientific_converged` separately,
 and a scheduler-finished-but-unconverged run ends as `needs_review`.
 
+## Shell access (explicit operator policy)
+
+Two tools give the model a real shell. This is intentional (added in v1.1.0
+with the agent-autonomy suite) and it is the one place where the confinement
+described above does **not** apply:
+
+| Tool | Runs on | Confinement |
+| --- | --- | --- |
+| `shell_run` | the local Windows machine | none — `subprocess.run(..., shell=True)` |
+| `remote_run` | the HPC login node, via the gateway | none — no `remote_root` check, no `realpath` guard; keeps a per-session working directory |
+
+Consequences worth stating plainly:
+
+- `remote_run` bypasses the `remote_root` boundary and the symlink-escape
+  check that every other remote operation enforces;
+- `remote_run` can call `sbatch`/`qsub` directly, so it also bypasses the
+  human confirmation that `job_submit` shows in the web console;
+- the only gate on either tool is provider capability: they are `write`-kind,
+  so a provider degraded to `analysis_only` is refused. A fully probed
+  provider needs no approval token.
+
+The control plane is therefore the **audit log**, not interception: every
+command, working directory, exit code and output is recorded on both sides.
+Set `VASPILOT_MCP_MODE=analysis_only` to remove both tools from an MCP
+session, and review `~/.vaspilot/audit/` if you need to know what ran.
+
 ## Model providers
 
 | Protocol | Backends | Notes |
@@ -161,7 +190,10 @@ carries credentials or approval references through MCP.
 
 ## Security invariants
 
-- no shell tool; no `bash -c`/`sh -c`/PowerShell string concatenation anywhere
+- exactly two shell tools (`shell_run`, `remote_run`), both audit-only by
+  explicit operator policy and both refused to `analysis_only` providers;
+  every other tool maps to a fixed command shape and never accepts a
+  caller-supplied shell string
 - strict validation of server names, paths (lexical + `realpath`), job ids,
   trash ids and local project roots
 - SSH host-key changes fail closed; `known_hosts` is never auto-modified

@@ -329,9 +329,23 @@ def self_test() -> int:
                 "open_key_setup_terminal"}
     missing = expected - names
     assert not missing, f"missing tools: {missing}"
-    # no shell-ish tool may ever appear
+    # No UNSANCTIONED shell surface may appear. `shell_run`/`remote_run` are
+    # deliberate operator policy (audit-only, see vaspilot/__init__.py); any
+    # other shell-ish tool is a regression.
+    #
+    # The previous guard used \b(shell|exec|bash|sh)\b and therefore never
+    # fired: "_" is a word character, so "shell_run" and "remote_exec" both
+    # slipped through. Substring matching is the point here.
+    sanctioned_shell_tools = {"shell_run", "remote_run"}
+    shellish = re.compile(r"shell|exec|bash|(^|_)sh($|_)")
     for name in names:
-        assert not re.search(r"\b(shell|exec|bash|sh)\b", name), name
+        if name in sanctioned_shell_tools:
+            continue
+        assert not shellish.search(name), f"unsanctioned shell-ish tool: {name}"
+    # and the sanctioned ones must still be named exactly that, so a rename
+    # cannot smuggle a shell past the check above
+    assert sanctioned_shell_tools <= names, (
+        f"missing sanctioned shell tools: {sanctioned_shell_tools - names}")
     # validation must fail closed on a bogus dispatch: /etc can never be
     # inside a configured server root, and with no default server configured
     # the client refuses too — either way an exception must escape

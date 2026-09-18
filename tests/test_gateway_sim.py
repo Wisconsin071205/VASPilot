@@ -52,7 +52,11 @@ def gateway_env(tmp_path, monkeypatch):
     def run(*args, check=False):
         result = subprocess.run(
             [sys.executable, str(GATEWAY), *args],
-            capture_output=True, text=True, encoding="utf-8", timeout=120)
+            capture_output=True, text=True, encoding="utf-8",
+            # a non-UTF-8 byte anywhere (a GBK OS message on a zh-CN
+            # Windows, say) used to kill the reader thread and leave
+            # result.stdout as None, masking the real error
+            errors="replace", timeout=120)
         document = None
         for line in result.stdout.splitlines():
             if line.startswith("{"):
