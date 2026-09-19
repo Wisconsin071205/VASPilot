@@ -24,9 +24,11 @@ governed by the audit log instead. See
 ## Install (development)
 
 ```powershell
-py -3.12 -m pip install -e .[dev]
-huwei --help               # 兼容命令: vaspilot --help
-py -3.12 -m pytest         # 314 tests, fully offline
+# 需要稳定版 CPython >= 3.11（Microsoft Store 的 `py -3.12` 桩在本机不可用）
+python -m venv .venv
+.venv\Scripts\python -m pip install -e .[dev]
+huwei --help                      # 兼容命令: vaspilot --help
+.venv\Scripts\python -m pytest   # 334 tests, fully offline
 ```
 
 **Note:** an older `vaspilot` 0.3.0 may be installed globally on this machine
@@ -36,7 +38,7 @@ explicitly:
 ```powershell
 scripts\vaspilot.cmd server list          # wrapper that pins PYTHONPATH=src
 # or
-set PYTHONPATH=src && py -3.12 -m vaspilot --help
+set PYTHONPATH=src && .venv\Scripts\python -m vaspilot --help
 ```
 
 ## First-run setup
@@ -59,7 +61,7 @@ Gateway deployment onto Vlab (runs `scp` + `ssh`, CRLF→LF + py_compile
 validation, atomic replace):
 
 ```powershell
-py -3.12 scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
+.venv\Scripts\python scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
 ```
 
 ## Command map
@@ -73,6 +75,7 @@ py -3.12 scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
 | `monitor` | `snapshot watch` |
 | `agent` | `provider list/add/remove/probe/set-default`, `chat --provider`, `run --provider --goal` |
 | `ui` | `vaspilot ui` — 统一 Web 控制台 |
+| `desktop` | `vaspilot desktop` — 控制台的独立桌面窗口（Windows） |
 
 Every command prints one stable JSON document and uses documented exit codes:
 `0` ok · `1` error · `2` usage · `3 auth_required` · `4 approval` · `5 validation`.
@@ -94,7 +97,23 @@ re-authenticate visibly via `server connect`.
 安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
 必须携带；UI 不接触密码/TOTP/API Key——交互式登录通过「连接」按钮在**独立的
 可见系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
-桌面快捷方式「VASPilot 控制台」或 `%USERPROFILE%\bin\vaspilot-ui.cmd` 一键启动。
+命令行启动 `vaspilot ui`（或 `%USERPROFILE%\bin\vaspilot-ui.cmd`）；
+独立窗口的桌面形态见下一节。
+
+## 桌面应用（`vaspilot desktop`）
+
+同一个控制台，装进独立窗口（pywebview / WebView2，Windows 专用）：双击桌面快捷方式
+「远端控制智能体」即打开，关闭窗口即停止服务；若控制台已在运行（`vaspilot ui`
+或另一个窗口），只开窗、不重复起服务，关窗也不会停掉别人的服务。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1
+```
+
+脚本幂等：选择稳定的 CPython >= 3.11（跳过 Store 桩与 alpha 版），必要时重建 `.venv`，
+安装 `desktop` extra（`pip install -e .[desktop]`），在桌面与开始菜单创建快捷方式
+（目标 `.venv\Scripts\pythonw.exe -m vaspilot desktop`，无控制台窗口）。
+未安装 extra 时 `vaspilot desktop` 会提示并退回浏览器。日志：`~/.vaspilot/desktop.log`。
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 
