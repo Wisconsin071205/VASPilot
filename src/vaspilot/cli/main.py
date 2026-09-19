@@ -124,6 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
     ui.add_argument("--no-open", dest="open_browser", action="store_false",
                     help="do not open the browser automatically")
     ui.set_defaults(handler=cmd_ui)
+
+    desktop = sub.add_parser(
+        "desktop",
+        help="web console in its own desktop window (Windows; pip install -e .[desktop])")
+    desktop.add_argument("--port", type=int, default=8930,
+                         help="first port to try when no console is running")
+    desktop.set_defaults(handler=cmd_desktop)
     return parser
 
 
@@ -135,6 +142,16 @@ def cmd_ui(app, args):
           f"http://{args.host}:{args.port} (Ctrl-C to stop)")
     serve(app, host=args.host, port=args.port,
           open_browser=args.open_browser)
+    return None
+
+
+def cmd_desktop(app, args):
+    """Open the local console in a native window; blocks until it closes."""
+    from .. import desktop
+    code = desktop.main(app, port=args.port)
+    if code:
+        raise VaspilotError("desktop shell exited with an error",
+                            detail={"exit_code": code})
     return None
 
 

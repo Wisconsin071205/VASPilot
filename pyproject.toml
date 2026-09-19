@@ -13,6 +13,8 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Windows-only native window over the local web console (`vaspilot desktop`).
+desktop = ["pywebview>=6,<7"]
 
 [project.scripts]
 vaspilot = "vaspilot.cli.main:main"
@@ -29,6 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "vaspilot.gateway" = ["codex_bridge.mjs"]
+"vaspilot.desktop" = ["assets/*.ico"]
 
 [tool.pytest.ini_options]
 # Tests must exercise this checkout even when another VASPilot install exists.
