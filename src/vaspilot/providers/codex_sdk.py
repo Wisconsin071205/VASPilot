@@ -74,7 +74,9 @@ class CodexSdkProvider(BaseProvider):
                 [self.node_binary, str(self.bridge)],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, encoding="utf-8",
-                errors="replace", cwd=str(self.bridge.parent))
+                errors="replace", cwd=str(self.bridge.parent),
+                # piped stdio: no console needed (it would flash under pythonw)
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except FileNotFoundError as exc:
             raise ProviderError(
                 f"node is unavailable for the Codex bridge: {exc}") from exc

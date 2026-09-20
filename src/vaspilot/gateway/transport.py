@@ -48,6 +48,11 @@ def default_runner(cmd: list[str], *, timeout: int, capture: bool = True,
                       encoding="utf-8", errors="replace")
         if tty:
             kwargs["stderr"] = subprocess.STDOUT
+        # Captured output needs no console.  Under pythonw (the desktop
+        # shortcut) the parent has none either, so Windows would create — and
+        # flash — a fresh console window for every ssh/scp call.  capture=False
+        # is the interactive CLI login and MUST keep the current console.
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     result = subprocess.run(cmd, env=env, **kwargs)
     if capture:
         return result.returncode, result.stdout or "", result.stderr or ""

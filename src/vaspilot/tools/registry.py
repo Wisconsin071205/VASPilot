@@ -634,7 +634,10 @@ class ToolRegistry:
         try:
             completed = subprocess.run(
                 command, shell=True, cwd=cwd, capture_output=True,
-                timeout=timeout)
+                timeout=timeout,
+                # output is captured, so no console is needed; without this
+                # every call flashes a window under pythonw (desktop mode)
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except subprocess.TimeoutExpired as exc:
             stdout = (exc.stdout or b"").decode("utf-8", "replace")
             stderr = (exc.stderr or b"").decode("utf-8", "replace")
