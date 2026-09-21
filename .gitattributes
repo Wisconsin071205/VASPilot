@@ -1,1 +1,3 @@
 *.py text eol=lf
+# shell scripts must keep LF or the macOS shebang line breaks
+*.sh text eol=lf
