@@ -97,7 +97,7 @@ re-authenticate visibly via `server connect`.
 安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
 必须携带；UI 不接触密码/TOTP/API Key——交互式登录通过「连接」按钮在**独立的
 可见系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
-命令行启动 `vaspilot ui`（或 `%USERPROFILE%\bin\vaspilot-ui.cmd`）；
+命令行启动 `vaspilot ui`（仓库内包装器 `scripts\vaspilot.cmd ui` 会固定用本仓库的代码）；
 独立窗口的桌面形态见下一节。
 
 ## 桌面应用（`vaspilot desktop`）
