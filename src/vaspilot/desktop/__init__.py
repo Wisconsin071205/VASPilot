@@ -1,9 +1,15 @@
 """Desktop shell for the local web console (``vaspilot desktop``).
 
 The console (``vaspilot.ui``) stays untouched; this module only decides which
-server to show (a running one or one it starts itself), opens a pywebview /
-WebView2 window on the token URL, and stops the server it owns when the
-window closes.  pywebview is an optional extra and is imported lazily.
+server to show (a running one or one it starts itself), opens a native window
+on the token URL, and stops the server it owns when the window closes.
+pywebview is an optional extra and is imported lazily.
+
+Two platforms are supported, each with its own system web view and its own
+way of showing a message when there is no console to print to:
+
+  win32   WebView2 via pythonnet (.NET Framework)   MessageBoxW
+  darwin  WKWebView via pyobjc (Cocoa)              osascript display dialog
 """
 
 from __future__ import annotations
@@ -11,6 +17,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import subprocess
 import sys
 import threading
 import traceback
@@ -27,6 +34,10 @@ WINDOW_MIN_SIZE = (900, 600)
 DEFAULT_PORT = 8930
 HEALTH_TIMEOUT = 1.5
 
+# platform -> pywebview renderer.  Keys double as the support list.
+GUI_BACKENDS = {"win32": "edgechromium", "darwin": "cocoa"}
+DIALOG_TIMEOUT = 120
+
 
 def ui_home() -> Path:
     """Same rule as ui.serve(): VASPILOT_HOME or ~/.vaspilot."""
@@ -34,8 +45,8 @@ def ui_home() -> Path:
 
 
 def _open_log(home: Path):
-    """Append-mode log; under pythonw there is no console, so stdout/stderr
-    (None there) are pointed at the same file."""
+    """Append-mode log; a windowed launch (pythonw, or an .app bundle) has no
+    console, so stdout/stderr (None there) are pointed at the same file."""
     home.mkdir(parents=True, exist_ok=True)
     log = open(home / "desktop.log", "a", encoding="utf-8", buffering=1)
     if sys.stdout is None:
@@ -50,19 +61,35 @@ def _log(log, message: str) -> None:
     log.write(f"{stamp} {message}\n")
 
 
-def _message_box(text: str, *, title: str = WINDOW_TITLE) -> None:
-    """Modal notice; the only UI we have when pythonw has no console."""
-    if os.name == "nt":
+def _message_box(text: str, *, title: str = WINDOW_TITLE,
+                 platform: str | None = None) -> None:
+    """Modal notice; the only UI we have when the launcher has no console."""
+    target = platform or sys.platform
+    if target == "win32":
         import ctypes
         mb_iconinformation = 0x40
         ctypes.windll.user32.MessageBoxW(None, text, title, mb_iconinformation)
-    else:  # pragma: no cover - not reachable behind the platform guard
-        print(f"{title}: {text}", file=sys.stderr)
+        return
+    if target == "darwin":
+        # argv carries the strings so neither quotes nor newlines need escaping
+        script = ("on run argv\n"
+                  "display dialog (item 1 of argv) with title (item 2 of argv)"
+                  ' buttons {"OK"} default button "OK" with icon note\n'
+                  "end run")
+        try:
+            subprocess.run(["osascript", "-e", script, text, title],
+                           capture_output=True, timeout=DIALOG_TIMEOUT)
+        except (OSError, subprocess.SubprocessError):
+            print(f"{title}: {text}", file=sys.stderr)
+        return
+    print(f"{title}: {text}", file=sys.stderr)  # pragma: no cover
 
 
-def _import_webview():
-    """Lazy import; the runtime hint must be set BEFORE pythonnet loads."""
-    os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
+def _import_webview(platform: str | None = None):
+    """Lazy import; on Windows the runtime hint must be set BEFORE pythonnet
+    loads (its default coreclr probe fails without a runtimeconfig)."""
+    if (platform or sys.platform) == "win32":
+        os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
     import webview  # noqa: WPS433 - optional extra
     return webview
 
@@ -93,8 +120,10 @@ def _pid_alive(pid: int) -> bool:
             kernel32.CloseHandle(handle)
     try:
         os.kill(pid, 0)
-    except OSError:
+    except ProcessLookupError:
         return False
+    except PermissionError:
+        return True  # alive, just owned by someone else
     return True
 
 
@@ -144,24 +173,27 @@ def _remove_own_ui_json(home: Path) -> None:
 
 def main(app, *, port: int = DEFAULT_PORT, platform: str | None = None) -> int:
     """Open the console in its own window; returns a process exit code."""
-    if (platform or sys.platform) != "win32":
-        raise ValidationError("desktop mode is Windows-only")
+    target = platform or sys.platform
+    if target not in GUI_BACKENDS:
+        raise ValidationError(
+            "desktop mode needs Windows or macOS "
+            f"(this is {target}); use `vaspilot ui` instead")
     home = ui_home()
     log = _open_log(home)
-    _log(log, f"desktop start pid={os.getpid()} port={port}")
+    _log(log, f"desktop start pid={os.getpid()} port={port} platform={target}")
     try:
-        return _run(app, port=port, home=home, log=log)
-    except Exception as exc:  # noqa: BLE001 - surface it: no console under pythonw
+        return _run(app, port=port, home=home, log=log, platform=target)
+    except Exception as exc:  # noqa: BLE001 - surface it: there is no console
         _log(log, traceback.format_exc())
         _message_box(f"启动失败：{type(exc).__name__}: {exc}\n\n"
-                     f"详见 {home / 'desktop.log'}")
+                     f"详见 {home / 'desktop.log'}", platform=target)
         return 1
     finally:
         _log(log, "desktop exit")
         log.close()
 
 
-def _run(app, *, port: int, home: Path, log) -> int:
+def _run(app, *, port: int, home: Path, log, platform: str) -> int:
     httpd = None
     thread = None
     url = read_running_instance(home)
@@ -175,7 +207,8 @@ def _run(app, *, port: int, home: Path, log) -> int:
         except OSError as exc:
             _log(log, f"bind failed: {exc}")
             _message_box(f"端口 {port}–{port + 9} 均不可用，无法启动控制台。\n"
-                         f"请关闭占用这些端口的程序后重试。\n\n{exc}")
+                         f"请关闭占用这些端口的程序后重试。\n\n{exc}",
+                         platform=platform)
             return 1
         thread = threading.Thread(target=httpd.serve_forever, daemon=True,
                                   name="vaspilot-ui")
@@ -183,11 +216,12 @@ def _run(app, *, port: int, home: Path, log) -> int:
         _log(log, f"serving {url}")
     try:
         try:
-            webview = _import_webview()
+            webview = _import_webview(platform)
         except ImportError as exc:
             _log(log, f"pywebview unavailable ({exc}); falling back to browser")
             _message_box("未安装桌面窗口组件，将改用浏览器打开控制台。\n\n"
-                         "安装桌面组件：pip install -e .[desktop]")
+                         "安装桌面组件：pip install -e .[desktop]",
+                         platform=platform)
             webbrowser.open(url)
             if thread is not None:
                 thread.join()  # keep the console we own alive (Ctrl-C stops it)
@@ -195,7 +229,7 @@ def _run(app, *, port: int, home: Path, log) -> int:
         webview.create_window(WINDOW_TITLE, url,
                               width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
                               min_size=WINDOW_MIN_SIZE)
-        webview.start(gui="edgechromium")
+        webview.start(gui=GUI_BACKENDS[platform])
         return 0
     finally:
         if httpd is not None:

@@ -75,7 +75,7 @@ validation, atomic replace):
 | `monitor` | `snapshot watch` |
 | `agent` | `provider list/add/remove/probe/set-default`, `chat --provider`, `run --provider --goal` |
 | `ui` | `vaspilot ui` — 统一 Web 控制台 |
-| `desktop` | `vaspilot desktop` — 控制台的独立桌面窗口（Windows） |
+| `desktop` | `vaspilot desktop` — 控制台的独立桌面窗口（Windows / macOS） |
 
 Every command prints one stable JSON document and uses documented exit codes:
 `0` ok · `1` error · `2` usage · `3 auth_required` · `4 approval` · `5 validation`.
@@ -102,18 +102,35 @@ re-authenticate visibly via `server connect`.
 
 ## 桌面应用（`vaspilot desktop`）
 
-同一个控制台，装进独立窗口（pywebview / WebView2，Windows 专用）：双击桌面快捷方式
-「远端控制智能体」即打开，关闭窗口即停止服务；若控制台已在运行（`vaspilot ui`
-或另一个窗口），只开窗、不重复起服务，关窗也不会停掉别人的服务。
+同一个控制台，装进独立窗口：双击图标即打开，关闭窗口即停止服务；若控制台已在运行
+（`vaspilot ui` 或另一个窗口），只开窗、不重复起服务，关窗也不会停掉别人的服务。
+窗口用系统自带的 web view，不额外装浏览器内核：
+
+| 平台 | 渲染器 | 安装脚本 | 入口 |
+| --- | --- | --- | --- |
+| Windows | WebView2（`edgechromium`，经 pythonnet/.NET Framework） | `scripts\install-desktop.ps1` | 桌面与开始菜单的 `远端控制智能体` 快捷方式 |
+| macOS | WKWebView（`cocoa`，经 pyobjc） | `scripts/install-desktop.sh` | `~/Applications/远端控制智能体.app` |
+
+Windows：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1
 ```
 
-脚本幂等：选择稳定的 CPython >= 3.11（跳过 Store 桩与 alpha 版），必要时重建 `.venv`，
-安装 `desktop` extra（`pip install -e .[desktop]`），在桌面与开始菜单创建快捷方式
-（目标 `.venv\Scripts\pythonw.exe -m vaspilot desktop`，无控制台窗口）。
-未安装 extra 时 `vaspilot desktop` 会提示并退回浏览器。日志：`~/.vaspilot/desktop.log`。
+macOS：
+
+```bash
+scripts/install-desktop.sh            # 或 scripts/install-desktop.sh /path/to/python3
+```
+
+两个脚本都幂等：选择稳定的 CPython >= 3.11（跳过 alpha 版；Windows 上还跳过 Store 桩），
+必要时重建 `.venv`，安装 `desktop` extra（`pip install -e .[desktop]`；pywebview 会按平台
+自动带上 pythonnet 或 pyobjc），生成图标，最后创建入口。Windows 的快捷方式指向
+`pythonw.exe` 以免弹控制台；macOS 生成一个最小的 `.app`，其 launcher 进入仓库目录后执行
+`python -m vaspilot desktop`。
+
+未安装 extra 时 `vaspilot desktop` 会弹提示并退回浏览器；Linux 直接拒绝并让你用
+`vaspilot ui`。日志：`~/.vaspilot/desktop.log`。
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 

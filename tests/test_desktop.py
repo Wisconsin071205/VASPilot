@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import types
@@ -91,11 +92,11 @@ class TestCli:
         assert code == 0
         assert "desktop" in text
 
-    def test_non_windows_is_validation_error(self, config_home, monkeypatch):
+    def test_platform_refusal_is_validation_error(self, config_home, monkeypatch):
         from vaspilot.core.errors import ValidationError
 
         def refuse(app, *, port):
-            raise ValidationError("desktop mode is Windows-only")
+            raise ValidationError("desktop mode needs Windows or macOS")
 
         monkeypatch.setattr("vaspilot.desktop.main", refuse)
         code, document, _, _ = run_cli(["desktop"], monkeypatch)
@@ -110,12 +111,18 @@ class TestCli:
 
 
 class TestPlatformGuard:
-    def test_main_refuses_non_windows(self, config_home):
+    def test_main_refuses_unsupported_platform(self, config_home):
         from vaspilot.core.errors import ValidationError
         from vaspilot.desktop import main
 
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError) as caught:
             main(app=None, platform="linux")
+        assert "vaspilot ui" in str(caught.value)
+
+    def test_supported_platforms_are_windows_and_macos(self):
+        from vaspilot.desktop import GUI_BACKENDS
+
+        assert GUI_BACKENDS == {"win32": "edgechromium", "darwin": "cocoa"}
 
 
 class TestSelfStart:
@@ -306,3 +313,74 @@ class TestFallbacks:
         log = (config_home / "desktop.log").read_text(encoding="utf-8")
         assert "RuntimeError: WebView2 runtime missing" in log
         assert fake_serve["httpd"].shutdown_calls == 1
+
+
+class TestMacos:
+    def test_window_uses_the_cocoa_backend(self, config_home, fake_webview,
+                                           fake_serve):
+        from vaspilot.desktop import main, WINDOW_TITLE
+
+        code = main(app=None, platform="darwin")
+
+        assert code == 0
+        assert fake_webview["start"] == [{"gui": "cocoa"}]
+        assert fake_webview["windows"][0]["title"] == WINDOW_TITLE
+        assert fake_serve["httpd"].shutdown_calls == 1
+
+    def test_pythonnet_runtime_is_not_touched(self, config_home, fake_webview,
+                                              fake_serve, monkeypatch):
+        from vaspilot.desktop import main
+
+        monkeypatch.delenv("PYTHONNET_RUNTIME", raising=False)
+        main(app=None, platform="darwin")
+        assert "PYTHONNET_RUNTIME" not in os.environ
+
+    def test_message_box_uses_osascript_with_argv(self, monkeypatch):
+        """Text and title travel as argv, so quotes and newlines need no
+        escaping — the reason this is not an -e string interpolation."""
+        from vaspilot import desktop
+
+        calls = []
+        monkeypatch.setattr(subprocess, "run",
+                            lambda cmd, **kw: calls.append(cmd) or
+                            subprocess.CompletedProcess(cmd, 0))
+        desktop._message_box('he said "hi"\nand left', title="T",
+                             platform="darwin")
+
+        assert calls[0][:2] == ["osascript", "-e"]
+        assert "display dialog (item 1 of argv)" in calls[0][2]
+        assert calls[0][3:] == ['he said "hi"\nand left', "T"]
+
+    def test_message_box_survives_missing_osascript(self, monkeypatch, capsys):
+        from vaspilot import desktop
+
+        def missing(cmd, **kwargs):
+            raise FileNotFoundError("osascript")
+
+        monkeypatch.setattr(subprocess, "run", missing)
+        desktop._message_box("boom", platform="darwin")
+        assert "boom" in capsys.readouterr().err
+
+    def test_browser_fallback_reports_the_extra(self, config_home, fake_serve,
+                                                message_box, monkeypatch):
+        from vaspilot import desktop
+
+        monkeypatch.setitem(sys.modules, "webview", None)
+        opened = []
+        monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+        assert desktop.main(app=None, platform="darwin") == 0
+        assert opened == [fake_serve["url"]]
+        assert "pip install -e .[desktop]" in message_box[0]
+
+
+class TestPidProbeOnPosix:
+    def test_permission_error_counts_as_alive(self, monkeypatch):
+        """A console owned by another user is running, not gone."""
+        from vaspilot import desktop
+
+        if os.name == "nt":
+            pytest.skip("POSIX branch")
+        monkeypatch.setattr(os, "kill", lambda pid, sig:
+                            (_ for _ in ()).throw(PermissionError()))
+        assert desktop._pid_alive(4242) is True

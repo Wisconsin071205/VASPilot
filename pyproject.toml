@@ -31,7 +31,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "vaspilot.gateway" = ["codex_bridge.mjs"]
-"vaspilot.desktop" = ["assets/*.ico"]
+"vaspilot.desktop" = ["assets/*.ico", "assets/*.icns"]
 
 [tool.pytest.ini_options]
 # Tests must exercise this checkout even when another VASPilot install exists.

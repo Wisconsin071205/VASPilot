@@ -1,10 +1,12 @@
-"""Generate src/vaspilot/desktop/assets/icon.ico with the standard library.
+"""Generate the desktop icons with the standard library alone.
+
+Writes src/vaspilot/desktop/assets/icon.ico (Windows) and icon.icns (macOS).
 
 Deterministic: rerunning produces byte-identical output.  The mark is a
 rounded deep-blue tile with a white chevron ("V" for VASP) and a small
 accent dot — readable down to 16 px.  Each size is rendered directly with
-4x4 supersampling, then stored as a PNG inside one ICO container (PNG-in-ICO
-is supported by Windows Vista and later for every size).
+supersampling and stored as a PNG inside the container: PNG-in-ICO (Windows
+Vista and later) and PNG chunks in ICNS (macOS 10.7 and later).
 
 Usage:  python scripts/make_icon.py
 """
@@ -15,9 +17,14 @@ import struct
 import zlib
 from pathlib import Path
 
-OUT = (Path(__file__).resolve().parents[1] / "src" / "vaspilot" / "desktop"
-       / "assets" / "icon.ico")
-SIZES = (256, 48, 32, 16)
+ASSETS = (Path(__file__).resolve().parents[1] / "src" / "vaspilot"
+          / "desktop" / "assets")
+OUT_ICO = ASSETS / "icon.ico"
+OUT_ICNS = ASSETS / "icon.icns"
+ICO_SIZES = (256, 48, 32, 16)
+# ICNS types that accept a PNG payload, smallest first.
+ICNS_TYPES = ((b"icp4", 16), (b"icp5", 32), (b"ic07", 128),
+              (b"ic08", 256), (b"ic09", 512))
 BLUE = (28, 62, 122)      # tile
 WHITE = (255, 255, 255)   # chevron
 AMBER = (247, 181, 41)    # accent dot
@@ -61,10 +68,16 @@ def _sample(x: float, y: float) -> tuple[int, int, int, int]:
     return (*BLUE, 255)
 
 
+def _supersample(size: int) -> int:
+    """4x4 everywhere the icon is actually small; at 512 the edges already
+    land on sub-pixel boundaries, so half the sampling looks the same."""
+    return SUPERSAMPLE if size <= 256 else 2
+
+
 def render(size: int) -> bytes:
     """RGBA scanlines (with PNG filter byte 0) for one square image."""
     rows = bytearray()
-    steps = SUPERSAMPLE
+    steps = _supersample(size)
     for py in range(size):
         rows.append(0)
         for px in range(size):
@@ -113,11 +126,31 @@ def ico(images: list[tuple[int, bytes]]) -> bytes:
     return bytes(directory + blobs)
 
 
+def icns(images: list[tuple[bytes, bytes]]) -> bytes:
+    """Apple icon container: 'icns' + total length, then typed PNG chunks."""
+    body = bytearray()
+    for kind, data in images:
+        body += kind + struct.pack(">I", len(data) + 8) + data
+    return b"icns" + struct.pack(">I", len(body) + 8) + bytes(body)
+
+
 def main() -> None:
-    data = ico([(size, png(size)) for size in SIZES])
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_bytes(data)
-    print(f"wrote {OUT} ({len(data)} bytes, sizes {SIZES})")
+    ASSETS.mkdir(parents=True, exist_ok=True)
+    cache = {}
+
+    def image(size: int) -> bytes:
+        if size not in cache:
+            cache[size] = png(size)
+        return cache[size]
+
+    data = ico([(size, image(size)) for size in ICO_SIZES])
+    OUT_ICO.write_bytes(data)
+    print(f"wrote {OUT_ICO} ({len(data)} bytes, sizes {ICO_SIZES})")
+
+    data = icns([(kind, image(size)) for kind, size in ICNS_TYPES])
+    OUT_ICNS.write_bytes(data)
+    sizes = tuple(size for _, size in ICNS_TYPES)
+    print(f"wrote {OUT_ICNS} ({len(data)} bytes, sizes {sizes})")
 
 
 if __name__ == "__main__":
