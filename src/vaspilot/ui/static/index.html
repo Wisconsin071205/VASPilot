@@ -153,32 +153,45 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .msg .who{font-size:11px;color:var(--fg2);margin-bottom:3px}
 .bubble{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;white-space:pre-wrap;word-break:break-word}
 .msg.user .bubble{background:#1a2436}
-/* 工具调用 = Claude Code 式紧凑行（└ $ 名称 摘要），不再是盒子 */
-.toolcard{background:none;border:0;margin:1px 0 1px 14px;max-width:860px;
-  font-family:var(--mono);font-size:12px;overflow:visible}
-.toolcard .tc-h{display:flex;gap:7px;align-items:center;padding:1px 2px;
-  cursor:pointer;color:var(--fg2);border-radius:6px}
-.toolcard .tc-h:hover{background:var(--bg2)}
-.toolcard .tc-h .st{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+/* 过程流 = 一条活动行：此刻在做什么，细节点开才有（不堆命令行） */
+.turntools{margin:0 0 9px;border:1px solid var(--line);border-radius:10px;
+  background:var(--bg2);overflow:hidden}
+.turntools .tact{display:flex;align-items:center;gap:9px;padding:7px 12px;
+  font-size:12.5px;color:var(--fg2);cursor:pointer;user-select:none}
+.turntools .tact:hover{background:var(--bg3)}
+.turntools.nosteps .tact{cursor:default}
+.turntools.nosteps .tact:hover{background:none}
+.turntools .tact .dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;
+  background:var(--acc)}
+.turntools.live .tact .dot{animation:pulse 1.1s ease-in-out infinite}
+.turntools .tact .txt{flex:1;min-width:0;color:var(--fg);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.turntools .tact .txt .arg{color:var(--fg2);font-family:var(--mono);
+  font-size:11.5px;margin-left:7px}
+.turntools .tact .el{font-variant-numeric:tabular-nums;font-size:11.5px;
+  flex-shrink:0}
+.turntools .tact .arrow{font-size:10px;flex-shrink:0;
+  transition:transform .15s}
+.turntools.collapsed .tact .arrow{transform:rotate(-90deg)}
+.turntools.nosteps .tact .arrow{visibility:hidden}
+.turntools.collapsed .tlist{display:none}
+.turntools .tlist{border-top:1px solid var(--line);padding:4px 0}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}
+                 50%{opacity:.3;transform:scale(.7)}}
+/* 细节行：先说做了什么，参数是灰色附注，原始 JSON 再点一次才展开 */
+.toolcard{margin:0;font-size:12.5px}
+.toolcard .tc-h{display:flex;gap:8px;align-items:center;cursor:pointer;
+  padding:4px 12px 4px 15px;color:var(--fg2)}
+.toolcard .tc-h:hover{background:var(--bg3)}
+.toolcard .tc-h .st{width:5px;height:5px;border-radius:50%;flex-shrink:0}
 .toolcard .tc-h .st.ok{background:var(--ok)} .toolcard .tc-h .st.fail{background:var(--err)}
-.toolcard .tc-h .pr{color:var(--fg2)}
-.toolcard .tc-h .nm{color:#79c0ff}
+.toolcard .tc-h .nm{color:var(--fg);flex-shrink:0}
 .toolcard .tc-h.fail .nm{color:var(--err)}
-.toolcard .tc-sum{color:var(--fg)}
-.toolcard .tc-b{display:none;margin:3px 0 7px 16px;
+.toolcard .tc-b{display:none;margin:0 12px 8px 28px;
   border-left:2px solid var(--line);padding:4px 0 4px 12px;
   max-height:280px;overflow:auto;color:var(--fg2)}
-.toolcard .tc-b pre{margin:0 0 6px}
+.toolcard .tc-b pre{margin:0 0 6px;font-size:11.5px}
 .toolcard.open .tc-b{display:block}
-/* 回合工具组：回答一出即折叠为一行摘要（Claude Code 式） */
-.turntools{margin:0 0 6px}
-.turntools .tsum{display:flex;gap:7px;align-items:center;cursor:pointer;
-  font-family:var(--mono);font-size:12px;color:var(--fg2);padding:2px 4px;
-  border-radius:6px}
-.turntools .tsum:hover{background:var(--bg2)}
-.turntools .tsum .arrow{display:inline-block;transition:transform .15s}
-.turntools.collapsed .toolcard{display:none}
-.turntools.collapsed .tsum .arrow{transform:rotate(-90deg)}
 #chatbar{border-top:1px solid var(--line);padding:12px 22px;background:var(--bg2)}
 #chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
 #chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
@@ -276,10 +289,8 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .bubble code.ic{background:var(--bg3);border-radius:4px;padding:1px 5px;
   font-family:var(--mono);font-size:12px;color:#79c0ff}
 .bubble .mp{margin:4px 0}
-.turnmeta{font-size:11px;color:var(--fg2);margin-top:8px}
 .tc-sum{font-family:var(--mono);font-size:11.5px;color:var(--fg2);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  max-width:46%;margin-left:8px}
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
 </style>
 </head>
 <body>
@@ -1353,6 +1364,19 @@ const statusClass = s => ({"running":"info","completed":"ok","needs_review":"war
 
 /* ===================== 对话（SSE 流式） ===================== */
 let CURRENT_SESSION = "";
+/* 工具名 → 人话。活动行和细节行都用它，界面上不出现内部标识符。 */
+const TOOL_VERBS = {remote_run: "执行命令", shell_run: "本地命令",
+                    remote_read: "读取文件", remote_tail: "查看文件末尾",
+                    remote_list: "列出目录", remote_copy: "服务器内拷贝",
+                    remote_move: "服务器内移动", remote_mkdir: "创建目录",
+                    upload_file: "上传文件", download_file: "下载结果",
+                    job_submit: "提交作业", job_state: "查询作业",
+                    job_list: "查询队列", vasp_progress: "检查收敛",
+                    vasp_validate: "校验输入", server_metrics: "查看负载",
+                    web_search: "联网搜索", web_fetch: "抓取网页",
+                    project_write: "写入项目文件",
+                    project_read: "读取项目文件"};
+const verbOf = name => TOOL_VERBS[name] || name || "调用工具";
 async function sendChat() {
   const input = document.getElementById("chatinput");
   const text = input.value.trim();
@@ -1363,18 +1387,23 @@ async function sendChat() {
   const botBody = addMsg("bot", "");
   const bubble = botBody.querySelector(".bubble");
   bubble.innerHTML = '<span class="cursor"></span>';
-  // Claude Code 式的回合元信息：思考计时 → 完成用时与工具调用数
-  const meta = document.createElement("div");
-  meta.className = "turnmeta"; meta.textContent = "思考中… 0s";
-  const tools = document.createElement("div");
-  tools.className = "turntools";          // 过程行容器：结束后整体折叠
-  const bd0 = botBody.querySelector(".bd");
-  bd0.insertBefore(tools, bubble);
-  bd0.appendChild(meta);
-  log._tools = tools; log._meta = meta; log._t0 = Date.now();
+  // 整个回合的过程只占一行：脉动点 + 此刻在做什么 + 用时。
+  // 细节从一开始就收起来，点这一行才展开，不让操作堆在界面上。
+  const proc = document.createElement("div");
+  proc.className = "turntools live collapsed nosteps";
+  proc.innerHTML = `<div class="tact"><span class="dot"></span>` +
+    `<span class="txt">思考中…</span><span class="el">0s</span>` +
+    `<span class="arrow">▾</span></div><div class="tlist"></div>`;
+  proc.querySelector(".tact").onclick = () => {
+    if (!proc.classList.contains("nosteps")) proc.classList.toggle("collapsed");
+  };
+  botBody.querySelector(".bd").insertBefore(proc, bubble);
+  log._proc = proc; log._list = proc.querySelector(".tlist");
+  log._txt = proc.querySelector(".txt"); log._el = proc.querySelector(".el");
+  log._t0 = Date.now();
   log.dataset.tc = "0"; log._labels = [];
   log._timer = setInterval(() => {
-    meta.textContent = `思考中… ${Math.round((Date.now() - log._t0) / 1000)}s`;
+    log._el.textContent = `${Math.round((Date.now() - log._t0) / 1000)}s`;
   }, 500);
   document.getElementById("sendbtn").disabled = true;
   let acc = "";
@@ -1417,8 +1446,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     bubble.dataset.meta = `${ev.provider} · ${mode}`;
     if (ev.session_id) CURRENT_SESSION = ev.session_id;
   } else if (ev.type === "delta") {
-    if (log._timer) { clearInterval(log._timer); log._timer = null;
-      if (log._meta) log._meta.textContent = ""; }
+    if (log._txt && !bubble.dataset.acc) log._txt.textContent = "正在回答";
     const cur = bubble.dataset.acc || "";
     const next = cur + ev.text;
     bubble.dataset.acc = next;
@@ -1435,41 +1463,27 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     bubble.innerHTML = safeMD(r.answer || acc || "（完成）");
     if (!r.ok && r.error) toast(r.error, "err");
     if (log._timer) { clearInterval(log._timer); log._timer = null; }
-    // 回答一出，过程行整体折叠为一行摘要（Claude Code 式）
-    if (log._tools) {
+    // 活动行就地变成本回合的摘要；一次工具都没用过就整条消失
+    if (log._proc) {
       const names = log._labels || [];
-      const VERBS = {remote_run: "执行命令", shell_run: "本地命令",
-                     remote_read: "读取文件", remote_tail: "查看文件末尾",
-                     remote_list: "列出目录", remote_copy: "服务器内拷贝",
-                     remote_move: "服务器内移动", remote_mkdir: "创建目录",
-                     upload_file: "上传文件", download_file: "下载结果",
-                     job_submit: "提交作业", job_state: "查询作业",
-                     job_list: "查询队列", vasp_progress: "检查收敛",
-                     vasp_validate: "校验输入", server_metrics: "查看负载",
-                     web_search: "联网搜索", web_fetch: "抓取网页",
-                     project_write: "写入项目文件",
-                     project_read: "读取项目文件"};
-      const counts = {};
-      for (const n of names) {
-        const v = VERBS[n] || n;
-        counts[v] = (counts[v] || 0) + 1;
+      log._proc.classList.remove("live");
+      if (!names.length) log._proc.remove();
+      else {
+        const counts = {};
+        for (const n of names) {
+          const v = verbOf(n);
+          counts[v] = (counts[v] || 0) + 1;
+        }
+        const sumText = Object.entries(counts)
+          .map(([v, n]) => n > 1 ? `${v}×${n}` : v).join("、");
+        const fails = log._list.querySelectorAll(".tc-h.fail").length;
+        log._txt.innerHTML = `完成 ${names.length} 步` +
+          (sumText ? ` · <span class="arg">${esc(sumText)}</span>` : "") +
+          (fails ? ` · <span style="color:var(--err)">${fails} 项失败</span>` : "");
+        log._el.textContent =
+          `${Math.round((Date.now() - (log._t0 || Date.now())) / 1000)}s`;
       }
-      const fails = log._tools.querySelectorAll(".tc-h.fail").length;
-      const sumText = Object.entries(counts)
-        .map(([v, n]) => n > 1 ? `${v}×${n}` : v).join("、");
-      const head = document.createElement("div");
-      head.className = "tsum";
-      head.onclick = () => log._tools.classList.toggle("collapsed");
-      head.innerHTML = `<span class="arrow">▾</span>` +
-        `<span>操作 ${names.length} 次：${esc(sumText) || "无"}` +
-        (fails ? ` · <span style="color:var(--err)">${fails} 项失败</span>` : "") +
-        `（点击展开）</span>`;
-      log._tools.insertBefore(head, log._tools.firstChild);
-      if (names.length) log._tools.classList.add("collapsed");
     }
-    if (log._meta) log._meta.textContent =
-      `完成 · 用时 ${Math.round((Date.now() - (log._t0 || Date.now())) / 1000)}s`
-      + ` · ${log.dataset.tc || 0} 次工具调用`;
     // 回答落库后立即刷新会话列表（排序/标题），不等下一次轮询
     if (!loadSessionsbusy) { loadSessionsbusy = true;
       loadSessions().finally(() => loadSessionsbusy = false); }
@@ -1488,27 +1502,34 @@ function addToolCard(log, ev) {
   const ok = ev.ok !== false;
   const outcome = ev.outcome || {};
   const pending = outcome.status === "pending_confirmation";
-  // 折叠态摘要：让一摞卡片不点开也能读懂（命令/路径/目标优先）
+  // 摘要取最能说明这一步的那个参数（命令/路径/目标优先）
   const args = ev.arguments || {};
   const sumSrc = args.command || args.path || args.directory ||
                  args.destination || args.job_id || args.name ||
                  args.server || "";
   const sum = String(sumSrc).slice(0, 72);
+  const verb = verbOf(ev.tool);
+  // 活动行只讲此刻这一步，旧的被顶掉而不是往下堆
+  if (log._proc) {
+    log._proc.classList.remove("nosteps");
+    if (log._txt) log._txt.innerHTML = esc(verb) +
+      (sum ? ` <span class="arg">${esc(sum)}</span>` : "");
+  }
   card.innerHTML = `
     <div class="tc-h ${ok ? "" : "fail"}" onclick="this.parentElement.classList.toggle('open')">
       <span class="st ${ok ? "ok" : "fail"}"></span>
-      <span class="pr">└ $</span>
-      <span class="nm">${esc(ev.tool)}</span>
+      <span class="nm">${esc(verb)}</span>
       <span class="tc-sum" title="${esc(sum)}">${esc(sum)}</span>
       ${pending ? badge("等待确认", "warn") : ""}
       ${ok ? "" : '<span style="color:var(--err)">失败</span>'}
     </div>
-    <div class="tc-b"><div style="color:var(--fg2);margin-bottom:4px">参数</div>
+    <div class="tc-b">
+      <div style="color:var(--fg2);margin-bottom:4px">${esc(ev.tool)} · 参数</div>
       <pre>${esc(JSON.stringify(ev.arguments ?? {}, null, 2))}</pre>
       <div style="color:var(--fg2);margin:6px 0 4px">结果</div>
       <pre>${esc(JSON.stringify(outcome, null, 2).slice(0, 4000))}</pre></div>`;
-  // 插入本轮工具组容器（思考与回答之间）；没有容器时退回旧位置
-  const wrap = log._tools;
+  // 细节进折叠列表；没有容器时退回旧位置
+  const wrap = log._list;
   if (wrap) wrap.appendChild(card);
   else {
     const bots = log.querySelectorAll(".msg.bot");
