@@ -581,6 +581,57 @@ class CampaignRunner:
             Path(tmp).unlink(missing_ok=True)
 
 
+# What the model is told when it has to turn an annotation into a recipe.
+RECIPE_HINT = {
+    "stages": "subset of relax / static / band / dos; band and dos imply "
+              "static, static implies relax",
+    "structure_relaxed": "true when the user says the structure is already "
+                         "optimised (skips the implied relax)",
+    "functional": "PBE (default) or PBEsol",
+    "spin": "true for magnetic systems (ISPIN = 2 on every stage)",
+    "hubbard_u": "{element: {L, U, J}} for DFT+U, e.g. {\"Fe\": {\"L\": 2, "
+                 "\"U\": 4.0, \"J\": 0}}",
+    "kspacing": "{stage: 0.01..0.5} in 2*pi/Angstrom; omit for defaults "
+                "relax 0.04, static 0.03, dos 0.02",
+    "overrides": "{stage: {INCAR_KEY: value}} only when the user asks for a "
+                 "specific value; a value that contradicts a stage's safety "
+                 "assertion is refused",
+    "resources": "{ntasks, walltime HH:MM:SS, partition}",
+}
+
+
+def campaign_store(config: Any) -> CampaignStore:
+    return CampaignStore(Path(config.home) / "campaigns")
+
+
+def profile_store(config: Any) -> Any:
+    from ..vaspkit.adapter import ProfileStore
+    return ProfileStore(Path(config.home) / "vaspkit.json")
+
+
+def preview(planned: dict[str, Any]) -> dict[str, Any]:
+    """The plan as a person should review it before approving."""
+    doc = planned["campaign"]
+    return {
+        "campaign_hash": planned["campaign_hash"],
+        "server": doc["server"],
+        "structure": {key: doc["structure"][key]
+                      for key in ("file", "formula", "sha256", "summary")},
+        "annotation": doc["annotation"],
+        "recipe": doc["recipe"],
+        "vaspkit": doc["vaspkit"],
+        "stages": [{
+            "name": stage["name"], "label": STAGE_LABELS[stage["name"]],
+            "dir": stage["dir"], "requires": stage["requires"],
+            "poscar_from": stage["poscar_from"],
+            "kpoints": ("high-symmetry path (VASPKIT 303)"
+                        if stage["kpoints_task"] == 303
+                        else f"Gamma grid, spacing {stage['kspacing']}"),
+            "settings": stage["settings"], "assertions": stage["assertions"],
+        } for stage in doc["stages"]],
+    }
+
+
 def view(record: dict[str, Any]) -> dict[str, Any]:
     """What a person (or the model) needs to see of one campaign."""
     doc, state = record["campaign"], record["state"]
@@ -594,11 +645,16 @@ def view(record: dict[str, Any]) -> dict[str, Any]:
         "status": state["status"],
         "note": state.get("note", ""),
         "created_at": state.get("created_at", ""),
+        "approved_at": (state.get("approval") or {}).get("approved_at", ""),
         "finished_at": state.get("finished_at", ""),
         "remote_dir": campaign_dir(record),
         "stages": [{
             "name": stage["name"], "label": STAGE_LABELS[stage["name"]],
             "dir": stage["dir"], "requires": stage["requires"],
+            "settings": stage["settings"],
+            "kpoints": ("VASPKIT 303 high-symmetry path"
+                        if stage["kpoints_task"] == 303
+                        else f"Gamma, spacing {stage['kspacing']}"),
             **{key: state["stages"][stage["name"]].get(key) for key in (
                 "status", "job_id", "scheduler_state", "error", "progress",
                 "verify", "hashes", "submitted_at")},

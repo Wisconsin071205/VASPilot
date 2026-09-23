@@ -196,6 +196,34 @@ textarea:focus{outline:none;border-color:var(--acc)}
 #chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
 #chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
 #chathint{max-width:860px;margin:6px auto 0;font-size:11px;color:var(--fg2);text-align:center}
+#attachbtn{padding:0 12px;font-size:16px}
+#chatbar.dropping{outline:2px dashed var(--acc);outline-offset:-6px}
+/* 我的计算：一行一条计算链，展开见各阶段 */
+.camp{border:1px solid var(--line);border-radius:9px;margin-top:10px;overflow:hidden}
+.camp .ch{display:flex;align-items:center;gap:10px;padding:9px 12px;
+  background:var(--bg3);cursor:pointer;user-select:none}
+.camp .ch .t{flex:1;min-width:0;font-weight:500;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.camp .ch .t .sub{color:var(--fg2);font-weight:normal;font-size:12px;margin-left:8px}
+.camp .ch .el{color:var(--fg2);font-family:var(--mono);font-size:12px}
+.camp .cb{padding:4px 12px 10px}
+.camp.collapsed .cb{display:none}
+.camp .st{display:flex;gap:10px;align-items:baseline;padding:6px 0;font-size:13px;
+  border-bottom:1px dashed var(--line)}
+.camp .st:last-of-type{border-bottom:none}
+.camp .st .ic{width:16px;text-align:center;flex-shrink:0}
+.camp .st .nm{width:96px;flex-shrink:0}
+.camp .st .sc{width:100px;flex-shrink:0;font-family:var(--mono);font-size:12px;color:var(--fg2)}
+.camp .st .dt{flex:1;min-width:0;color:var(--fg2);font-size:12px;white-space:normal}
+.camp .st .dt.bad{color:var(--err)}
+.camp .ic.ok{color:var(--ok)} .camp .ic.bad{color:var(--err)}
+.camp .ic.warn{color:var(--warn)} .camp .ic.idle{color:var(--fg2)}
+.camp .ic.run{color:var(--acc);animation:pulse 1.1s ease-in-out infinite}
+.camp .kv{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.camp .kv span{font-family:var(--mono);font-size:11px;color:var(--fg);background:var(--bg);
+  border:1px solid var(--line);border-radius:5px;padding:0 6px}
+.camp .foot{color:var(--fg2);font-family:var(--mono);font-size:11px;margin-top:8px}
+.camp .acts{display:flex;gap:8px;margin-top:10px}
 .cursor{display:inline-block;width:8px;height:15px;background:var(--acc);animation:blink 1s infinite;vertical-align:-2px}
 @keyframes blink{50%{opacity:0}}
 
@@ -340,6 +368,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
     </div>
     <div id="chatbar">
       <div id="chatbox">
+        <button class="btn ghost" id="attachbtn" title="附加 VESTA 导出的 .vasp 文件（在文件末尾写明要算什么），也可以直接拖进来"
+          onclick="document.getElementById('vaspfile').click()">📎</button>
+        <input type="file" id="vaspfile" style="display:none"
+          onchange="attachFile(this.files[0]); this.value=''">
         <textarea id="chatinput" placeholder="向 远端控制智能体 提问（Enter 发送，Shift+Enter 换行）"></textarea>
         <button class="btn" id="sendbtn" onclick="sendChat()">发送</button>
       </div>
@@ -510,6 +542,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
 
   <!-- ============ 作业 ============ -->
   <section class="view" id="v-jobs">
+    <div class="card"><div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">我的计算 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（VASPKIT 计算链：一次批准，每个阶段自检通过才提交）</span></h2>
+      <button class="btn ghost" onclick="loadCampaigns()">刷新</button></div>
+      <div id="camplist"></div></div>
     <div class="card"><div class="row">
       <div class="fg"><label>服务器</label><select id="jsrv"></select></div>
       <button class="btn" onclick="loadJobs()">查询作业</button>
@@ -876,6 +912,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "flow") refreshProjects();
+  if (t.dataset.v === "jobs") loadCampaigns(true);
   if (t.dataset.v === "files") {
     if (!document.getElementById("fpath").value) pickFileServer();
     refreshWorkspacePanel();
@@ -1265,6 +1302,120 @@ async function loadProgress() {
 }
 const fmt = v => (v === null || v === undefined) ? "—" : Number(v).toFixed(4) + " eV";
 
+/* ===================== 我的计算 ===================== */
+const CAMP_STATUS = {awaiting_approval: ["待批准", "warn"], running: ["运行中", "info"],
+  completed: ["已完成", "ok"], needs_review: ["需复核", "warn"], failed: ["失败", "err"],
+  blocked: ["已拦截", "err"], aborted: ["已中止", "info"], rejected: ["已拒绝", "info"]};
+const STAGE_ICON = {converged: ["✓", "ok"], running: ["●", "run"], preparing: ["◐", "run"],
+  waiting: ["○", "idle"], needs_review: ["!", "warn"], failed: ["✗", "bad"],
+  blocked: ["⛔", "bad"], aborted: ["–", "idle"]};
+// 手动展开/折叠过的链记住选择；没动过的：结束了的折叠，其余（含需要处理的）展开
+const campOpen = new Map();
+const CAMP_QUIET = ["completed", "aborted", "rejected"];
+function since(iso, until) {
+  if (!iso) return "";
+  const s = Math.max(0, ((until ? Date.parse(until) : Date.now()) - Date.parse(iso)) / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h ? `${h}h${String(m).padStart(2, "0")}m` : `${m}m`;
+}
+function stageDetail(st, byName, campaignStatus) {
+  if (st.error) return esc(st.error);
+  if (st.status === "waiting" && campaignStatus !== "running"
+      && campaignStatus !== "awaiting_approval") return "未开始";
+  if (st.status === "waiting") {
+    const need = byName[st.requires];
+    return need ? `等待 ${esc(need.dir.slice(0, 2))} ${esc(need.label)} 收敛` : "即将开始";
+  }
+  const p = st.progress || {}, last = p.last_ionic || {}, bits = [];
+  if (p.ionic_steps) bits.push(`离子步 ${p.ionic_steps}`);
+  if (last.electronic_steps) bits.push(`电子步 ${last.electronic_steps}`);
+  if (st.status === "converged") bits.push("已收敛");
+  const e = last.energy_zero_ev ?? last.energy_ev;
+  if (e !== undefined && e !== null) bits.push(`E = ${Number(e).toFixed(3)} eV`);
+  if (st.status === "running" && !bits.length)
+    bits.push(st.scheduler_state === "RUNNING" ? "运行中，还没有完成的离子步" : "已提交，等待调度");
+  if (st.status === "preparing") bits.push("VASPKIT 正在生成输入");
+  return bits.map(esc).join("　");
+}
+function campRow(c) {
+  const [label, kind] = CAMP_STATUS[c.status] || [c.status, "info"];
+  const done = c.stages.filter(s => s.status === "converged").length;
+  const byName = Object.fromEntries(c.stages.map(s => [s.name, s]));
+  const reviewing = c.status === "awaiting_approval";
+  const open = reviewing || (campOpen.has(c.campaign_id)
+    ? campOpen.get(c.campaign_id) : !CAMP_QUIET.includes(c.status));
+  const stages = c.stages.map(st => {
+    const [ic, ik] = STAGE_ICON[st.status] || ["?", "idle"];
+    // 待批准时把每个阶段要写进 INCAR 的值摊开：批准的就是这些
+    const kv = reviewing ? `<div class="kv">${Object.entries(st.settings || {})
+      .map(([k, v]) => `<span>${esc(k)} = ${esc(v)}</span>`).join("")}
+      <span>KPOINTS: ${esc(st.kpoints)}</span></div>` : "";
+    return `<div class="st"><span class="ic ${ik}">${ic}</span>
+      <span class="nm">${esc(st.dir.slice(0, 2))} ${esc(st.label)}</span>
+      <span class="sc">${esc(st.scheduler_state || (st.job_id ? "PENDING" : "—"))}</span>
+      <span class="dt${st.error ? " bad" : ""}">${stageDetail(st, byName, c.status)}${kv}</span></div>`;
+  }).join("");
+  const id = esc(c.campaign_id);
+  const acts = reviewing
+    ? `<div class="acts"><button class="btn" onclick="campAct('approve','${id}')">批准整条链</button>
+       <button class="btn ghost" onclick="campAct('reject','${id}')">拒绝</button></div>`
+    : c.status === "running"
+    ? `<div class="acts"><button class="btn danger" onclick="campAct('abort','${id}')">中止</button></div>` : "";
+  const note = c.note ? `<div class="foot" style="color:var(--warn)">${esc(c.note)}</div>` : "";
+  return `<div class="camp${open ? "" : " collapsed"}" data-id="${id}">
+    <div class="ch" onclick="campToggle('${id}')">
+      <span class="t">${esc(c.formula)}<span class="sub">${esc(c.functional)} · ${esc(c.server)} · ${esc(c.file)}</span></span>
+      ${badge(`${label} ${done}/${c.stages.length}`, kind)}
+      <span class="el">${since(c.approved_at || c.created_at, c.finished_at)}</span></div>
+    <div class="cb">${stages}${note}
+      <div class="foot">${esc(c.remote_dir)} · ${esc(c.campaign_hash.slice(0, 12))}</div>${acts}</div></div>`;
+}
+async function loadCampaigns(silent = false) {
+  const r = await api("campaign.list", {}, silent);
+  if (!r.ok) return;
+  document.getElementById("camplist").innerHTML = (r.campaigns || []).map(campRow).join("")
+    || `<div class="empty">还没有计算链。在对话里点 📎 附上 VESTA 导出的 .vasp 文件，在文件末尾写明要算什么。</div>`;
+}
+function campToggle(id) {
+  const el = document.querySelector(`.camp[data-id="${id}"]`);
+  if (el) campOpen.set(id, el.classList.toggle("collapsed") === false);
+}
+async function campAct(what, id) {
+  if (what === "abort" && !confirm("中止这条计算链？正在运行的作业会被取消。")) return;
+  const r = await api(`campaign.${what}`, {id});
+  if (r.ok) {
+    if (what === "approve") campOpen.set(id, true);
+    toast({approve: "已批准，第一阶段马上开始", reject: "已拒绝", abort: "已中止"}[what], "ok");
+  }
+  loadCampaigns(true);
+}
+setInterval(() => {
+  if (document.getElementById("v-jobs").classList.contains("on")) loadCampaigns(true);
+}, 60000);
+
+/* 附件：文件原样存到本机，消息里只放路径——坐标不经模型转抄 */
+async function attachFile(file) {
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) return toast("文件超过 2 MiB", "err");
+  const r = await api("vasp.attach", {name: file.name, text: await file.text()});
+  if (!r.ok) return;
+  const box = document.getElementById("chatinput");
+  const line = `[结构文件 ${r.formula} · ${r.natoms} 个原子] ${r.path}`;
+  box.value = line + "\n" + (box.value || (r.annotation ? "按文件末尾的标注计算" : ""));
+  box.focus();
+  toast(r.annotation ? `已附加 ${r.formula}，文件末尾带有计算标注`
+                     : `已附加 ${r.formula}；文件里没有标注，请在消息里写明要算什么`, "ok");
+}
+{
+  const bar = document.getElementById("chatbar");
+  bar.addEventListener("dragover", e => { e.preventDefault(); bar.classList.add("dropping"); });
+  bar.addEventListener("dragleave", () => bar.classList.remove("dropping"));
+  bar.addEventListener("drop", e => {
+    e.preventDefault(); bar.classList.remove("dropping");
+    attachFile(e.dataTransfer.files[0]);
+  });
+}
+
 /* ===================== 工作流 ===================== */
 async function preparePlan() {
   const spec = {
@@ -1375,7 +1526,10 @@ const TOOL_VERBS = {remote_run: "执行命令", shell_run: "本地命令",
                     vasp_validate: "校验输入", server_metrics: "查看负载",
                     web_search: "联网搜索", web_fetch: "抓取网页",
                     project_write: "写入项目文件",
-                    project_read: "读取项目文件"};
+                    project_read: "读取项目文件",
+                    vaspkit_doctor: "探测 VASPKIT", campaign_plan: "规划计算链",
+                    campaign_start: "启动计算链", campaign_status: "查看计算链",
+                    campaign_abort: "中止计算链"};
 const verbOf = name => TOOL_VERBS[name] || name || "调用工具";
 async function sendChat() {
   const input = document.getElementById("chatinput");

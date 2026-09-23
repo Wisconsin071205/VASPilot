@@ -472,6 +472,57 @@ class ToolRegistry:
                 {"plan_id": {"type": "string", "pattern": r"^[0-9a-f]{16}$"}},
                 lambda a: engine.status(str(a["plan_id"])))
 
+        # ---- VASPKIT campaigns ---------------------------------------------------
+        vasp_path = _path_param(
+            "local .vasp / POSCAR file exported from VESTA; the calculations "
+            "the user wants are written in Chinese below the coordinates")
+        recipe = {"type": "object",
+                  "description": "what to run, built from the file's "
+                                 "annotation; call campaign_plan without it "
+                                 "first to read the annotation and the "
+                                 "recipe fields"}
+        self._add(
+            "vaspkit_doctor",
+            "Probe a server for VASPKIT and its pseudopotential library "
+            "(reads ~/.vaspkit, tries task 103 in a throwaway directory) and "
+            "remember the result. Campaigns only start on a server whose "
+            "probe came back ready.", "read",
+            {"server": _server_param(),
+             "command": {"type": "string", "maxLength": 200,
+                         "description": "optional vaspkit path to try first"}},
+            lambda a: self._vaspkit_doctor(a))
+        self._add(
+            "campaign_plan",
+            "Plan a VASPKIT calculation chain (relax -> static -> band / DOS) "
+            "from one .vasp file. Without `recipe` it returns the structure "
+            "summary and the user's annotation so you can build one; with it, "
+            "the frozen plan: every stage's INCAR settings, safety "
+            "assertions, k-points and job script. Touches no server.",
+            "read",
+            {"vasp_path": vasp_path, "recipe": recipe, "server": _server_param()},
+            lambda a: self._campaign_plan(a))
+        self._add(
+            "campaign_start",
+            "Start the planned chain. In confirm mode (default) it waits for "
+            "the user to approve it under 作业 -> 我的计算; approval covers the "
+            "whole chain. Every stage's generated INCAR is re-checked against "
+            "the approved assertions before anything is submitted.", "write",
+            {"vasp_path": vasp_path, "recipe": recipe, "server": _server_param()},
+            lambda a: self._campaign_start(a))
+        self._add(
+            "campaign_status",
+            "Show one campaign (or all when campaign_id is empty): each "
+            "stage's scheduler state, scientific convergence, INCAR check and "
+            "input hashes.", "read",
+            {"campaign_id": {"type": "string", "pattern": r"^([0-9a-f]{16})?$"}},
+            lambda a: self._campaign_status(a))
+        self._add(
+            "campaign_abort",
+            "Stop a campaign: cancel its running job and start nothing more.",
+            "write",
+            {"campaign_id": {"type": "string", "pattern": r"^[0-9a-f]{16}$"}},
+            lambda a: self._campaign_abort(a))
+
     # -- handlers needing context ------------------------------------------------
     def _read_text(self, args: dict[str, Any]) -> dict[str, Any]:
         path = str(args["path"])
@@ -680,6 +731,114 @@ class ToolRegistry:
             "web.fetch", outcome="ok", url=result["url"],
             bytes=len(result["text"]))
         return {"ok": True, **result}
+
+    # -- VASPKIT campaigns --------------------------------------------------------------
+    MAX_VASP_BYTES = 2 * 1024 * 1024
+
+    def _vaspkit_doctor(self, args: dict[str, Any]) -> dict[str, Any]:
+        from ..vaspkit.adapter import doctor_script, parse_doctor, remote_command
+        from ..workflow.campaign import profile_store
+        client = self.context.client
+        server = str(args.get("server") or "") or \
+            self.context.config.default_server()
+        result = client.run_command(
+            remote_command(doctor_script(str(args.get("command") or ""))),
+            timeout_seconds=300, server=server)
+        profile = parse_doctor(str(result.get("stdout", "")))
+        from datetime import datetime, timezone
+        profile["probed_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds")
+        profile_store(self.context.config).put(server, profile)
+        self.context.audit_record("vaspkit.doctor", outcome="ok"
+                                  if profile["ready"] else "not_ready",
+                                  server=server)
+        return {"ok": True, "server": server, **profile}
+
+    def _campaign_inputs(self, args: dict[str, Any]) -> tuple[Path, str, Any]:
+        path = Path(str(args.get("vasp_path") or "")).expanduser()
+        if not path.is_file():
+            raise ValidationError(f"{path} is not a file")
+        if path.stat().st_size > self.MAX_VASP_BYTES:
+            raise ValidationError(f"{path.name} is larger than 2 MiB")
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise ValidationError(f"{path.name} is not UTF-8 text") from exc
+        recipe = args.get("recipe") if isinstance(args.get("recipe"), dict) else {}
+        resources = recipe.get("resources") if isinstance(
+            recipe.get("resources"), dict) else {}
+        server = str(args.get("server") or resources.get("server") or "") \
+            or self.context.config.default_server()
+        return path, text, self.context.client.server_entry(server)
+
+    def _campaign_planned(self, args: dict[str, Any]) -> dict[str, Any]:
+        from ..workflow.campaign import plan_campaign, profile_store
+        path, text, entry = self._campaign_inputs(args)
+        return plan_campaign(
+            vasp_text=text, file_name=path.name, recipe=args["recipe"],
+            server_entry=entry,
+            profile=profile_store(self.context.config).get(entry.name))
+
+    def _campaign_plan(self, args: dict[str, Any]) -> dict[str, Any]:
+        from ..vaspkit.structure import (parse_poscar, split_annotation,
+                                         structure_summary)
+        from ..workflow.campaign import RECIPE_HINT, preview, profile_store
+        if not isinstance(args.get("recipe"), dict) or not args["recipe"]:
+            path, text, entry = self._campaign_inputs(args)
+            poscar_text, annotation = split_annotation(text)
+            summary = structure_summary(parse_poscar(poscar_text))
+            profile = profile_store(self.context.config).get(entry.name)
+            return {"ok": True, "stage": "needs_recipe", "file": path.name,
+                    "structure": summary, "annotation": annotation,
+                    "server": entry.name,
+                    "vaspkit_ready": bool(profile.get("ready")),
+                    "recipe_fields": RECIPE_HINT,
+                    "next": "build a recipe from the annotation (ask the user "
+                            "when it is ambiguous), then call campaign_plan "
+                            "again with it" + ("" if profile.get("ready") else
+                            "; run vaspkit_doctor on this server first")}
+        return {"ok": True, "stage": "planned",
+                **preview(self._campaign_planned(args))}
+
+    def _campaign_start(self, args: dict[str, Any]) -> dict[str, Any]:
+        from ..workflow.campaign import campaign_store
+        if not isinstance(args.get("recipe"), dict) or not args["recipe"]:
+            raise ValidationError("campaign_start needs the recipe; plan first")
+        store = campaign_store(self.context.config)
+        record = store.create(self._campaign_planned(args))
+        campaign_id = record["campaign_id"]
+        self.context.audit_record("campaign.create", outcome="ok",
+                                  campaign_id=campaign_id)
+        if self.context.config.agent_submit_mode() == "auto":
+            store.approve(campaign_id, via="auto")
+            return {"ok": True, "status": "running", "campaign_id": campaign_id,
+                    "message": "started; the web console advances it every "
+                               "minute -- check with campaign_status"}
+        return {"ok": True, "status": "awaiting_approval",
+                "campaign_id": campaign_id,
+                "message": "ask the user to approve it under 作业 -> 我的计算; "
+                           "nothing runs until they do"}
+
+    def _campaign_status(self, args: dict[str, Any]) -> dict[str, Any]:
+        from ..workflow.campaign import campaign_store, view
+        store = campaign_store(self.context.config)
+        campaign_id = str(args.get("campaign_id") or "")
+        if campaign_id:
+            return {"ok": True, **view(store.load(campaign_id))}
+        return {"ok": True, "campaigns": [
+            {key: item[key] for key in ("campaign_id", "formula", "server",
+                                        "status", "created_at")}
+            for item in map(view, store.list())]}
+
+    def _campaign_abort(self, args: dict[str, Any]) -> dict[str, Any]:
+        from ..workflow.campaign import CampaignRunner, campaign_store, view
+        runner = CampaignRunner(store=campaign_store(self.context.config),
+                                client=self.context.client,
+                                audit=self.context.audit)
+        record = runner.abort(str(args["campaign_id"]))
+        self.context.audit_record("campaign.abort", outcome="ok",
+                                  campaign_id=record["campaign_id"])
+        return {"ok": True, **view(record)}
 
     # -- local projects -----------------------------------------------------------------
     def _project_name(self, args: dict[str, Any]) -> str:

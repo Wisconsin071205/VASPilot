@@ -80,6 +80,35 @@ class UiState:
         self.token = secrets.token_urlsafe(24)
         self.lock = threading.Lock()
         self.runs: dict[str, dict[str, Any]] = {}  # plan_id -> thread info
+        self._campaign_wake: threading.Event | None = None
+        self.stopped = threading.Event()
+
+    def start_campaign_ticker(self, interval: float = 60.0) -> None:
+        """Advance every running campaign once a minute, and right away when
+        kicked. Each tick persists what it did, so a restart only costs the
+        next tick."""
+        if self._campaign_wake is not None:
+            return
+        self._campaign_wake = threading.Event()
+
+        def loop() -> None:
+            from ..workflow.campaign import CampaignRunner, campaign_store
+            while not self.stopped.is_set():
+                try:
+                    CampaignRunner(store=campaign_store(self.app.config),
+                                   client=self.app.client(),
+                                   audit=self.app.audit).tick_all()
+                except Exception:
+                    pass  # a bad tick must never kill the console
+                self._campaign_wake.wait(interval)
+                self._campaign_wake.clear()
+
+        threading.Thread(target=loop, daemon=True,
+                         name="vaspilot-campaigns").start()
+
+    def kick_campaigns(self) -> None:
+        if self._campaign_wake is not None:
+            self._campaign_wake.set()
 
 
 def build_state(app) -> UiState:
@@ -479,6 +508,10 @@ class UiHandler(BaseHTTPRequestHandler):
                     str(body.get("session_id") or ""))})
             elif action == "submit.confirm":
                 self._confirm_submit(body)
+            elif action.startswith("campaign."):
+                self._campaign_action(action, body)
+            elif action == "vasp.attach":
+                self._attach_vasp(body)
             else:
                 self._send_json({"ok": False, "error": {
                     "code": "unknown_action", "message": action}}, status=404)
@@ -836,6 +869,59 @@ class UiHandler(BaseHTTPRequestHandler):
                 "code": "unknown_action", "message": action}}, status=404)
 
     # ---------------------------------------------------- submit confirmation
+    def _campaign_action(self, action: str, body: dict) -> None:
+        from ..workflow.campaign import CampaignRunner, campaign_store, view
+        app = self.state.app
+        store = campaign_store(app.config)
+        if action == "campaign.list":
+            self._send_json({"ok": True,
+                             "campaigns": [view(r) for r in store.list()]})
+            return
+        campaign_id = str(body.get("id") or "")
+        if action == "campaign.approve":
+            record = store.approve(campaign_id, via="ui")
+            self.state.kick_campaigns()
+        elif action == "campaign.reject":
+            record = store.reject(campaign_id)
+        elif action == "campaign.abort":
+            record = CampaignRunner(store=store, client=app.client(),
+                                    audit=app.audit).abort(campaign_id)
+        else:
+            self._send_json({"ok": False, "error": {
+                "code": "unknown_action", "message": action}}, status=404)
+            return
+        app.audit.record(action, outcome="ok", campaign_id=campaign_id)
+        self._send_json({"ok": True, **view(record)})
+
+    MAX_ATTACH = 2 * 1024 * 1024
+
+    def _attach_vasp(self, body: dict) -> None:
+        """Keep a .vasp file the user picked in the chat, so tools read the
+        exact bytes instead of the model re-typing its coordinates."""
+        import re
+        from ..core.errors import ValidationError
+        from ..vaspkit.structure import (parse_poscar, split_annotation,
+                                         structure_summary)
+        name = Path(str(body.get("name") or "")).name
+        text = body.get("text")
+        if not re.fullmatch(r"[\w.()\- ]{1,120}", name):
+            raise ValidationError("attachment name is not a plain file name")
+        if not isinstance(text, str) or not text.strip():
+            raise ValidationError("the attachment is empty")
+        if len(text.encode("utf-8")) > self.MAX_ATTACH:
+            raise ValidationError("the attachment is larger than 2 MiB")
+        poscar_text, annotation = split_annotation(text)
+        summary = structure_summary(parse_poscar(poscar_text))
+        folder = self.state.app.config.home / "uploads"
+        folder.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime
+        target = folder / f"{datetime.now():%Y%m%d-%H%M%S}-{name}"
+        target.write_text(text, encoding="utf-8", newline="\n")
+        self._send_json({"ok": True, "path": str(target),
+                         "formula": summary["formula"],
+                         "natoms": summary["natoms"],
+                         "annotation": annotation})
+
     def _confirm_submit(self, body: dict) -> None:
         from ..core.errors import ValidationError
         from ..core.hashing import text_sha256
@@ -1242,6 +1328,7 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
 
     BoundHandler.state = state
     httpd = _bind_with_fallback(BoundHandler, host, port)
+    state.start_campaign_ticker()
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
     if port and bound_port != port:
@@ -1271,6 +1358,8 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
         except KeyboardInterrupt:
             pass
         finally:
+            state.stopped.set()
+            state.kick_campaigns()
             httpd.server_close()
         return httpd, url
     return httpd, url
