@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.errors import ValidationError
+from .recipe import STAGE_REQUIRES
 from .verify import compare
 
 STAGE_DIRS = {"relax": "01-relax", "static": "02-static",
@@ -52,7 +53,6 @@ def build_campaign(recipe: dict[str, Any]) -> dict[str, Any]:
             "but this recipe has no static stage")
 
     stages: list[dict[str, Any]] = []
-    previous = ""
     for index, name in enumerate(running, start=1):
         assertions = [_assertion(*item) for item in BASE_ASSERTIONS[name]]
         if recipe["spin"]:
@@ -80,11 +80,13 @@ def build_campaign(recipe: dict[str, Any]) -> dict[str, Any]:
             "chgcar_from": STAGE_DIRS["static"] if name in ("band", "dos") else "",
             "kpoints_task": KPOINTS_TASK[name],
             "kspacing": recipe["kspacing"][name],
-            "requires": previous,
+            # band and DOS both read only the static run, so they can run
+            # side by side once it converges
+            "requires": STAGE_REQUIRES[name]
+            if STAGE_REQUIRES.get(name) in running else "",
             "assertions": assertions,
             "overrides": overrides,
         })
-        previous = name
 
     return {"stages": stages, "server": recipe["resources"]["server"],
             "functional": recipe["functional"]}

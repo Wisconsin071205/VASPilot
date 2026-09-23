@@ -65,6 +65,17 @@ class TestGraph:
         assert stage_of(result, "static")["requires"] == "relax"
         assert stage_of(result, "band")["requires"] == "static"
 
+    def test_band_and_dos_both_wait_only_for_static(self):
+        result = campaign()
+        assert stage_of(result, "band")["requires"] == "static"
+        assert stage_of(result, "dos")["requires"] == "static"
+
+    def test_static_needs_nothing_when_the_structure_is_already_relaxed(self):
+        result = campaign(stages=["dos"], structure_relaxed=True)
+        assert [s["name"] for s in result["stages"]] == ["static", "dos"]
+        assert stage_of(result, "static")["requires"] == ""
+        assert stage_of(result, "dos")["requires"] == "static"
+
 
 class TestAssertions:
     def test_relax_locks_the_parameters_that_make_it_a_relaxation(self):

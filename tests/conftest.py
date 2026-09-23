@@ -52,6 +52,71 @@ class FakeGatewayState:
             self.default = name
 
 
+FAKE_PROBE_OK = (
+    "__VP_VK_CMD__\n/opt/vaspkit/bin/vaspkit\n__VP_VK_VERSION__\n"
+    "VASPKIT 1.4.1\n__VP_VK_POT__\nPBE_PATH|/data/pot/PBE|dir|320|yes\n"
+    "GGA_PATH||missing|0|no\nLDA_PATH||missing|0|no\n__VP_VK_TRY__\n"
+    "stdin|ok\ntask|fail\n__VP_VK_END__\n")
+
+# What the fake VASPKIT's task 101 writes. Deliberately not what the
+# campaign wants (ISIF = 2, LCHARG = .FALSE.), so the tests prove the
+# approved settings are what ends up in the file.
+FAKE_INCAR_TEMPLATES = {
+    "LR": "SYSTEM = fake-vaspkit\nISTART = 0\nENCUT = 520\n"
+          "IBRION = 2; ISIF = 2\nNSW = 300\nEDIFFG = -0.02\n",
+    "ST": "SYSTEM = fake-vaspkit\nISTART = 0; ICHARG = 2\nENCUT = 520\n"
+          "ISMEAR = 0; SIGMA = 0.05\nNSW = 0\n"
+          "LCHARG = .FALSE.  # template default\n",
+}
+
+
+def fake_vaspkit(state, server, script):
+    """Play VASPKIT for one generation script: copy, generate, check.
+
+    ``state.vaspkit_fail`` names tasks that silently produce nothing;
+    ``state.vaspkit_primcell`` overrides what task 303 writes as
+    PRIMCELL.vasp (default: the POSCAR itself, i.e. already primitive).
+    """
+    import re as _re
+    import shlex as _sh
+    files = state.files[server]
+    fail = getattr(state, "vaspkit_fail", set())
+    lines = script.splitlines()
+    where = _sh.split(lines[0].split("||")[0])[2]
+
+    def full(path):
+        return path if path.startswith("/") else f"{where}/{path}"
+
+    for line in lines[1:]:
+        if line.startswith("cp -- "):
+            _, _, src, dst = _sh.split(line.split("||")[0])
+            if full(src) not in files:
+                return 2, f"cp: cannot stat '{src}'\n"
+            files[full(dst)] = files[full(src)]
+            continue
+        match = _re.search(r"vaspkit-(\d+)\.log", line)
+        if not match or match.group(1) in fail:
+            continue
+        task = match.group(1)
+        if task == "103":
+            files[f"{where}/POTCAR"] = b"PAW_PBE Si 05Jan2001\n"
+        elif task == "101":
+            code = _sh.split(line.split("|")[0])[-1]
+            files[f"{where}/INCAR"] = FAKE_INCAR_TEMPLATES[code].encode()
+        elif task == "102":
+            files[f"{where}/KPOINTS"] = b"K-Spacing\n0\nGamma\n8 8 8\n0 0 0\n"
+        elif task == "303":
+            files[f"{where}/KPATH.in"] = (b"K-Path\n20\nLine-Mode\nReciprocal\n"
+                                          b"0 0 0 GAMMA\n0.5 0 0.5 X\n")
+            prim = getattr(state, "vaspkit_primcell", None)
+            files[f"{where}/PRIMCELL.vasp"] = prim if prim is not None \
+                else files[f"{where}/POSCAR"]
+    for name in ("INCAR", "KPOINTS", "POTCAR"):
+        if not files.get(f"{where}/{name}"):
+            return 3, f"__VP_GEN_MISSING__ {name}\n"
+    return 0, "__VP_GEN_OK__\n"
+
+
 class FakeTransport:
     """Drop-in SshTransport double speaking the gateway JSON protocol."""
 
@@ -529,6 +594,31 @@ class FakeTransport:
         if not hasattr(self.state, "exec_log"):
             self.state.exec_log = []
         self.state.exec_log.append((server, command))
+        if "base64 -d" in command:
+            import base64 as _b64
+            import re as _re
+            encoded = _re.search(r"echo (\S+) \| base64 -d", command).group(1)
+            script = _b64.b64decode(encoded).decode("utf-8")
+            if "__VP_VK_CMD__" in script:
+                rc, out = 0, getattr(self.state, "vaspkit_probe", FAKE_PROBE_OK)
+            elif "__VP_GEN_OK__" in script:
+                rc, out = fake_vaspkit(self.state, server, script)
+            else:
+                rc, out = 0, ""
+            return {"ok": True, "server": server, "rc": rc, "stdout": out,
+                    "stderr": "", "truncated": False, "command": command}
+        if command.startswith("cd -- ") and " && sha256sum -- " in command:
+            import hashlib
+            import shlex as _sh
+            head, tail = command.split(" && sha256sum -- ", 1)
+            where = _sh.split(head)[2]
+            names = tail.split()
+            rows = [f"{hashlib.sha256(self.state.files[server][f'{where}/{n}']).hexdigest()}  {n}"
+                    for n in names if f"{where}/{n}" in self.state.files[server]]
+            return {"ok": True, "server": server,
+                    "rc": 0 if len(rows) == len(names) else 1,
+                    "stdout": "\n".join(rows) + "\n", "stderr": "",
+                    "truncated": False, "command": command}
         if "@@VP_CWD@@" in command:
             # persistent-terminal wrapper: emulate a shell that reports its
             # cwd back; keep any leading "echo x" body for passthrough tests
