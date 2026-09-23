@@ -184,3 +184,71 @@ class TestConsole:
         result = call(ui, "campaign.abort", {"id": "0" * 16})
         assert result["ok"] is False
         assert "not found" in result["error"]["message"]
+
+
+class TestLibrarySetting:
+    LIB = "/data/pot/PBE.54"
+
+    def test_set_get_clear(self, tools):
+        app, _, _, _ = tools
+        assert app.config.potcar_library("cl9") == ""
+        assert app.config.set_potcar_library("cl9", self.LIB + "/") == self.LIB
+        assert app.config.potcar_library("cl9") == self.LIB
+        assert app.config.potcar_library("pbs1") == ""
+        app.config.set_potcar_library("cl9", "")
+        assert app.config.potcar_library("cl9") == ""
+
+    @pytest.mark.parametrize("path", ["pot/PBE", "/a/../b", "/a;rm", "/a b"])
+    def test_bad_paths_are_refused(self, tools, path):
+        app, _, _, _ = tools
+        with pytest.raises(ValidationError, match="absolute path"):
+            app.config.set_potcar_library("cl9", path)
+
+    def test_doctor_probes_the_configured_library(self, tools):
+        app, registry, _, _ = tools
+        app.config.set_potcar_library("cl9", self.LIB)
+        result = doctor(registry)
+        assert result["ready"] is True
+        assert result["potcar_library"] == self.LIB
+        assert result["library"]["path"] == self.LIB
+
+    def test_doctor_reports_a_missing_library(self, tools):
+        app, registry, _, _ = tools
+        app.config.set_potcar_library("cl9", "/data/missing/PBE")
+        result = doctor(registry)
+        assert result["ready"] is False
+
+    def test_changing_the_library_needs_a_new_probe(self, tools):
+        app, registry, _, vasp = tools
+        app.config.set_potcar_library("cl9", self.LIB)
+        doctor(registry)
+        registry.dispatch("campaign_plan", {"vasp_path": vasp, "recipe": RECIPE})
+        app.config.set_potcar_library("cl9", "/data/pot/other")
+        peek = registry.dispatch("campaign_plan", {"vasp_path": vasp})
+        assert peek["vaspkit_ready"] is False
+        with pytest.raises(ValidationError, match="vaspkit_doctor again"):
+            registry.dispatch("campaign_plan", {"vasp_path": vasp, "recipe": RECIPE})
+
+    def test_console_settings_flow(self, ui):  # noqa: F811
+        rows = call(ui, "vaspkit.settings")["servers"]
+        assert rows[0]["server"] == "cl9" and rows[0]["probed"] is False
+
+        bad = call(ui, "vaspkit.save", {"server": "cl9", "potcar_library": "pot"})
+        assert bad["ok"] is False
+
+        saved = call(ui, "vaspkit.save", {"server": "cl9",
+                                          "potcar_library": self.LIB})
+        assert saved["potcar_library"] == self.LIB and saved["probed"] is False
+
+        probed = call(ui, "vaspkit.doctor", {"server": "cl9"})
+        assert probed["ready"] is True and probed["stale"] is False
+        assert probed["library"]["path"] == self.LIB
+
+        moved = call(ui, "vaspkit.save", {"server": "cl9",
+                                          "potcar_library": "/data/pot/other"})
+        assert moved["stale"] is True
+
+    def test_console_refuses_unknown_servers(self, ui):  # noqa: F811
+        result = call(ui, "vaspkit.save", {"server": "nope",
+                                           "potcar_library": self.LIB})
+        assert result["ok"] is False

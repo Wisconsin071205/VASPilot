@@ -126,8 +126,13 @@ def apply_settings(incar_text: str, settings: dict[str, str]) -> str:
 
 # ---------------------------------------------------------------------- plan
 def plan_campaign(*, vasp_text: str, file_name: str, recipe: dict[str, Any],
-                  server_entry: Any, profile: dict[str, Any]) -> dict[str, Any]:
-    """Freeze one campaign. Touches no server."""
+                  server_entry: Any, profile: dict[str, Any],
+                  potcar_library: str = "") -> dict[str, Any]:
+    """Freeze one campaign. Touches no server.
+
+    ``potcar_library`` is the library the user set for this server now; the
+    probe must have been run against that same setting.
+    """
     poscar_text, annotation = split_annotation(vasp_text)
     poscar = parse_poscar(poscar_text)
     summary = structure_summary(poscar)
@@ -148,6 +153,10 @@ def plan_campaign(*, vasp_text: str, file_name: str, recipe: dict[str, Any],
         raise ValidationError(
             f"server {server_entry.name} has no ready VASPKIT profile; run "
             "vaspkit_doctor first")
+    if str(profile.get("potcar_library") or "") != str(potcar_library or ""):
+        raise ValidationError(
+            f"the pseudopotential library for {server_entry.name} changed since "
+            "the last probe; run vaspkit_doctor again")
     if not str(server_entry.remote_root or "").startswith("/"):
         raise ValidationError(
             f"server {server_entry.name} has no remote_root to put campaigns in")
@@ -179,7 +188,9 @@ def plan_campaign(*, vasp_text: str, file_name: str, recipe: dict[str, Any],
         "annotation": annotation[:4000],
         "recipe": checked,
         "vaspkit": {"command": profile["command"], "mode": profile["mode"],
-                    "version": profile.get("version", ""), "ready": True},
+                    "version": profile.get("version", ""), "ready": True,
+                    # empty = VASPKIT's own ~/.vaspkit on the server
+                    "potcar_library": str(potcar_library or "")},
         "stages": stages,
     }
     # round-trip through JSON so the hash covers exactly what is stored
@@ -600,6 +611,21 @@ RECIPE_HINT = {
 }
 
 
+def run_doctor(config: Any, client: Any, server: str,
+               command: str = "") -> dict[str, Any]:
+    """Probe one server as configured and remember the verdict."""
+    from ..vaspkit.adapter import doctor_script, parse_doctor
+    library = config.potcar_library(server)
+    result = client.run_command(
+        remote_command(doctor_script(command, potcar_library=library)),
+        timeout_seconds=300, server=server)
+    profile = parse_doctor(str(result.get("stdout", "")))
+    profile["potcar_library"] = library
+    profile["probed_at"] = _now()
+    profile_store(config).put(server, profile)
+    return profile
+
+
 def campaign_store(config: Any) -> CampaignStore:
     return CampaignStore(Path(config.home) / "campaigns")
 
@@ -642,6 +668,7 @@ def view(record: dict[str, Any]) -> dict[str, Any]:
         "file": doc["structure"]["file"],
         "functional": doc["recipe"]["functional"],
         "server": doc["server"],
+        "potcar_library": doc["vaspkit"].get("potcar_library", ""),
         "status": state["status"],
         "note": state.get("note", ""),
         "created_at": state.get("created_at", ""),

@@ -484,7 +484,8 @@ class ToolRegistry:
         self._add(
             "vaspkit_doctor",
             "Probe a server for VASPKIT and its pseudopotential library "
-            "(reads ~/.vaspkit, tries task 103 in a throwaway directory) and "
+            "(the one the user set for this server in the settings, else "
+            "~/.vaspkit), try task 103 in a throwaway directory and "
             "remember the result. Campaigns only start on a server whose "
             "probe came back ready.", "read",
             {"server": _server_param(),
@@ -736,19 +737,11 @@ class ToolRegistry:
     MAX_VASP_BYTES = 2 * 1024 * 1024
 
     def _vaspkit_doctor(self, args: dict[str, Any]) -> dict[str, Any]:
-        from ..vaspkit.adapter import doctor_script, parse_doctor, remote_command
-        from ..workflow.campaign import profile_store
-        client = self.context.client
+        from ..workflow.campaign import run_doctor
         server = str(args.get("server") or "") or \
             self.context.config.default_server()
-        result = client.run_command(
-            remote_command(doctor_script(str(args.get("command") or ""))),
-            timeout_seconds=300, server=server)
-        profile = parse_doctor(str(result.get("stdout", "")))
-        from datetime import datetime, timezone
-        profile["probed_at"] = datetime.now(timezone.utc).isoformat(
-            timespec="seconds")
-        profile_store(self.context.config).put(server, profile)
+        profile = run_doctor(self.context.config, self.context.client, server,
+                             str(args.get("command") or ""))
         self.context.audit_record("vaspkit.doctor", outcome="ok"
                                   if profile["ready"] else "not_ready",
                                   server=server)
@@ -777,7 +770,8 @@ class ToolRegistry:
         return plan_campaign(
             vasp_text=text, file_name=path.name, recipe=args["recipe"],
             server_entry=entry,
-            profile=profile_store(self.context.config).get(entry.name))
+            profile=profile_store(self.context.config).get(entry.name),
+            potcar_library=self.context.config.potcar_library(entry.name))
 
     def _campaign_plan(self, args: dict[str, Any]) -> dict[str, Any]:
         from ..vaspkit.structure import (parse_poscar, split_annotation,
@@ -788,14 +782,17 @@ class ToolRegistry:
             poscar_text, annotation = split_annotation(text)
             summary = structure_summary(parse_poscar(poscar_text))
             profile = profile_store(self.context.config).get(entry.name)
+            ready = bool(profile.get("ready")) and \
+                (profile.get("potcar_library") or "") == \
+                self.context.config.potcar_library(entry.name)
             return {"ok": True, "stage": "needs_recipe", "file": path.name,
                     "structure": summary, "annotation": annotation,
                     "server": entry.name,
-                    "vaspkit_ready": bool(profile.get("ready")),
+                    "vaspkit_ready": ready,
                     "recipe_fields": RECIPE_HINT,
                     "next": "build a recipe from the annotation (ask the user "
                             "when it is ambiguous), then call campaign_plan "
-                            "again with it" + ("" if profile.get("ready") else
+                            "again with it" + ("" if ready else
                             "; run vaspkit_doctor on this server first")}
         return {"ok": True, "stage": "planned",
                 **preview(self._campaign_planned(args))}

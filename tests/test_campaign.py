@@ -459,3 +459,34 @@ class TestRunner:
             "结构优化", "静态自洽", "能带", "态密度"]
         assert shown["stages"][0]["status"] == "running"
         assert shown["stages"][0]["job_id"]
+
+
+class TestLibraryBinding:
+    LIB = "/data/pot/PBE.54"
+
+    def test_the_library_is_part_of_what_gets_approved(self):
+        with_lib = plan_campaign(
+            vasp_text=VASP_FILE, file_name="Si.vasp", recipe=recipe(),
+            server_entry=ENTRY, profile={**READY, "potcar_library": self.LIB},
+            potcar_library=self.LIB)
+        assert with_lib["campaign"]["vaspkit"]["potcar_library"] == self.LIB
+        assert planned()["campaign"]["vaspkit"]["potcar_library"] == ""
+
+    def test_a_probe_of_another_setting_is_refused(self):
+        with pytest.raises(ValidationError, match="vaspkit_doctor again"):
+            plan_campaign(vasp_text=VASP_FILE, file_name="Si.vasp",
+                          recipe=recipe(), server_entry=ENTRY, profile=READY,
+                          potcar_library=self.LIB)
+
+    def test_the_runner_generates_potcar_from_the_approved_library(self, chain):
+        store, runner, state, _ = chain
+        record = store.create(plan_campaign(
+            vasp_text=VASP_FILE, file_name="Si.vasp", recipe=recipe(),
+            server_entry=ENTRY, profile={**READY, "potcar_library": self.LIB},
+            potcar_library=self.LIB))
+        store.approve(record["campaign_id"], via="test")
+        assert runner.tick(record["campaign_id"])["state"]["stages"]["relax"][
+            "status"] == "running"
+        script = state.vaspkit_scripts[-1]
+        assert f"lib={self.LIB}" in script
+        assert 'HOME="$vh"' in script

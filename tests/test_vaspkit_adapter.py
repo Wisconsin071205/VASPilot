@@ -183,3 +183,67 @@ class TestProfileStore:
         assert store.get("cl9") == READY
         assert ProfileStore(tmp_path / "vaspkit.json").get("pbs1") == \
             {"ready": False}
+
+
+class TestLibraryOverride:
+    """A library set in the settings reaches VASPKIT for one call only."""
+
+    LIB = "/data/pot/PBE.54"
+
+    def test_env_prefix_applies_to_vaspkit_not_printf(self):
+        assert invoke("vaspkit", "stdin", 103, env='HOME="$vh" ') == \
+            "printf '%s\\n' 103 | HOME=\"$vh\" vaspkit"
+        assert invoke("vaspkit", "task", 103, env='HOME="$vh" ') == \
+            'HOME="$vh" vaspkit -task 103 </dev/null'
+
+    def test_probe_checks_the_library_and_tries_103_through_it(self):
+        script = doctor_script(potcar_library=self.LIB)
+        assert script.startswith(f"lib={self.LIB}\n")
+        assert "echo __VP_VK_LIB__" in script
+        assert "vh=$(vp_vkhome)" in script
+        assert 'HOME="$vh" timeout 60 "$vk" -task 103' in script
+
+    def test_probe_without_a_library_keeps_the_real_home(self):
+        script = doctor_script()
+        assert "vp_vkhome" not in script
+        assert 'vh="$HOME"' in script
+
+    def test_the_users_vaspkit_file_is_only_read(self):
+        script = doctor_script(potcar_library=self.LIB)
+        writes = [line for line in script.splitlines()
+                  if '> "$HOME/.vaspkit"' in line or '>> "$HOME/.vaspkit"' in line]
+        assert writes == []
+        assert '> "$d/.vaspkit"' in script
+
+    @pytest.mark.parametrize("path", ["relative/pot", "/data/../etc", "/a;b",
+                                      "/a b", "$HOME/pot"])
+    def test_unclean_library_paths_are_refused(self, path):
+        with pytest.raises(ValidationError, match="library"):
+            doctor_script(potcar_library=path)
+
+    def test_a_readable_library_makes_the_server_ready_without_pbe_path(self):
+        out = probe_output(pbe=False).replace(
+            "__VP_VK_CMD__", f"__VP_VK_LIB__\n{self.LIB}|dir|320|yes\n__VP_VK_CMD__")
+        profile = parse_doctor(out)
+        assert profile["ready"] is True, profile["problems"]
+        assert profile["library"] == {"path": self.LIB, "exists": True,
+                                      "entries": 320, "has_si": True}
+
+    def test_a_missing_library_is_not_ready(self):
+        out = probe_output().replace(
+            "__VP_VK_CMD__", f"__VP_VK_LIB__\n{self.LIB}|missing|0|no\n__VP_VK_CMD__")
+        profile = parse_doctor(out)
+        assert profile["ready"] is False
+        assert any(self.LIB in p for p in profile["problems"])
+
+    def test_generation_overrides_home_for_103_only(self):
+        script = generation_script(
+            stage="static", profile={**READY, "potcar_library": self.LIB},
+            stage_dir=STAGE_DIR, poscar_src="", chgcar_src="", kspacing=0.03,
+            kpoints_task=102)
+        lines = script.splitlines()
+        assert lines[0].startswith("cd -- ")
+        overridden = [line for line in lines if 'HOME="$vh"' in line]
+        assert len(overridden) == 1 and "vaspkit-103.log" in overridden[0]
+        assert 'rm -rf -- "$vh"' in script
+        assert script.index("vh=$(vp_vkhome)") < script.index("vaspkit-103.log")

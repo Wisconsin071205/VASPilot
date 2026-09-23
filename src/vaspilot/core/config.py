@@ -320,6 +320,33 @@ class Config:
             "key_saved": self.provider_key_saved("websearch"),
         }
 
+    # -- VASPKIT ---------------------------------------------------------------
+    _POTCAR_LIBRARY_RE = re.compile(r"^(/|~/)[A-Za-z0-9._/+-]{0,500}$")
+
+    def potcar_library(self, server: str) -> str:
+        """The pseudopotential library the user chose for one server; empty
+        means VASPKIT's own ~/.vaspkit setting on that server applies."""
+        data = self.load_settings().get("potcar_libraries") or {}
+        value = data.get(server) if isinstance(data, dict) else ""
+        return value if isinstance(value, str) else ""
+
+    def set_potcar_library(self, server: str, path: str) -> str:
+        path = str(path or "").strip()
+        path = path.rstrip("/") or path
+        if path and (not self._POTCAR_LIBRARY_RE.fullmatch(path)
+                     or ".." in path.split("/")):
+            raise ValidationError(
+                "the pseudopotential library must be an absolute path on the "
+                "server (or start with ~/), using letters, digits and . _ - + /")
+        data = self.load_settings().get("potcar_libraries") or {}
+        data = dict(data) if isinstance(data, dict) else {}
+        if path:
+            data[server] = path
+        else:
+            data.pop(server, None)
+        self.update_settings(potcar_libraries=data)
+        return path
+
     def set_websearch(self, *, provider: str, enabled: bool) -> dict:
         if provider not in self.WEBSEARCH_PROVIDERS:
             raise ValidationError(

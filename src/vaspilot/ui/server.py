@@ -512,6 +512,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._campaign_action(action, body)
             elif action == "vasp.attach":
                 self._attach_vasp(body)
+            elif action.startswith("vaspkit."):
+                self._vaspkit_action(action, body)
             else:
                 self._send_json({"ok": False, "error": {
                     "code": "unknown_action", "message": action}}, status=404)
@@ -892,6 +894,49 @@ class UiHandler(BaseHTTPRequestHandler):
             return
         app.audit.record(action, outcome="ok", campaign_id=campaign_id)
         self._send_json({"ok": True, **view(record)})
+
+    def _vaspkit_row(self, server: str) -> dict:
+        from ..workflow.campaign import profile_store
+        config = self.state.app.config
+        library = config.potcar_library(server)
+        profile = profile_store(config).get(server)
+        probed = bool(profile)
+        return {
+            "server": server, "potcar_library": library, "probed": probed,
+            "ready": bool(profile.get("ready")),
+            # a probe of another setting says nothing about this one
+            "stale": probed and (profile.get("potcar_library") or "") != library,
+            **{key: profile.get(key) for key in (
+                "command", "version", "mode", "problems", "probed_at",
+                "library", "potcar_paths")},
+        }
+
+    def _vaspkit_action(self, action: str, body: dict) -> None:
+        from ..core.validation import valid_server_name
+        app = self.state.app
+        if action == "vaspkit.settings":
+            self._send_json({"ok": True, "servers": [
+                self._vaspkit_row(entry.name)
+                for entry in app.config.load_servers()]})
+            return
+        server = valid_server_name(str(body.get("server") or ""))
+        app.client().server_entry(server)  # unknown servers are refused
+        if action == "vaspkit.save":
+            app.config.set_potcar_library(server,
+                                          str(body.get("potcar_library") or ""))
+            app.audit.record("vaspkit.library", outcome="ok", server=server,
+                             path=app.config.potcar_library(server))
+        elif action == "vaspkit.doctor":
+            from ..workflow.campaign import run_doctor
+            profile = run_doctor(app.config, app.client(), server,
+                                 str(body.get("command") or ""))
+            app.audit.record("vaspkit.doctor", outcome="ok"
+                             if profile["ready"] else "not_ready", server=server)
+        else:
+            self._send_json({"ok": False, "error": {
+                "code": "unknown_action", "message": action}}, status=404)
+            return
+        self._send_json({"ok": True, **self._vaspkit_row(server)})
 
     MAX_ATTACH = 2 * 1024 * 1024
 

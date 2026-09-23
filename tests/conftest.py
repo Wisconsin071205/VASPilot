@@ -601,7 +601,16 @@ class FakeTransport:
             script = _b64.b64decode(encoded).decode("utf-8")
             if "__VP_VK_CMD__" in script:
                 rc, out = 0, getattr(self.state, "vaspkit_probe", FAKE_PROBE_OK)
+                if "__VP_VK_LIB__" in script:
+                    # a library path containing "missing" does not exist
+                    import shlex as _sh
+                    lib = _sh.split(script.splitlines()[0][len("lib="):])[0]
+                    lib = lib.replace("~", ROOT, 1) if lib.startswith("~") else lib
+                    row = (f"{lib}|missing|0|no" if "missing" in lib
+                           else f"{lib}|dir|320|yes")
+                    out = f"__VP_VK_LIB__\n{row}\n" + out
             elif "__VP_GEN_OK__" in script:
+                self.state.__dict__.setdefault("vaspkit_scripts", []).append(script)
                 rc, out = fake_vaspkit(self.state, server, script)
             else:
                 rc, out = 0, ""

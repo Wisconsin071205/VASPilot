@@ -633,6 +633,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <div class="cfgitem" data-c="conn">连接设置</div>
       <div class="cfgitem" data-c="agent">智能体</div>
       <div class="cfgitem" data-c="web">联网搜索</div>
+      <div class="cfgitem" data-c="vaspkit">VASPKIT</div>
       <div class="cfgitem" data-c="skills">技能</div>
       <div class="cfgitem" data-c="monitor">监测</div>
       <div class="cfgitem" data-c="about">关于</div>
@@ -729,6 +730,17 @@ textarea:focus{outline:none;border-color:var(--acc)}
             <button class="btn ghost" onclick="removeWebKey()">删除已存 Key</button>
           </div>
         </div>
+      </div>
+
+      <!-- ---- VASPKIT ---- -->
+      <div class="cfghan" id="c-vaspkit" style="display:none">
+        <h2>VASPKIT 与赝势库</h2>
+        <p class="desc">「我的计算」在服务器上用 VASPKIT 生成 INCAR / KPOINTS / POTCAR。
+          赝势库目录填服务器上的路径（如 <span class="mono">/public/software/potpaw_PBE.54</span>，
+          目录下每个元素一个子目录）；留空则沿用服务器上 <span class="mono">~/.vaspkit</span> 的 PBE_PATH。
+          填了也不会改动你的 <span class="mono">~/.vaspkit</span>：只在生成 POTCAR 的那一条命令里临时指过去。
+          改了目录要重新「探测」一次，计算链才能在这台服务器上启动。</p>
+        <div id="vkrows"></div>
       </div>
 
       <!-- ---- 技能 ---- -->
@@ -1368,7 +1380,8 @@ function campRow(c) {
       ${badge(`${label} ${done}/${c.stages.length}`, kind)}
       <span class="el">${since(c.approved_at || c.created_at, c.finished_at)}</span></div>
     <div class="cb">${stages}${note}
-      <div class="foot">${esc(c.remote_dir)} · ${esc(c.campaign_hash.slice(0, 12))}</div>${acts}</div></div>`;
+      <div class="foot">${esc(c.remote_dir)} · ${esc(c.campaign_hash.slice(0, 12))}
+        · 赝势库 ${c.potcar_library ? esc(c.potcar_library) : "服务器 ~/.vaspkit"}</div>${acts}</div></div>`;
 }
 async function loadCampaigns(silent = false) {
   const r = await api("campaign.list", {}, silent);
@@ -1392,6 +1405,59 @@ async function campAct(what, id) {
 setInterval(() => {
   if (document.getElementById("v-jobs").classList.contains("on")) loadCampaigns(true);
 }, 60000);
+
+/* ===================== 配置 · VASPKIT ===================== */
+function vkStatus(r) {
+  if (!r.probed) return badge("未探测", "warn");
+  if (r.stale) return badge("目录已改，需重新探测", "warn");
+  if (!r.ready) return badge("未就绪", "err");
+  return badge("就绪", "ok");
+}
+function vkRow(r) {
+  const s = esc(r.server);
+  const lib = r.library || {};
+  const facts = r.probed ? [
+    r.command ? `VASPKIT <span class="mono">${esc(r.command)}</span>` : "",
+    r.version ? esc(r.version) : "", r.mode ? `调用方式 ${esc(r.mode)}` : "",
+    lib.path ? `库 <span class="mono">${esc(lib.path)}</span> · ${lib.entries} 个条目${lib.has_si ? "" : " · 没找到 Si"}` :
+      (r.potcar_paths && r.potcar_paths.PBE ? `~/.vaspkit PBE_PATH <span class="mono">${esc(r.potcar_paths.PBE)}</span>` : ""),
+    r.probed_at ? `探测于 ${esc(r.probed_at.replace("T", " ").slice(0, 16))}` : "",
+  ].filter(Boolean).join(" · ") : "";
+  const problems = (r.problems || []).map(p => `<div style="color:var(--err)">${esc(p)}</div>`).join("");
+  return `<div class="card" id="vk-${s}"><div class="row">
+      <b style="min-width:90px">${s}</b>
+      <input id="vklib-${s}" style="flex:1;min-width:320px;font-family:var(--mono)"
+        placeholder="留空 = 用服务器 ~/.vaspkit 的 PBE_PATH" value="${esc(r.potcar_library)}">
+      <button class="btn ghost" onclick="vkSave('${s}')">保存</button>
+      <button class="btn" onclick="vkProbe('${s}', this)">探测</button>
+      ${vkStatus(r)}</div>
+    <div style="font-size:12px;color:var(--fg2);margin-top:8px">${facts}${problems}</div></div>`;
+}
+async function loadVaspkitCfg() {
+  const r = await api("vaspkit.settings", {}, true);
+  if (!r.ok) return;
+  document.getElementById("vkrows").innerHTML = (r.servers || []).map(vkRow).join("")
+    || `<div class="empty">还没有服务器，先在左侧「服务器」面板添加。</div>`;
+}
+function vkReplace(r) {
+  const el = document.getElementById("vk-" + r.server);
+  if (el) el.outerHTML = vkRow(r);
+}
+async function vkSave(server) {
+  const potcar_library = document.getElementById("vklib-" + server).value.trim();
+  const r = await api("vaspkit.save", {server, potcar_library});
+  if (r.ok) { vkReplace(r); toast(potcar_library ? "已保存赝势库目录，请重新探测" : "已清空，改用 ~/.vaspkit", "ok"); }
+}
+async function vkProbe(server, btn) {
+  const typed = document.getElementById("vklib-" + server).value.trim();
+  const saved = await api("vaspkit.settings", {}, true);
+  const row = (saved.servers || []).find(x => x.server === server);
+  if (row && row.potcar_library !== typed) return toast("先保存赝势库目录，再探测", "err");
+  btn.disabled = true; btn.textContent = "探测中…";
+  const r = await api("vaspkit.doctor", {server});
+  btn.disabled = false; btn.textContent = "探测";
+  if (r.ok) { vkReplace(r); toast(r.ready ? `${server} 就绪` : `${server} 未就绪，见下方原因`, r.ready ? "ok" : "err"); }
+}
 
 /* 附件：文件原样存到本机，消息里只放路径——坐标不经模型转抄 */
 async function attachFile(file) {
@@ -1821,10 +1887,11 @@ function addMsg(role, text) {
 let CFG = {providers: [], vlab: {}};
 document.querySelectorAll(".cfgitem").forEach(t => t.onclick = () => {
   document.querySelectorAll(".cfgitem").forEach(x => x.classList.toggle("on", x === t));
-  for (const id of ["providers", "conn", "agent", "web", "skills", "monitor", "about"])
+  for (const id of ["providers", "conn", "agent", "web", "vaspkit", "skills", "monitor", "about"])
     document.getElementById("c-" + id).style.display =
       t.dataset.c === id ? "" : "none";
   if (t.dataset.c === "skills") loadSkills();
+  if (t.dataset.c === "vaspkit") loadVaspkitCfg();
 });
 async function loadSettings() {
   const r = await api("settings");

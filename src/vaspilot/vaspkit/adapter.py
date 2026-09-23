@@ -45,20 +45,21 @@ def valid_command(command: str) -> str:
 
 
 def invoke(command: str, mode: str, task: int,
-           answers: tuple[str, ...] = ()) -> str:
+           answers: tuple[str, ...] = (), *, env: str = "") -> str:
     """One VASPKIT call as a shell fragment.
 
     ``stdin`` feeds the task number through the top-level menu, the way the
     program is used interactively; ``task`` names it with ``-task`` and feeds
-    only the follow-up prompts.
+    only the follow-up prompts. ``env`` is a fixed assignment prefix that
+    applies to VASPKIT alone, never to the ``printf`` feeding it.
     """
     command = valid_command(command)
     if mode == "stdin":
         feed = (str(task),) + tuple(answers)
-        tail = command
+        tail = f"{env}{command}"
     elif mode == "task":
         feed = tuple(answers)
-        tail = f"{command} -task {int(task)}"
+        tail = f"{env}{command} -task {int(task)}"
     else:
         raise ValidationError(f"vaspkit mode must be one of {MODES}")
     if not feed:
@@ -81,17 +82,61 @@ def remote_command(script: str) -> str:
     return f'bash -lc "$(echo {encoded} | base64 -d)"'
 
 
+_LIBRARY_RE = re.compile(r"^(/|~/)[A-Za-z0-9._/+-]{0,500}$")
+_ALT_HOME = 'HOME="$vh" '
+
+
+def _library_lines(library: str) -> list[str]:
+    """Shell that points VASPKIT at the user's chosen library, for one call.
+
+    VASPKIT only reads ``$HOME/.vaspkit``. ``vp_vkhome`` makes a throwaway
+    home holding a copy of that file with PBE_PATH swapped for ``$lib`` (and
+    other ``~/`` values pinned to the real home), so the user's own file is
+    never touched and task 103 still picks VASPKIT's recommended variants.
+    """
+    if not _LIBRARY_RE.fullmatch(library) or ".." in library.split("/"):
+        raise ValidationError(f"{library!r} is not a clean library path")
+    return [
+        f"lib={shlex.quote(library)}",
+        'lib="${lib/#\\~/$HOME}"',
+        "vp_vkhome() {",
+        "  d=$(mktemp -d) || return 1",
+        '  if [ -f "$HOME/.vaspkit" ]; then',
+        "    sed -e '/^[[:space:]]*PBE_PATH[[:space:]]*=/d' "
+        '-e "s#=\\([[:space:]]*\\)~/#=\\1$HOME/#" "$HOME/.vaspkit" > "$d/.vaspkit"',
+        "  fi",
+        "  printf 'PBE_PATH = %s\\n' \"$lib\" >> \"$d/.vaspkit\"",
+        '  echo "$d"',
+        "}",
+    ]
+
+
 # --------------------------------------------------------------------- probe
 _PROBE_POSCAR = ("Si\n1.0\n0 2.715 2.715\n2.715 0 2.715\n2.715 2.715 0\n"
                  "Si\n2\nDirect\n0 0 0\n0.25 0.25 0.25\n")
 
 
-def doctor_script(command_hint: str = "") -> str:
-    """A read-mostly probe: it only writes inside its own mktemp directory."""
+def doctor_script(command_hint: str = "", potcar_library: str = "") -> str:
+    """A read-mostly probe: it only writes inside its own mktemp directories.
+
+    With ``potcar_library`` the trial run of task 103 goes through the same
+    one-call override the campaign uses, so "ready" means ready as configured.
+    """
     hint = shlex.quote(valid_command(command_hint)) + " " if command_hint else ""
     candidates = hint + 'vaspkit "$HOME/vaspkit/bin/vaspkit" /opt/vaspkit/bin/vaspkit'
     poscar = shlex.quote(_PROBE_POSCAR)
-    return "\n".join([
+    library = _library_lines(potcar_library) + [
+        "echo __VP_VK_LIB__",
+        'if [ -d "$lib" ]; then',
+        '  n=$(ls -- "$lib" | wc -l)',
+        '  [ -d "$lib/Si" ] && si=yes || si=no',
+        '  echo "$lib|dir|$n|$si"',
+        "else",
+        '  echo "$lib|missing|0|no"',
+        "fi",
+    ] if potcar_library else []
+    home = 'vh=$(vp_vkhome)' if potcar_library else 'vh="$HOME"'
+    return "\n".join(library + [
         "vk=''",
         f"for c in {candidates}; do",
         '  p=$(command -v "$c" 2>/dev/null) && { vk="$p"; break; }',
@@ -117,15 +162,17 @@ def doctor_script(command_hint: str = "") -> str:
         'if [ -n "$vk" ]; then',
         "  for mode in stdin task; do",
         "    t=$(mktemp -d)",
+        f"    {home}",
         f"    printf '%s' {poscar} > \"$t/POSCAR\"",
         '    if [ "$mode" = stdin ]; then',
-        "      (cd \"$t\" && printf '%s\\n' 103 | timeout 60 \"$vk\" >log 2>&1)",
+        "      (cd \"$t\" && printf '%s\\n' 103 | HOME=\"$vh\" timeout 60 \"$vk\" >log 2>&1)",
         "    else",
-        '      (cd "$t" && timeout 60 "$vk" -task 103 </dev/null >log 2>&1)',
+        '      (cd "$t" && HOME="$vh" timeout 60 "$vk" -task 103 </dev/null >log 2>&1)',
         "    fi",
         '    if [ -s "$t/POTCAR" ]; then echo "$mode|ok"; '
         'else echo "$mode|fail"; fi',
         '    rm -rf -- "$t"',
+        '    [ "$vh" = "$HOME" ] || rm -rf -- "$vh"',
         "  done",
         "fi",
         "echo __VP_VK_END__",
@@ -165,6 +212,14 @@ def parse_doctor(stdout: str) -> dict[str, Any]:
         if entry["exists"]:
             potcar_paths[label] = path
 
+    library: dict[str, Any] | None = None
+    for line in sections.get("LIB", []):
+        parts = line.split("|")
+        if len(parts) == 4:
+            library = {"path": parts[0], "exists": parts[1] == "dir",
+                       "entries": int(parts[2]) if parts[2].isdigit() else 0,
+                       "has_si": parts[3] == "yes"}
+
     modes: dict[str, bool] = {}
     for line in sections.get("TRY", []):
         name, _, outcome = line.partition("|")
@@ -178,14 +233,22 @@ def parse_doctor(stdout: str) -> dict[str, Any]:
     if not command:
         problems.append("no vaspkit executable was found on PATH or in the "
                         "usual install prefixes")
-    if "PBE" not in potcar_paths:
+    if "LIB" in sections:
+        if not (library and library["exists"]):
+            problems.append(
+                "the pseudopotential library set for this server "
+                f"({library['path'] if library else '?'}) is not a readable "
+                "directory")
+    elif "PBE" not in potcar_paths:
         problems.append("~/.vaspkit has no readable PBE_PATH, so task 103 "
-                        "cannot assemble a POTCAR")
+                        "cannot assemble a POTCAR; set this server's "
+                        "pseudopotential library in the settings instead")
     if command and not mode:
         problems.append("task 103 produced no POTCAR in either calling mode; "
                         "read the probe output before trusting this server")
     return {"command": command, "version": version,
             "potcar_paths": potcar_paths, "potcar_checks": potcar_checks,
+            "library": library,
             "modes": modes, "mode": mode,
             "ready": not problems, "problems": problems}
 
@@ -213,12 +276,21 @@ def generation_script(*, stage: str, profile: dict[str, Any], stage_dir: str,
     if kpoints_task not in (102, 303):
         raise ValidationError("kpoints_task must be 102 or 303")
 
+    library = str(profile.get("potcar_library") or "")
     lines = [f"cd -- {shlex.quote(stage_dir)} || exit 2"]
+    if library:
+        lines += _library_lines(library)
     if poscar_src:
         lines.append(f"cp -- {shlex.quote(poscar_src)} POSCAR || exit 2")
     if chgcar_src:
         lines.append(f"cp -- {shlex.quote(chgcar_src)} CHGCAR || exit 2")
-    lines.append(invoke(command, mode, 103) + " > vaspkit-103.log 2>&1")
+    if library:
+        lines += ["vh=$(vp_vkhome) || exit 2",
+                  invoke(command, mode, 103, env=_ALT_HOME)
+                  + " > vaspkit-103.log 2>&1",
+                  'rm -rf -- "$vh"']
+    else:
+        lines.append(invoke(command, mode, 103) + " > vaspkit-103.log 2>&1")
     lines.append(invoke(command, mode, 101, (INCAR_TEMPLATE[stage],))
                  + " > vaspkit-101.log 2>&1")
     if kpoints_task == 303 or check_primitive:
