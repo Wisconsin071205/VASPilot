@@ -567,12 +567,12 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div class="card"><h2>活动作业</h2><table id="jobtable">
       <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th><th></th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（本机台账：集群查不到的完成作业也会保留，含完成时间）</span></h2>
+    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（本机台账：集群查不到的完成作业也会保留；点「详情」看收敛、能量和步数）</span></h2>
       <table id="rectable">
-      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th></tr></thead>
+      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th><th></th></tr></thead>
       <tbody></tbody></table></div>
     <div class="card" id="progcard">
-      <h2>VASP 计算进度 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（在上面的活动作业里点「进度」，或选一个计算目录；每分钟自动刷新）</span></h2>
+      <h2>VASP 计算进度 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（活动作业点「进度」、历史作业点「详情」，或选一个计算目录；运行中的每分钟自动刷新）</span></h2>
       <div class="row">
         <div class="fg" style="flex:1"><label>计算目录</label>
           <input id="progdir" style="width:100%;min-width:320px;font-family:var(--mono)"
@@ -1300,7 +1300,7 @@ async function loadJobs(silent = false) {
   if (!server) return;
   const [jobs, recent] = await Promise.all([api("job.list", {server}, silent),
                                             api("job.recent", {server}, silent)]);
-  if (jobs.ok && PROG_JOB && PROG_JOB.server === server) {
+  if (jobs.ok && PROG_JOB && !PROG_JOB.done && PROG_JOB.server === server) {
     const still = (jobs.jobs || []).find(j => String(j.job_id) === String(PROG_JOB.job_id));
     PROG_JOB.state = still ? still.state : "已离开队列";
   }
@@ -1316,17 +1316,21 @@ async function loadJobs(silent = false) {
     <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED","CANCELED"].includes(String(j.state).toUpperCase()) ? "err" : "info")}</td>
     <td class="mono">${esc(j.elapsed || "—")}</td>
     <td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc((j.completed_at || "").replace("T", " ").slice(0, 19)) || "—"}${j.assumed_end ? ' <span class="badge b-warn" title="调度器已遗忘此作业，完成时间为本机首次发现其消失的时刻">推断</span>' : ""}</td>
-    <td>${esc(j.name || "")}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
+    <td>${esc(j.name || "")}</td>
+    <td><button class="btn ghost" style="padding:2px 12px" title="${esc(j.workdir || "目录会向调度器查询")}"
+      onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state)}','${esc(j.completed_at || "")}')">详情</button></td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
 }
-let PROG_JOB = null;  // {server, job_id, state}：从活动作业点进来时才有
-async function jobProgress(server, jobId, state) {
+let PROG_JOB = null;  // {server, job_id, state, done, completed_at}：从作业表点进来时才有
+const DONE_STATES = ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"];
+async function jobProgress(server, jobId, state, completedAt = "") {
   const out = document.getElementById("progout");
   out.innerHTML = `<div class="empty">正在向调度器查询作业 ${esc(jobId)} 的工作目录…</div>`;
   document.getElementById("progcard").scrollIntoView({behavior: "smooth", block: "start"});
   const w = await api("job.workdir", {server, job_id: jobId}, true);
   if (!w.ok) {
-    out.innerHTML = `<div class="empty" style="color:var(--err)">${esc((w.error || {}).message || "查不到工作目录")}。可以点「选择目录」手动找。</div>`;
+    out.innerHTML = `<div class="empty" style="color:var(--err)">${esc((w.error || {}).message || "查不到工作目录")}。${
+      completedAt ? "调度器已经忘了这个作业，本机也没来得及记下目录（" : ""}可以点「选择目录」手动找${completedAt ? "）" : ""}。</div>`;
     return;
   }
   const root = remoteRootOf(server);
@@ -1337,7 +1341,8 @@ async function jobProgress(server, jobId, state) {
     return;
   }
   document.getElementById("progdir").value = w.workdir;
-  PROG_JOB = {server, job_id: jobId, state};
+  const done = !!completedAt || DONE_STATES.includes(String(state).toUpperCase());
+  PROG_JOB = {server, job_id: jobId, state, done, completed_at: completedAt};
   loadProgress();
 }
 const fmtNum = (v, d = 4) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
@@ -1382,7 +1387,8 @@ function sparkHover(ev) {
   for (const p of sp.pts) if (Math.abs(sp.X(p.step) - vx) < Math.abs(sp.X(best.step) - vx)) best = p;
   line.setAttribute("x1", sp.X(best.step)); line.setAttribute("x2", sp.X(best.step));
   line.style.display = "";
-  tip.textContent = `离子步 ${best.step} · E0 = ${Number(best.e0).toFixed(5)} eV`;
+  tip.textContent = `离子步 ${best.step} · E0 = ${Number(best.e0).toFixed(5)} eV` +
+    (best.electronic !== undefined ? ` · ${best.electronic} 个电子步` : "");
   tip.style.display = "block";
   const px = sp.X(best.step) / sp.W * box.width;
   tip.style.left = Math.min(Math.max(0, px - 80), box.width - 190) + "px";
@@ -1399,14 +1405,22 @@ async function loadProgress(silent = false) {
     return;
   }
   const running = PROG_JOB && PROG_JOB.state === "RUNNING";
+  // 已结束：从历史作业点进来，或调度器状态是终态，或 OUTCAR 已写完计时块
+  const ended = (PROG_JOB && PROG_JOB.done) || r.finished_normally;
+  const when = PROG_JOB && PROG_JOB.completed_at ? PROG_JOB.completed_at.replace("T", " ").slice(0, 16) : "";
   const sched = PROG_JOB
-    ? pkpi("调度器", esc(PROG_JOB.state), `作业 ${esc(PROG_JOB.job_id)} · ${esc(PROG_JOB.server)}`,
+    ? pkpi("调度器", esc(PROG_JOB.state), `作业 ${esc(PROG_JOB.job_id)} · ${esc(PROG_JOB.server)}${when ? " · " + esc(when) + " 结束" : ""}`,
            PROG_JOB.state === "RUNNING" ? "ok" : "")
-    : pkpi("调度器", "—", "从活动作业点「进度」进来才会显示");
+    : pkpi("调度器", "—", "从作业表点「进度」/「详情」进来才会显示");
   const ionic = r.nsw ? `${r.ionic_step} / ${r.nsw}` : `${r.ionic_step}`;
   const elec = r.current_electronic
-    ? pkpi("当前离子步 · 电子步", `${r.current_electronic} / ${r.nelm}`, `dE = ${fmtSci(r.current_de)}${running ? "（进行中）" : ""}`)
-    : pkpi("上一离子步 · 电子步", `${r.last_electronic_steps} / ${r.nelm}`, "当前没有进行中的电子迭代");
+    ? pkpi(ended ? "最后离子步 · 电子步（没做完）" : "当前离子步 · 电子步", `${r.current_electronic} / ${r.nelm}`,
+           `dE = ${fmtSci(r.current_de)}${running ? "（进行中）" : ""}`, ended ? "warn" : "")
+    : pkpi(ended ? "最后离子步 · 电子步" : "上一离子步 · 电子步", `${r.last_electronic_steps} / ${r.nelm}`,
+           ended ? "最后一个完成的离子步" : "当前没有进行中的电子迭代");
+  const nIonic = (r.energies || []).length;
+  const total = pkpi("电子步合计", `${r.total_electronic || 0}`,
+                     nIonic ? `平均每个离子步 ${((r.total_electronic || 0) / Math.max(1, nIonic)).toFixed(1)} 步` : "");
   // EDIFFG < 0 看受力，> 0 看能量差——哪个是判据就显示哪个
   const byForce = r.ediffg < 0;
   const target = byForce
@@ -1424,23 +1438,59 @@ async function loadProgress(silent = false) {
       ${sched}
       ${pkpi("离子步", ionic, r.nsw ? "已完成 / NSW" : "静态计算（NSW = 0）")}
       ${elec}
-      ${pkpi("E0", r.last_e0 === null ? "—" : fmtNum(r.last_e0, 5), "eV · 最后一个完成的离子步")}
-      ${target}${side}
+      ${pkpi(ended ? "最终 E0" : "E0", r.last_e0 === null ? "—" : fmtNum(r.last_e0, 5), "eV · 最后一个完成的离子步")}
+      ${target}${side}${total}
     </div>
     <div class="row" style="margin-top:10px;gap:6px">
+      ${r.finished_normally ? badge(`VASP 正常结束${r.elapsed_seconds ? " · 用时 " + fmtSecs(r.elapsed_seconds) : ""}`, "ok")
+        : ended ? badge("VASP 没有正常结束（被终止或崩溃，OUTCAR 没有结尾计时）", "err") : ""}
+      ${r.ionic_exhausted ? badge(`离子步用完 NSW = ${r.nsw} 仍未收敛`, "err") : ""}
       ${badge(sci ? "科学收敛" : "尚未收敛", sci ? "ok" : "warn")}
       ${badge(r.ionic_converged ? "离子收敛" : "离子未收敛", r.ionic_converged ? "ok" : "info")}
       ${badge(r.electronic_converged ? "电子收敛" : "电子未收敛", r.electronic_converged ? "ok" : "warn")}
-      ${r.electronic_reached_nelm ? badge("有离子步撞到 NELM 上限", "err") : ""}
+      ${r.electronic_reached_nelm ? badge("最后一个离子步撞到 NELM 上限", "err")
+        : r.nelm_hits ? badge(`${r.nelm_hits} 个中间离子步撞到 NELM（不影响最终判断）`, "warn") : ""}
       ${(r.error_signatures || []).map(e => badge(e, "err")).join(" ")}
     </div>
     ${sparkline(r.energies)}
+    ${elecbars(r.energies, r.nelm)}
     <div class="mono" style="font-size:11px;color:var(--fg2);margin-top:8px">${esc(r.directory)} · 读到 ${esc((r.files_present || []).join(", "))}
       · ${new Date().toLocaleTimeString()} 刷新</div>`;
 }
+// 每个离子步用了几个电子步：贴着 NELM 的柱子说明电子没收敛
+function elecbars(rows, nelm) {
+  const pts = (rows || []).filter(p => p.electronic !== undefined);
+  if (pts.length < 2) return "";
+  const W = 900, H = 90, L = 70, R = 14, T = 8, B = 20;
+  const top = Math.max(nelm || 0, ...pts.map(p => p.electronic), 1);
+  const slot = (W - L - R) / pts.length, bw = Math.max(1, Math.min(14, slot - 2));
+  const Y = v => T + (H - T - B) * (1 - v / top);
+  const bars = pts.map((p, i) => {
+    const x = L + i * slot + (slot - bw) / 2, y = Y(p.electronic);
+    const hot = nelm && p.electronic >= nelm;
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0, H - B - y).toFixed(1)}"
+      rx="${Math.min(2, bw / 2)}" fill="${hot ? "var(--err)" : "var(--acc)"}" opacity="${hot ? 1 : .75}">
+      <title>离子步 ${p.step} · ${p.electronic} 个电子步${hot ? "（撞到 NELM）" : ""}</title></rect>`;
+  }).join("");
+  const cap = nelm && nelm <= top ? `<line x1="${L}" x2="${W - R}" y1="${Y(nelm).toFixed(1)}" y2="${Y(nelm).toFixed(1)}"
+      stroke="var(--err)" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="${L - 6}" y="${(Y(nelm) + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--fg2)">NELM ${nelm}</text>` : "";
+  return `<div class="spark"><svg viewBox="0 0 ${W} ${H}">
+      <line x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}" stroke="var(--line)" stroke-width="1"/>
+      <text x="${L - 6}" y="${H - B}" text-anchor="end" font-size="10" fill="var(--fg2)">0</text>
+      ${cap}${bars}
+      <text x="${L}" y="${H - 5}" font-size="10" fill="var(--fg2)">离子步 ${pts[0].step}</text>
+      <text x="${W - R}" y="${H - 5}" text-anchor="end" font-size="10" fill="var(--fg2)">${pts[pts.length - 1].step}</text>
+    </svg><div style="font-size:11px;color:var(--fg2)">每个离子步的电子步数（悬停看数值；红色 = 撞到 NELM）</div></div>`;
+}
+function fmtSecs(sec) {
+  sec = Math.round(Number(sec) || 0);
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+  return h ? `${h} 小时 ${m} 分` : m ? `${m} 分 ${sec % 60} 秒` : `${sec} 秒`;
+}
 setInterval(() => {
   if (!document.getElementById("v-jobs").classList.contains("on")) return;
-  if (document.getElementById("progdir").value.trim()) loadProgress(true);
+  if (document.getElementById("progdir").value.trim() && !(PROG_JOB && PROG_JOB.done)) loadProgress(true);
   loadJobs(true);
 }, 60000);
 
@@ -1508,6 +1558,8 @@ function stageDetail(st, byName, campaignStatus) {
   if (p.ionic_step) bits.push(`离子步 ${p.ionic_step}${p.nsw ? " / " + p.nsw : ""}`);
   if (st.status === "running" && p.current_electronic)
     bits.push(`电子步 ${p.current_electronic} / ${p.nelm} (dE ${fmtSci(p.current_de)})`);
+  else if (st.status !== "running" && p.last_electronic_steps)
+    bits.push(`末步电子步 ${p.last_electronic_steps} / ${p.nelm}`);
   if (st.status === "converged") bits.push("已收敛");
   if (p.last_e0 !== undefined && p.last_e0 !== null) bits.push(`E0 = ${Number(p.last_e0).toFixed(3)} eV`);
   if (p.max_force !== undefined && p.max_force !== null && p.ediffg < 0)
@@ -1516,6 +1568,14 @@ function stageDetail(st, byName, campaignStatus) {
     bits.push(st.scheduler_state === "RUNNING" ? "运行中，还没有完成的离子步" : "已提交，等待调度");
   if (st.status === "preparing") bits.push("VASPKIT 正在生成输入");
   return bits.map(esc).join("　");
+}
+// 阶段的目录计算链自己记着，不用再问调度器
+function stageProgress(server, jobId, state, dir, status) {
+  const done = status !== "running" && status !== "preparing";
+  document.getElementById("progdir").value = dir;
+  PROG_JOB = {server, job_id: jobId, state: state || (done ? "已结束" : "PENDING"), done, completed_at: ""};
+  document.getElementById("progcard").scrollIntoView({behavior: "smooth", block: "start"});
+  loadProgress();
 }
 function campRow(c) {
   const [label, kind] = CAMP_STATUS[c.status] || [c.status, "info"];
@@ -1533,7 +1593,9 @@ function campRow(c) {
     return `<div class="st"><span class="ic ${ik}">${ic}</span>
       <span class="nm">${esc(st.dir.slice(0, 2))} ${esc(st.label)}</span>
       <span class="sc">${esc(st.scheduler_state || (st.job_id ? "PENDING" : "—"))}</span>
-      <span class="dt${st.error ? " bad" : ""}">${stageDetail(st, byName, c.status)}${kv}</span></div>`;
+      <span class="dt${st.error ? " bad" : ""}">${stageDetail(st, byName, c.status)}${kv}</span>
+      ${st.job_id && st.remote_dir ? `<button class="btn ghost" style="padding:1px 10px;font-size:12px"
+        onclick="stageProgress('${esc(c.server)}','${esc(st.job_id)}','${esc(st.scheduler_state || "")}','${esc(st.remote_dir)}','${esc(st.status)}')">详情</button>` : ""}</div>`;
   }).join("");
   const id = esc(c.campaign_id);
   const acts = reviewing

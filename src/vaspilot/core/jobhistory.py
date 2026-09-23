@@ -8,6 +8,8 @@ it observes into ``~/.vaspilot/jobs/<server>.json``:
   - first time a job is seen (from active or recent listings)
   - every state transition afterwards
   - ``completed_at`` stamped the first time a terminal state is observed
+  - ``workdir`` learned while the job is still queued/running, so its
+    results can be opened after the scheduler has forgotten it
 
 The merged view served to the UI is cluster rows + ledger entries, so
 history survives refreshes, restarts, and clusters that keep no history.
@@ -146,11 +148,44 @@ class JobLedger:
         return self.merged(server)
 
     def seed_submitted(self, server: str, job_id: str, name: str = "",
-                       partition: str = "") -> None:
+                       partition: str = "", workdir: str = "") -> None:
         """A submission we performed ourselves: seed before first poll."""
         self.observe(server, [{"job_id": job_id, "name": name,
                                "partition": partition, "state": "PENDING",
                                "elapsed": "0:00"}])
+        if workdir:
+            self.remember_workdirs(server, {job_id: workdir})
+
+    # asking the scheduler costs a round trip: a job it could not place is
+    # retried a few times, then left for the user to pick by hand
+    WORKDIR_TRIES = 3
+
+    def workdir(self, server: str, job_id: str) -> str:
+        return str(self._load(server).get(str(job_id), {}).get("workdir") or "")
+
+    def needs_workdir(self, server: str, job_ids: list[str]) -> list[str]:
+        jobs = self._load(server)
+        return [job for job in job_ids
+                if job in jobs and not jobs[job].get("workdir")
+                and int(jobs[job].get("workdir_tries") or 0) < self.WORKDIR_TRIES]
+
+    def remember_workdirs(self, server: str, found: dict[str, str]) -> None:
+        """Record what the scheduler answered; '' counts as one try."""
+        if not server or not found:
+            return
+        jobs = self._load(server)
+        changed = False
+        for job_id, workdir in found.items():
+            entry = jobs.get(str(job_id))
+            if entry is None or entry.get("workdir"):
+                continue
+            if workdir and str(workdir).startswith("/"):
+                entry["workdir"] = str(workdir)
+            else:
+                entry["workdir_tries"] = int(entry.get("workdir_tries") or 0) + 1
+            changed = True
+        if changed:
+            self._save(server, jobs)
 
     def merged(self, server: str) -> list[dict[str, Any]]:
         jobs = self._load(server)
@@ -171,5 +206,6 @@ class JobLedger:
             "assumed_end": bool(entry.get("assumed_end")),
             "first_seen": entry.get("first_seen"),
             "last_seen": entry.get("last_seen"),
+            "workdir": entry.get("workdir") or "",
             "local_record": True,
         }

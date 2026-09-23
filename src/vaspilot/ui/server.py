@@ -399,6 +399,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 document = client.jobs(server=body.get("server"))
                 self._job_ledger().observe(_server_name(body),
                                            document.get("jobs") or [])
+                self._learn_workdirs(client, _server_name(body),
+                                     document.get("jobs") or [])
                 self._send_json(document)
             elif action == "job.recent":
                 # fold ACTIVE rows first (so state transitions land), then
@@ -419,9 +421,7 @@ class UiHandler(BaseHTTPRequestHandler):
                     str(body.get("directory") or ""),
                     server=_server_or_default(body, app)))
             elif action == "job.workdir":
-                self._send_json(client.job_workdir(
-                    str(body.get("job_id") or ""),
-                    server=_server_or_default(body, app)))
+                self._job_workdir(client, body)
             elif action == "vasp.progress":
                 self._send_json(client.vasp_progress(
                     str(body.get("directory") or ""), server=body.get("server")))
@@ -776,6 +776,54 @@ class UiHandler(BaseHTTPRequestHandler):
         from ..core.jobhistory import JobLedger
         return JobLedger(self.state.app.config.jobs_dir)
 
+    def _learn_workdirs(self, client, server: str, rows: list) -> None:
+        """Note where each queued/running job lives while the scheduler
+        still says so: finished jobs vanish from PBS (and from Slurm after
+        a few minutes), and their results are still worth opening."""
+        ledger = self._job_ledger()
+        wanted = ledger.needs_workdir(server, [
+            str(r.get("job_id")) for r in rows if r.get("job_id")])[:20]
+        if not wanted:
+            return
+        try:
+            ledger.remember_workdirs(server, client.job_workdirs(
+                wanted, server=server))
+        except VaspilotError:
+            pass  # the listing itself succeeded; try again next time
+
+    def _campaign_workdir(self, server: str, job_id: str) -> str:
+        from ..workflow.campaign import campaign_store
+        store = campaign_store(self.state.app.config)
+        for campaign_id in store.ids():
+            try:
+                record = store.load(campaign_id)
+            except VaspilotError:
+                continue
+            if record["campaign"].get("server") != server:
+                continue
+            for row in (record["state"].get("stages") or {}).values():
+                if str(row.get("job_id") or "") == job_id and row.get("remote_dir"):
+                    return str(row["remote_dir"])
+        return ""
+
+    def _job_workdir(self, client, body: dict) -> None:
+        """Local record first (it outlives the scheduler), then the
+        scheduler itself; an answer from the scheduler is remembered."""
+        from ..core.validation import valid_job_id
+        server = _server_or_default(body, self.state.app)
+        job_id = valid_job_id(str(body.get("job_id") or ""))
+        ledger = self._job_ledger()
+        known = ledger.workdir(server, job_id) or \
+            self._campaign_workdir(server, job_id)
+        if known:
+            self._send_json({"ok": True, "server": server, "job_id": job_id,
+                             "workdir": known, "source": "record"})
+            return
+        document = client.job_workdir(job_id, server=server)
+        if document.get("workdir"):
+            ledger.remember_workdirs(server, {job_id: document["workdir"]})
+        self._send_json({**document, "source": "scheduler"})
+
     # ----------------------------------------------------- projects / chat / skills
     def _project_action(self, action: str, body: dict) -> None:
         from ..workflow.projects import TEMPLATES, ProjectStore
@@ -1010,10 +1058,12 @@ class UiHandler(BaseHTTPRequestHandler):
         settled = store.settle(entry_id, "approved", result)
         job_id = str((result or {}).get("job_id") or "")
         if job_id:
+            directory = str(entry.get("directory") or "").rstrip("/")
             self._job_ledger().seed_submitted(
                 str(entry["server"]) if entry.get("server")
                 else _server_or_default({}, app),
-                job_id, name=str(entry["script"]))
+                job_id, name=str(entry["script"]),
+                workdir=directory if directory.startswith("/") else "")
         self._note_session(app, entry, "[提交确认已批准并执行] "
                            f"{entry['server']}:{entry['directory']}/"
                            f"{entry['script']} -> "

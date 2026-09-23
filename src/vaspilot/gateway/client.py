@@ -648,6 +648,18 @@ class GatewayClient:
                     "message": f"the scheduler did not report a working "
                                f"directory for job {job_id}"}})}
 
+    def job_workdirs(self, job_ids: list[str], *,
+                     server: str | None = None) -> dict[str, str]:
+        """{job_id: workdir} for several jobs in one round trip."""
+        from ..hpc.scheduler import parse_workdirs, workdirs_command
+        name = self._require(server)
+        if not job_ids:
+            return {}
+        result = self.run_command(workdirs_command(job_ids), timeout_seconds=60,
+                                  server=name)
+        found = parse_workdirs(str(result.get("stdout", "")))
+        return {str(job): found.get(str(job), "") for job in job_ids}
+
     def diagnostic(self, key: str, *, server: str | None = None) -> dict:
         name = self._require(server)
         allowed = {"hostname", "system", "python", "disk", "quota",

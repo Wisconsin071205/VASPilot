@@ -6,7 +6,8 @@ import pytest
 
 from tests.test_ui import ui  # noqa: F401  (fixture)
 
-from vaspilot.hpc.scheduler import parse_workdir, workdir_command
+from vaspilot.hpc.scheduler import (parse_workdir, parse_workdirs,
+                                    workdir_command, workdirs_command)
 from vaspilot.hpc.vasp import live_progress, parse_oszicar
 
 # Real OSZICAR rows carry the algorithm label (DAV:/RMM:) before the step.
@@ -37,6 +38,16 @@ OUTCAR_TAIL = """
  -----------------------------------------------------------------------------------
 """
 
+TIMING = """
+ General timing and accounting informations for this job:
+ ========================================================
+
+                  Total CPU time used (sec):     5201.113
+                            User time (sec):     5150.002
+                          System time (sec):       51.111
+                         Elapsed time (sec):     5234.817
+"""
+
 
 class TestLabelledElectronicRows:
     def test_dav_and_rmm_rows_are_electronic_steps(self):
@@ -44,8 +55,14 @@ class TestLabelledElectronicRows:
         assert parsed["ionic_steps"] == 2
         assert [s["electronic_steps"] for s in parsed["steps"]] == [3, 2]
 
-    def test_nelm_is_caught_on_real_rows(self):
+    def test_an_early_nelm_hit_is_counted_not_fatal(self):
         parsed = parse_oszicar(OSZICAR, nelm=3)
+        assert parsed["nelm_hits"] == 1
+        assert parsed["electronic_reached_nelm"] is False
+
+    def test_nelm_on_the_last_step_is_caught_on_real_rows(self):
+        parsed = parse_oszicar(OSZICAR, nelm=2)
+        assert parsed["nelm_hits"] == 2
         assert parsed["electronic_reached_nelm"] is True
 
 
@@ -102,6 +119,29 @@ class TestLiveProgress:
         p = self.progress(OUTCAR=OUTCAR_TAIL + " reached required accuracy\n")
         assert p["ionic_converged"] is True
 
+    def test_electronic_steps_per_ionic_step(self):
+        p = self.progress()
+        assert [(r["step"], r["electronic"]) for r in p["energies"]] == [(1, 3), (2, 2)]
+        # 3 + 2 finished, 2 more in the step under way
+        assert p["total_electronic"] == 7
+
+    def test_a_run_that_is_still_going_has_not_finished(self):
+        p = self.progress()
+        assert p["finished_normally"] is False and p["elapsed_seconds"] is None
+
+    def test_a_run_that_ended_properly(self):
+        p = self.progress(OUTCAR=OUTCAR_TAIL + TIMING)
+        assert p["finished_normally"] is True
+        assert p["elapsed_seconds"] == pytest.approx(5234.817)
+
+    def test_nsw_used_up_without_convergence(self):
+        p = self.progress(INCAR=INCAR.replace("NSW = 200", "NSW = 2"))
+        assert p["ionic_exhausted"] is True
+        done = self.progress(INCAR=INCAR.replace("NSW = 200", "NSW = 2"),
+                             OUTCAR=OUTCAR_TAIL + " reached required accuracy\n")
+        assert done["ionic_exhausted"] is False
+        assert self.progress()["ionic_exhausted"] is False
+
 
 class TestWorkdir:
     def test_command_asks_both_schedulers(self):
@@ -132,6 +172,25 @@ class TestWorkdir:
 
     def test_unknown_job(self):
         assert parse_workdir("__VP_PBS__\n") == ""
+
+    def test_finished_slurm_job_from_sacct(self):
+        out = "__VP_SACCT__\n/share/home/u/done-run\n__VP_PBS__\n"
+        assert parse_workdir(out) == "/share/home/u/done-run"
+
+    def test_finished_jobs_are_asked_for_too(self):
+        command = workdir_command("42")
+        assert "sacct -j 42" in command and "qstat -xf 42" in command
+
+    def test_several_jobs_in_one_round_trip(self):
+        command = workdirs_command(["11", "12"])
+        assert command.count("scontrol show job -o") == 2
+        out = ("__VP_JOB__11\nJobId=11 WorkDir=/a/one\n__VP_SACCT__\n__VP_PBS__\n"
+               "__VP_JOB__12\n__VP_SACCT__\n__VP_PBS__\n")
+        assert parse_workdirs(out) == {"11": "/a/one", "12": ""}
+
+    def test_several_refuses_a_bad_id(self):
+        with pytest.raises(Exception):
+            workdirs_command(["11", "12;id"])
 
 
 class TestGatewayPayload:
@@ -217,3 +276,74 @@ class TestPbsOwnJobsOnly:
         from vaspilot.gateway.vaspilot_gateway import _pbs_own_jobs
         raw = self.QSTAT.split("\n", 1)[1]
         assert sorted(_pbs_own_jobs(raw)) == ["128842", "128870"]
+
+
+class TestLedgerRemembersWhereJobsRan:
+    def test_remember_and_retry_limit(self, tmp_path):
+        from vaspilot.core.jobhistory import JobLedger
+        ledger = JobLedger(tmp_path)
+        ledger.observe("cl9", [{"job_id": "7", "state": "RUNNING"},
+                               {"job_id": "8", "state": "RUNNING"}])
+        assert ledger.needs_workdir("cl9", ["7", "8", "99"]) == ["7", "8"]
+        ledger.remember_workdirs("cl9", {"7": RUN, "8": ""})
+        assert ledger.workdir("cl9", "7") == RUN
+        assert ledger.needs_workdir("cl9", ["7", "8"]) == ["8"]
+        for _ in range(JobLedger.WORKDIR_TRIES):
+            ledger.remember_workdirs("cl9", {"8": ""})
+        assert ledger.needs_workdir("cl9", ["8"]) == []
+        # the record survives the job finishing and the state changing
+        ledger.observe("cl9", [], infer_missing=True)
+        row = next(r for r in ledger.merged("cl9") if r["job_id"] == "7")
+        assert row["state"] == "COMPLETED" and row["workdir"] == RUN
+
+    def test_relative_paths_are_not_recorded(self, tmp_path):
+        from vaspilot.core.jobhistory import JobLedger
+        ledger = JobLedger(tmp_path)
+        ledger.seed_submitted("cl9", "9", workdir="runs/x")
+        assert ledger.workdir("cl9", "9") == ""
+        ledger.seed_submitted("cl9", "10", workdir=RUN)
+        assert ledger.workdir("cl9", "10") == RUN
+
+
+class TestFinishedJobsInTheConsole:
+    def test_a_job_seen_running_can_be_opened_after_it_is_gone(self, ui):
+        from tests.test_ui import call
+        state = ui["state"]
+        files = state.files["cl9"]
+        files[f"{RUN}/INCAR"] = INCAR.encode()
+        files[f"{RUN}/OSZICAR"] = OSZICAR.encode()
+        files[f"{RUN}/OUTCAR"] = (OUTCAR_TAIL + " reached required accuracy\n"
+                                  + TIMING).encode()
+        state.jobs["cl9"].append({"job_id": "5601", "state": "RUNNING",
+                                  "name": "C60_opt"})
+        state.workdirs = {"5601": RUN}
+        call(ui, "job.list", {"server": "cl9"})
+        asked = len(state.workdir_asks)
+        call(ui, "job.list", {"server": "cl9"})
+        assert len(state.workdir_asks) == asked  # learned once, not every poll
+
+        # the job finishes and the scheduler forgets it entirely
+        state.jobs["cl9"].clear()
+        state.workdirs = {}
+        recent = call(ui, "job.recent", {"server": "cl9"})
+        row = next(j for j in recent["jobs"] if j["job_id"] == "5601")
+        assert row["state"] == "COMPLETED" and row["workdir"] == RUN
+
+        where = call(ui, "job.workdir", {"server": "cl9", "job_id": "5601"})
+        assert where["workdir"] == RUN and where["source"] == "record"
+        live = call(ui, "vasp.live", {"server": "cl9", "directory": RUN})
+        assert live["scientific_converged"] is True
+        assert live["finished_normally"] is True
+        assert live["last_e0"] == pytest.approx(-252.67177823)
+
+    def test_an_answer_from_the_scheduler_is_remembered(self, ui):
+        from tests.test_ui import call
+        state = ui["state"]
+        state.jobs["cl9"].append({"job_id": "5602", "state": "COMPLETED"})
+        call(ui, "job.recent", {"server": "cl9"})
+        state.workdirs = {"5602": RUN}
+        assert call(ui, "job.workdir", {"server": "cl9",
+                                        "job_id": "5602"})["source"] == "scheduler"
+        state.workdirs = {}
+        again = call(ui, "job.workdir", {"server": "cl9", "job_id": "5602"})
+        assert again["workdir"] == RUN and again["source"] == "record"

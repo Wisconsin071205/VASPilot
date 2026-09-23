@@ -619,12 +619,18 @@ class FakeTransport:
                 rc, out = 0, ""
             return {"ok": True, "server": server, "rc": rc, "stdout": out,
                     "stderr": "", "truncated": False, "command": command}
-        if command.startswith("scontrol show job -o "):
-            # state.workdirs: {job_id: path} -> answered like Slurm would
-            job_id = command.split()[4].strip("'")
-            where = getattr(self.state, "workdirs", {}).get(job_id)
-            out = (f"JobId={job_id} JobName=x WorkDir={where} Nodes=n1\n"
-                   if where else "") + "__VP_PBS__\n"
+        if "scontrol show job -o " in command:
+            # state.workdirs: {job_id: path} -> answered like Slurm would;
+            # several jobs come fenced by __VP_JOB__<id> markers
+            import re as _re
+            out = ""
+            for job_id in _re.findall(r"scontrol show job -o '?(\w+)'?", command):
+                where = getattr(self.state, "workdirs", {}).get(job_id)
+                if "__VP_JOB__" in command:
+                    out += f"__VP_JOB__{job_id}\n"
+                out += (f"JobId={job_id} JobName=x WorkDir={where} Nodes=n1\n"
+                        if where else "") + "__VP_SACCT__\n__VP_PBS__\n"
+            self.state.__dict__.setdefault("workdir_asks", []).append(command)
             return {"ok": True, "server": server, "rc": 0, "stdout": out,
                     "stderr": "", "truncated": False, "command": command}
         if command.startswith("cd -- ") and " && sha256sum -- " in command:

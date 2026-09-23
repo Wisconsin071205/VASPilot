@@ -160,25 +160,41 @@ def merge_job_state(rows: list[dict[str, Any]]) -> str:
 
 # ------------------------------------------------------------- working dir
 _PBS_MARK = "__VP_PBS__"
+_SACCT_MARK = "__VP_SACCT__"
+_JOB_MARK = "__VP_JOB__"
 
 
 def workdir_command(job_id: str) -> str:
-    """Ask whichever scheduler is present where a job runs.
+    """Ask whichever scheduler is present where a job runs -- or ran:
+    scontrol and qstat -f know queued/running jobs, sacct and qstat -xf
+    (PBS Pro history) still know finished ones.
 
     Only the job id (validated digits) reaches the shell; the output is
     parsed by :func:`parse_workdir`.
     """
     job = shlex.quote(valid_job_id(job_id))
-    return (f"scontrol show job -o {job} 2>/dev/null; echo {_PBS_MARK}; "
-            f"qstat -f {job} 2>/dev/null")
+    return (f"scontrol show job -o {job} 2>/dev/null; "
+            f"echo {_SACCT_MARK}; sacct -j {job} -n -X -P -o WorkDir 2>/dev/null; "
+            f"echo {_PBS_MARK}; "
+            f"qstat -f {job} 2>/dev/null || qstat -xf {job} 2>/dev/null")
+
+
+def workdirs_command(job_ids: list[str]) -> str:
+    """One round trip for several jobs; parsed by :func:`parse_workdirs`."""
+    return "; ".join(f"echo {_JOB_MARK}{valid_job_id(job)}; "
+                     f"{workdir_command(job)}" for job in job_ids)
 
 
 def parse_workdir(stdout: str) -> str:
-    """The job's working directory, or '' when neither scheduler knows it."""
+    """The job's working directory, or '' when no scheduler knows it."""
     slurm, _, pbs = str(stdout or "").partition(_PBS_MARK)
+    slurm, _, sacct = slurm.partition(_SACCT_MARK)
     match = re.search(r"\bWorkDir=(/\S*)", slurm)
     if match:
         return match.group(1)
+    for line in sacct.splitlines():
+        if line.strip().startswith("/"):
+            return line.strip().split("|")[0]
     # qstat -f wraps long values onto tab-indented continuation lines
     joined = pbs.replace("\r", "").replace("\n\t", "")
     match = re.search(r"^\s*init_work_dir = (/\S*)", joined, re.M)
@@ -186,3 +202,12 @@ def parse_workdir(stdout: str) -> str:
         return match.group(1)
     match = re.search(r"PBS_O_WORKDIR=(/[^,\s]*)", joined)
     return match.group(1) if match else ""
+
+
+def parse_workdirs(stdout: str) -> dict[str, str]:
+    """{job_id: workdir} from :func:`workdirs_command` output ('' = unknown)."""
+    found: dict[str, str] = {}
+    parts = re.split(rf"^{_JOB_MARK}(\S+)\s*$", str(stdout or ""), flags=re.M)
+    for job, chunk in zip(parts[1::2], parts[2::2]):
+        found[job] = parse_workdir(chunk)
+    return found

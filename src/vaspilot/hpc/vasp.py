@@ -166,7 +166,7 @@ def _fortran_float(text: str | None) -> float | None:
 def parse_oszicar(text: str, *, nelm: int = DEFAULT_NELM) -> dict[str, Any]:
     """Parse OSZICAR into ionic steps + electronic-step bookkeeping."""
     steps: list[IonicStep] = []
-    electronic_reached_nelm = False
+    nelm_hits = 0
     electronic_rows = 0
     f_re = re.compile(r"F=\s*([-+0-9.eEdD]+)")
     e0_re = re.compile(r"E0=\s*([-+0-9.eEdD]+)")
@@ -189,7 +189,7 @@ def parse_oszicar(text: str, *, nelm: int = DEFAULT_NELM) -> dict[str, Any]:
             )
             steps.append(current)
             if 0 < nelm <= electronic_rows:
-                electronic_reached_nelm = True
+                nelm_hits += 1
             electronic_rows = 0
             last_row_was_ionic = True
         elif _ELECTRONIC_ROW.match(line):
@@ -208,7 +208,11 @@ def parse_oszicar(text: str, *, nelm: int = DEFAULT_NELM) -> dict[str, Any]:
             for s in steps[-80:]
         ],
         "last_ionic": vars(steps[-1]) if steps else None,
-        "electronic_reached_nelm": electronic_reached_nelm,
+        # only the step the run ended on decides the result; an early
+        # relaxation step that ran out of NELM is routine and is counted
+        "electronic_reached_nelm": bool(
+            steps and 0 < nelm <= steps[-1].electronic_steps),
+        "nelm_hits": nelm_hits,
     }
 
 
@@ -263,7 +267,8 @@ def live_progress(files: dict[str, Any]) -> dict[str, Any]:
             e0 = re.search(r"E0=\s*([-+0-9.eEdD]+)", line)
             energies.append({
                 "step": int(step.group(1)) if step else len(energies) + 1,
-                "e0": _fortran_float(e0.group(1)) if e0 else None})
+                "e0": _fortran_float(e0.group(1)) if e0 else None,
+                "electronic": rows})
             last_rows, rows, current_de = rows, 0, None
             continue
         match = _ELECTRONIC_ROW.match(line)
@@ -274,10 +279,16 @@ def live_progress(files: dict[str, Any]) -> dict[str, Any]:
     known = [row["e0"] for row in energies if row["e0"] is not None]
     status = scientific_status(scheduler_state="UNKNOWN", files=files)
     status.pop("completed", None)
+    nsw = incar.get_int("NSW", 0)
+    ionic_step = energies[-1]["step"] if energies else 0
+    # VASP closes OUTCAR with its timing block; a run that was killed or
+    # crashed never gets there
+    elapsed = re.search(r"Elapsed time \(sec\):\s*([-+0-9.eEdD]+)", outcar)
+    finished = "General timing and accounting" in outcar or bool(elapsed)
     return {
         **status,
-        "ionic_step": energies[-1]["step"] if energies else 0,
-        "nsw": incar.get_int("NSW", 0),
+        "ionic_step": ionic_step,
+        "nsw": nsw,
         "nelm": incar.get_int("NELM", DEFAULT_NELM),
         "ediff": ediff,
         # VASP's default EDIFFG is ten times EDIFF (an energy criterion)
@@ -289,6 +300,12 @@ def live_progress(files: dict[str, Any]) -> dict[str, Any]:
         "delta_e": known[-1] - known[-2] if len(known) >= 2 else None,
         "energies": energies[-60:],
         "max_force": _max_force(outcar),
+        "finished_normally": finished,
+        "elapsed_seconds": _fortran_float(elapsed.group(1)) if elapsed else None,
+        # a relaxation that used up NSW without meeting EDIFFG
+        "ionic_exhausted": bool(nsw and ionic_step >= nsw
+                                and not status["ionic_converged"]),
+        "total_electronic": sum(row["electronic"] for row in energies) + rows,
     }
 
 
@@ -355,6 +372,7 @@ def scientific_status(*, scheduler_state: str, files: dict[str, Any],
         "ionic_converged": ionic_ok,
         "electronic_converged": electronic_ok,
         "electronic_reached_nelm": osz["electronic_reached_nelm"],
+        "nelm_hits": osz["nelm_hits"],
         "ionic_steps": osz["ionic_steps"],
         "last_ionic": osz["last_ionic"],
         "error_signatures": out["error_signatures"],

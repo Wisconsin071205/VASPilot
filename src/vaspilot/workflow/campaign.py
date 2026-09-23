@@ -511,7 +511,9 @@ class CampaignRunner:
                 "scientific_converged", "ionic_step", "nsw", "nelm",
                 "current_electronic", "current_de", "last_electronic_steps",
                 "last_e0", "delta_e", "ediffg", "max_force",
-                "electronic_reached_nelm", "error_signatures")}
+                "electronic_reached_nelm", "nelm_hits", "error_signatures",
+                "finished_normally", "elapsed_seconds", "ionic_exhausted",
+                "total_electronic")}
         except VaspilotError:
             if scheduler not in TERMINAL_SCHEDULER_STATES:
                 return
@@ -686,7 +688,7 @@ def view(record: dict[str, Any]) -> dict[str, Any]:
                         else f"Gamma, spacing {stage['kspacing']}"),
             **{key: state["stages"][stage["name"]].get(key) for key in (
                 "status", "job_id", "scheduler_state", "error", "progress",
-                "verify", "hashes", "submitted_at")},
+                "verify", "hashes", "submitted_at", "remote_dir")},
         } for stage in doc["stages"]],
         "log": state.get("log", [])[-20:],
     }
