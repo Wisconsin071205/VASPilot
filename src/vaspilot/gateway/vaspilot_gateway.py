@@ -691,6 +691,24 @@ def _pbs_parse_qstat_f(raw: str) -> dict[str, dict]:
     return jobs
 
 
+# `qstat -f` lists every user's jobs; the Slurm branch asks squeue -u for
+# the caller's own, so PBS keeps only rows whose Job_Owner is the caller.
+_PBS_USER_MARK = "__VP_USER__"
+_PBS_OWN_QSTAT = (f'echo "{_PBS_USER_MARK}$(id -un)"; '
+                  "qstat -f 2>/dev/null || qstat -fx 2>/dev/null")
+
+
+def _pbs_own_jobs(raw: str) -> dict[str, dict]:
+    user = next((line[len(_PBS_USER_MARK):].strip()
+                 for line in (raw or "").splitlines()
+                 if line.startswith(_PBS_USER_MARK)), "")
+    mapped = _pbs_parse_qstat_f(raw)
+    if not user:
+        return mapped
+    return {job_id: job for job_id, job in mapped.items()
+            if str(job.get("Job_Owner", user)).split("@")[0].strip() == user}
+
+
 # ------------------------------------------------------------- vasp parsing
 def _incar_values(text: str) -> dict:
     values = {}
@@ -1155,8 +1173,7 @@ def op_jobs(args) -> int:
     name, entry = resolve_server(args.server)
     scheduler = scheduler_for(name, entry)
     if scheduler == "pbs":
-        raw = remote(name, "qstat -f 2>/dev/null || qstat -fx 2>/dev/null")
-        mapped = _pbs_parse_qstat_f(raw)
+        mapped = _pbs_own_jobs(remote(name, _PBS_OWN_QSTAT))
         active_states = ("RUNNING", "PENDING", "EXITING", "HELD",
                          "SUSPENDED")
         jobs = [{"job_id": j["job_id"], "state": j["state"],
@@ -1191,8 +1208,7 @@ def op_recent(args) -> int:
     name, entry = resolve_server(args.server)
     scheduler = scheduler_for(name, entry)
     if scheduler == "pbs":
-        raw = remote(name, "qstat -f 2>/dev/null || qstat -fx 2>/dev/null")
-        mapped = _pbs_parse_qstat_f(raw)
+        mapped = _pbs_own_jobs(remote(name, _PBS_OWN_QSTAT))
         jobs = [{"job_id": j["job_id"], "name": j.get("name", ""),
                  "partition": j.get("queue", ""), "state": j["state"],
                  "elapsed": j.get("elapsed", ""),

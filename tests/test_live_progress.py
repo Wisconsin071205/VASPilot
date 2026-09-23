@@ -200,3 +200,20 @@ class TestConsoleEndpoints:
     def test_bad_job_id_is_an_error(self, ui):
         from tests.test_ui import call
         assert call(ui, "job.workdir", {"server": "cl9", "job_id": "1;id"})["ok"] is False
+
+
+class TestPbsOwnJobsOnly:
+    QSTAT = ("__VP_USER__wuhong\n"
+             "Job Id: 128870.admin\n    Job_Name = C60_opt\n    Job_Owner = wuhong@admin\n"
+             "    job_state = R\n    queue = short\n"
+             "Job Id: 128842.admin\n    Job_Name = 1\n    Job_Owner = gyz@admin\n"
+             "    job_state = R\n    queue = long\n")
+
+    def test_other_users_jobs_are_dropped(self):
+        from vaspilot.gateway.vaspilot_gateway import _pbs_own_jobs
+        assert list(_pbs_own_jobs(self.QSTAT)) == ["128870"]
+
+    def test_without_a_user_line_nothing_is_dropped(self):
+        from vaspilot.gateway.vaspilot_gateway import _pbs_own_jobs
+        raw = self.QSTAT.split("\n", 1)[1]
+        assert sorted(_pbs_own_jobs(raw)) == ["128842", "128870"]

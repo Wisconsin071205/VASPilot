@@ -1329,6 +1329,13 @@ async function jobProgress(server, jobId, state) {
     out.innerHTML = `<div class="empty" style="color:var(--err)">${esc((w.error || {}).message || "查不到工作目录")}。可以点「选择目录」手动找。</div>`;
     return;
   }
+  const root = remoteRootOf(server);
+  if (root && w.workdir !== root && !w.workdir.startsWith(root.replace(/\/+$/, "") + "/")) {
+    // 旧版网关在 PBS 上会列出所有人的作业；别人的目录读不到，也不该读
+    out.innerHTML = `<div class="empty">作业 ${esc(jobId)} 在 <span class="mono">${esc(w.workdir)}</span> 运行，
+      不在你的根目录 <span class="mono">${esc(root)}</span> 里——这是别的用户的作业。</div>`;
+    return;
+  }
   document.getElementById("progdir").value = w.workdir;
   PROG_JOB = {server, job_id: jobId, state};
   loadProgress();
