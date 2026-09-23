@@ -619,6 +619,26 @@ class FakeTransport:
                 rc, out = 0, ""
             return {"ok": True, "server": server, "rc": rc, "stdout": out,
                     "stderr": "", "truncated": False, "command": command}
+        if "__VP_TZ__" in command:
+            # state.timings: {job_id: (vasp_start_epoch, last_write_epoch)}
+            # answered like a cluster in UTC+8 would
+            import re as _re
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            out = ""
+            for job_id in _re.findall(r"echo __VP_JOB__(\S+);", command):
+                out += f"__VP_JOB__{job_id}\n"
+                start, last = getattr(self.state, "timings", {}).get(job_id, (None, None))
+                if start is None and last is None:
+                    continue  # the directory is gone
+                out += "__VP_TZ__+0800\n"
+                if start is not None:
+                    local = _dt.fromtimestamp(start, _tz(_td(hours=8)))
+                    out += (" executed on             LinuxIFC date "
+                            f"{local:%Y.%m.%d  %H:%M:%S}\n")
+                out += f"__VP_LAST__{'' if last is None else int(last)}\n"
+            self.state.__dict__.setdefault("timing_asks", []).append(command)
+            return {"ok": True, "server": server, "rc": 0, "stdout": out,
+                    "stderr": "", "truncated": False, "command": command}
         if "scontrol show job -o " in command:
             # state.workdirs: {job_id: path} -> answered like Slurm would;
             # several jobs come fenced by __VP_JOB__<id> markers

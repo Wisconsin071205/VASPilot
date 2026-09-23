@@ -414,6 +414,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 merged = self._job_ledger().observe(
                     _server_name(body), fresh.get("jobs") or [],
                     infer_missing=True)
+                if self._settle_timing(client, _server_name(body)):
+                    merged = self._job_ledger().merged(_server_name(body))
                 self._send_json({"ok": True, "jobs": merged,
                                  "scheduler": fresh.get("scheduler")})
             elif action == "vasp.live":
@@ -790,6 +792,22 @@ class UiHandler(BaseHTTPRequestHandler):
                 wanted, server=server))
         except VaspilotError:
             pass  # the listing itself succeeded; try again next time
+
+    def _settle_timing(self, client, server: str) -> bool:
+        """A job that vanished from the queue only has a window for its end;
+        its directory knows the real start and end. Best effort."""
+        ledger = self._job_ledger()
+        wanted = dict(list(ledger.needs_timing(server).items())[:10])
+        if not wanted:
+            return False
+        try:
+            found = client.job_timing(wanted, server=server)
+            # a job missing from the answer still spends one of its tries
+            ledger.remember_timing(server, {job: found.get(job) or {}
+                                            for job in wanted})
+        except VaspilotError:
+            return False
+        return True
 
     def _campaign_workdir(self, server: str, job_id: str) -> str:
         from ..workflow.campaign import campaign_store

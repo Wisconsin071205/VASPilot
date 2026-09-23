@@ -10,6 +10,10 @@ it observes into ``~/.vaspilot/jobs/<server>.json``:
   - ``completed_at`` stamped the first time a terminal state is observed
   - ``workdir`` learned while the job is still queued/running, so its
     results can be opened after the scheduler has forgotten it
+  - for a job that vanished (``assumed_end``), the real start/end read
+    back from its directory: VASP's OUTCAR header and the last write of
+    its outputs, accepted only inside the window in which it must have
+    ended (last seen in the queue .. first noticed gone)
 
 The merged view served to the UI is cluster rows + ledger entries, so
 history survives refreshes, restarts, and clusters that keep no history.
@@ -32,6 +36,20 @@ KEEP_DAYS = 30
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _epoch(stamp: Any) -> float | None:
+    try:
+        moment = datetime.fromisoformat(str(stamp))
+    except (TypeError, ValueError):
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.timestamp()
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds")
 
 
 def _is_terminal(state: str) -> bool:
@@ -91,13 +109,17 @@ class JobLedger:
             entry = jobs.setdefault(job_id, {})
             state = str(row.get("state") or "UNKNOWN")
             prior_state = entry.get("state")
+            # a queued job has used no time; older gateways put the
+            # requested walltime there
+            elapsed = "" if state.upper() == "PENDING" else \
+                str(row.get("elapsed") or "")
             entry.update({
                 "job_id": job_id,
                 "name": str(row.get("name") or entry.get("name") or ""),
                 "partition": str(row.get("partition")
                                  or entry.get("partition") or ""),
-                "elapsed": str(row.get("elapsed") or entry.get("elapsed")
-                               or ""),
+                "elapsed": elapsed or ("" if state.upper() == "PENDING"
+                                       else str(entry.get("elapsed") or "")),
                 "state": state,
                 "first_seen": entry.get("first_seen") or now,
                 "last_seen": now,
@@ -187,6 +209,49 @@ class JobLedger:
         if changed:
             self._save(server, jobs)
 
+    TIMING_TRIES = 3
+    CLOCK_SLACK = 300  # seconds of skew allowed between this PC and the cluster
+
+    def needs_timing(self, server: str) -> dict[str, str]:
+        """{job_id: workdir} of vanished jobs whose times are still guesses."""
+        return {job_id: str(entry["workdir"])
+                for job_id, entry in self._load(server).items()
+                if entry.get("assumed_end") and entry.get("workdir")
+                and int(entry.get("timing_tries") or 0) < self.TIMING_TRIES}
+
+    def remember_timing(self, server: str, found: dict[str, dict]) -> None:
+        jobs = self._load(server)
+        changed = False
+        for job_id, times in (found or {}).items():
+            entry = jobs.get(str(job_id))
+            if not entry or not entry.get("assumed_end"):
+                continue
+            changed = True
+            entry["timing_tries"] = int(entry.get("timing_tries") or 0) + 1
+            end = times.get("last_write")
+            low = _epoch(entry.get("last_seen"))
+            high = _epoch(entry.get("completed_at"))
+            if end is None or low is None or high is None:
+                continue
+            if end > high + self.CLOCK_SLACK:
+                # something newer ran in that directory: its files say
+                # nothing about this job any more
+                entry["timing_tries"] = self.TIMING_TRIES
+                continue
+            if end < low - self.CLOCK_SLACK:
+                continue
+            end = min(max(end, low), high)
+            entry["noticed_at"] = entry.get("completed_at")
+            entry["completed_at"] = _iso(end)
+            entry["completion_source"] = "files"
+            entry["assumed_end"] = False
+            start = times.get("vasp_started")
+            if not entry.get("started_at") and start is not None and start <= end:
+                entry["started_at"] = _iso(start)
+                entry["start_source"] = "outcar"
+        if changed:
+            self._save(server, jobs)
+
     def merged(self, server: str) -> list[dict[str, Any]]:
         jobs = self._load(server)
         rows = sorted(jobs.values(),
@@ -195,7 +260,17 @@ class JobLedger:
 
     @staticmethod
     def _view(entry: dict[str, Any]) -> dict[str, Any]:
+        start, end = _epoch(entry.get("started_at")), _epoch(entry.get("completed_at"))
         return {
+            # only when both ends are known; a vanished job's end is a guess
+            "duration_seconds": int(end - start) if start is not None
+            and end is not None and end >= start
+            and not entry.get("assumed_end") else None,
+            "noticed_at": entry.get("noticed_at"),
+            "completion_source": entry.get("completion_source") or (
+                "noticed" if entry.get("assumed_end") else "scheduler"),
+            "start_source": entry.get("start_source") or (
+                "scheduler" if entry.get("started_at") else ""),
             "job_id": entry.get("job_id"),
             "name": entry.get("name"),
             "partition": entry.get("partition"),

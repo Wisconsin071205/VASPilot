@@ -673,6 +673,11 @@ def _pbs_parse_qstat_f(raw: str) -> dict[str, dict]:
             job["elapsed"] = job.pop("used_walltime")
         if "assigned_walltime" in job:
             job["limit"] = job.pop("assigned_walltime")
+        # Torque names them start_time / comp_time; PBS Pro stime / mtime
+        if "start_time" in job and "stime" not in job:
+            job["stime"] = job.pop("start_time")
+        if "comp_time" in job:
+            job["mtime"] = job.pop("comp_time")
         if "mtime" in job and state in ("COMPLETED", "FAILED", "EXITING"):
             try:
                 job["completed_at"] = datetime.strptime(

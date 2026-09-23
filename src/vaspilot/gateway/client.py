@@ -660,6 +660,18 @@ class GatewayClient:
         found = parse_workdirs(str(result.get("stdout", "")))
         return {str(job): found.get(str(job), "") for job in job_ids}
 
+    def job_timing(self, jobs: dict[str, str], *,
+                   server: str | None = None) -> dict[str, dict]:
+        """When finished jobs really started/stopped, read from the files
+        in their directories (see :func:`hpc.scheduler.timing_command`)."""
+        from ..hpc.scheduler import parse_timing, timing_command
+        name = self._require(server)
+        if not jobs:
+            return {}
+        result = self.run_command(timing_command(jobs), timeout_seconds=60,
+                                  server=name)
+        return parse_timing(str(result.get("stdout", "")))
+
     def diagnostic(self, key: str, *, server: str | None = None) -> dict:
         name = self._require(server)
         allowed = {"hostname", "system", "python", "disk", "quota",

@@ -11,7 +11,7 @@ import re
 import shlex
 from typing import Any
 
-from ..core.errors import SchedulerError
+from ..core.errors import SchedulerError, ValidationError
 from ..core.validation import valid_filename, valid_job_id
 
 # Normalized scheduler states. Scheduler states say NOTHING about scientific
@@ -202,6 +202,61 @@ def parse_workdir(stdout: str) -> str:
         return match.group(1)
     match = re.search(r"PBS_O_WORKDIR=(/[^,\s]*)", joined)
     return match.group(1) if match else ""
+
+
+# ------------------------------------------------------------- timing
+_TZ_MARK, _LAST_MARK = "__VP_TZ__", "__VP_LAST__"
+# files a VASP job writes as it runs; the newest of them is when it stopped
+_RUN_OUTPUTS = ("OUTCAR", "OSZICAR", "vasprun.xml", "vasp.out", "CONTCAR",
+                "XDATCAR")
+
+
+def timing_command(jobs: dict[str, str]) -> str:
+    """For finished jobs {job_id: workdir}: when VASP started (OUTCAR's
+    'executed on' header) and when the run last wrote its outputs or the
+    scheduler's stdout/stderr. Parsed by :func:`parse_timing`."""
+    parts = []
+    for job_id, workdir in jobs.items():
+        job = valid_job_id(job_id)
+        if not str(workdir).startswith("/") or "\n" in str(workdir):
+            raise ValidationError(f"not an absolute directory: {workdir!r}")
+        number = job.split(".")[0]
+        names = " ".join([*_RUN_OUTPUTS, f"*.o{number}", f"*.e{number}",
+                          f"slurm-{number}.out"])
+        parts.append(
+            f"echo {_JOB_MARK}{job}; cd -- {shlex.quote(str(workdir))} 2>/dev/null && "
+            f"{{ echo {_TZ_MARK}$(date +%z); "
+            f"grep -a -m1 'executed on' OUTCAR 2>/dev/null; "
+            f"echo {_LAST_MARK}$(for f in {names}; do "
+            f"[ -f \"$f\" ] && stat -c %Y -- \"$f\"; done 2>/dev/null "
+            f"| sort -n | tail -1); }}")
+    return "; ".join(parts)
+
+
+def parse_timing(stdout: str) -> dict[str, dict]:
+    """{job_id: {"vasp_started": epoch|None, "last_write": epoch|None}}."""
+    from datetime import datetime, timedelta, timezone
+    found: dict[str, dict] = {}
+    parts = re.split(rf"^{_JOB_MARK}(\S+)\s*$", str(stdout or ""), flags=re.M)
+    for job, chunk in zip(parts[1::2], parts[2::2]):
+        tz = re.search(rf"^{_TZ_MARK}([+-])(\d\d)(\d\d)\s*$", chunk, re.M)
+        offset = timezone(
+            (1 if tz.group(1) == "+" else -1)
+            * timedelta(hours=int(tz.group(2)), minutes=int(tz.group(3)))
+        ) if tz else timezone.utc
+        started = None
+        head = re.search(r"executed on.*?date\s+(\d{4})\.(\d\d)\.(\d\d)\s+"
+                         r"(\d\d):(\d\d):(\d\d)", chunk)
+        if head and tz:
+            try:
+                started = datetime(*map(int, head.groups()),
+                                   tzinfo=offset).timestamp()
+            except ValueError:
+                started = None
+        last = re.search(rf"^{_LAST_MARK}(\d+)\s*$", chunk, re.M)
+        found[job] = {"vasp_started": started,
+                      "last_write": float(last.group(1)) if last else None}
+    return found
 
 
 def parse_workdirs(stdout: str) -> dict[str, str]:

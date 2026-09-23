@@ -568,8 +568,9 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th><th></th></tr></thead>
       <tbody></tbody></table></div>
     <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（本机台账：集群查不到的完成作业也会保留；点「详情」看收敛、能量和步数）</span></h2>
+      <div id="rechidden" style="font-size:11px;color:var(--fg2)"></div>
       <table id="rectable">
-      <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th><th></th></tr></thead>
+      <thead><tr><th>Job ID</th><th>状态</th><th>开始</th><th>耗时</th><th>完成时间</th><th>名称</th><th></th></tr></thead>
       <tbody></tbody></table></div>
     <div class="card" id="progcard">
       <h2>VASP 计算进度 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（活动作业点「进度」、历史作业点「详情」，或选一个计算目录；运行中的每分钟自动刷新）</span></h2>
@@ -1311,26 +1312,60 @@ async function loadJobs(silent = false) {
     <td><button class="btn ghost" style="padding:2px 12px"
       onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state)}')">进度</button></td></tr>`).join("")
     || `<tr><td colspan="6" class="empty">无活动作业</td></tr>`;
-  if (recent.ok) document.querySelector("#rectable tbody").innerHTML = (recent.jobs || []).map(j => `
+  if (recent.ok) {
+    // 旧版网关在 PBS 上会列出别人的作业；目录不在你根目录下的就不显示
+    const root = remoteRootOf(server).replace(/\/+$/, "");
+    const mine = j => !root || !j.workdir || j.workdir === root || j.workdir.startsWith(root + "/");
+    const rows = (recent.jobs || []).filter(mine), hidden = (recent.jobs || []).length - rows.length;
+    document.querySelector("#rectable tbody").innerHTML = rows.map(j => `
     <tr><td class="mono">${esc(j.job_id)}</td>
     <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED","CANCELED"].includes(String(j.state).toUpperCase()) ? "err" : "info")}</td>
-    <td class="mono">${esc(j.elapsed || "—")}</td>
-    <td class="mono" style="color:${j.completed_at ? "var(--fg)" : "var(--fg2)"}">${esc((j.completed_at || "").replace("T", " ").slice(0, 19)) || "—"}${j.assumed_end ? ' <span class="badge b-warn" title="调度器已遗忘此作业，完成时间为本机首次发现其消失的时刻">推断</span>' : ""}</td>
+    <td class="mono" title="${esc(START_SRC[j.start_source] || "")}">${esc(fmtWhen(j.started_at)) || "—"}</td>
+    <td class="mono">${jobDuration(j)}</td>
+    <td class="mono">${jobEnd(j)}</td>
     <td>${esc(j.name || "")}</td>
     <td><button class="btn ghost" style="padding:2px 12px" title="${esc(j.workdir || "目录会向调度器查询")}"
-      onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state)}','${esc(j.completed_at || "")}')">详情</button></td></tr>`).join("")
-    || `<tr><td colspan="6" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
+      onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state)}','${esc(j.assumed_end ? "" : j.completed_at || "")}',${j.assumed_end || DONE_STATES.includes(String(j.state).toUpperCase()) ? "true" : "false"})">详情</button></td></tr>`).join("")
+    || `<tr><td colspan="7" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
+    document.getElementById("rechidden").textContent = hidden ? `已隐藏 ${hidden} 个别的用户的作业` : "";
+  }
+}
+// ISO 时间 → 本地时间「09-23 16:25」；台账里存的是 UTC
+function fmtWhen(iso, withDate = true) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const p = n => String(n).padStart(2, "0");
+  return (withDate ? `${p(d.getMonth() + 1)}-${p(d.getDate())} ` : "") + `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+const START_SRC = {scheduler: "调度器记录的开始时间", outcar: "OUTCAR 开头记录的 VASP 启动时间"};
+function jobDuration(j) {
+  if (j.duration_seconds !== null && j.duration_seconds !== undefined) return esc(fmtSecs(j.duration_seconds));
+  if (!j.elapsed) return "—";
+  return j.assumed_end
+    ? `<span title="最后一次在队列里看到它时已经用掉的时间，实际更长">≥ ${esc(j.elapsed)}</span>`
+    : esc(j.elapsed);
+}
+function jobEnd(j) {
+  if (!j.completed_at) return "—";
+  if (j.assumed_end) {
+    const a = fmtWhen(j.last_seen), b = fmtWhen(j.completed_at, a.slice(0, 5) !== fmtWhen(j.completed_at).slice(0, 5));
+    return `<span style="color:var(--fg2)">${esc(a)} ~ ${esc(b)} 之间</span>
+      <span class="badge b-warn" title="集群不保留已结束的作业，只知道它在这段时间里离开了队列（上次看到它 ~ 发现它不见了）。${j.workdir ? "读到作业目录里的文件后会自动换成准确时间。" : "本机没有记下它的目录，无法再核对。"}">未核实</span>`;
+  }
+  const src = j.completion_source === "files" ? "按作业输出文件（OUTCAR 等）最后写入的时间" : "调度器记录的完成时间";
+  return `<span title="${src}">${esc(fmtWhen(j.completed_at))}</span>`;
 }
 let PROG_JOB = null;  // {server, job_id, state, done, completed_at}：从作业表点进来时才有
 const DONE_STATES = ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"];
-async function jobProgress(server, jobId, state, completedAt = "") {
+async function jobProgress(server, jobId, state, completedAt = "", finished = false) {
   const out = document.getElementById("progout");
   out.innerHTML = `<div class="empty">正在向调度器查询作业 ${esc(jobId)} 的工作目录…</div>`;
   document.getElementById("progcard").scrollIntoView({behavior: "smooth", block: "start"});
   const w = await api("job.workdir", {server, job_id: jobId}, true);
   if (!w.ok) {
     out.innerHTML = `<div class="empty" style="color:var(--err)">${esc((w.error || {}).message || "查不到工作目录")}。${
-      completedAt ? "调度器已经忘了这个作业，本机也没来得及记下目录（" : ""}可以点「选择目录」手动找${completedAt ? "）" : ""}。</div>`;
+      finished ? "调度器已经忘了这个作业，本机也没来得及记下目录（" : ""}可以点「选择目录」手动找${finished ? "）" : ""}。</div>`;
     return;
   }
   const root = remoteRootOf(server);
@@ -1341,7 +1376,7 @@ async function jobProgress(server, jobId, state, completedAt = "") {
     return;
   }
   document.getElementById("progdir").value = w.workdir;
-  const done = !!completedAt || DONE_STATES.includes(String(state).toUpperCase());
+  const done = finished || !!completedAt || DONE_STATES.includes(String(state).toUpperCase());
   PROG_JOB = {server, job_id: jobId, state, done, completed_at: completedAt};
   loadProgress();
 }
@@ -1407,7 +1442,7 @@ async function loadProgress(silent = false) {
   const running = PROG_JOB && PROG_JOB.state === "RUNNING";
   // 已结束：从历史作业点进来，或调度器状态是终态，或 OUTCAR 已写完计时块
   const ended = (PROG_JOB && PROG_JOB.done) || r.finished_normally;
-  const when = PROG_JOB && PROG_JOB.completed_at ? PROG_JOB.completed_at.replace("T", " ").slice(0, 16) : "";
+  const when = PROG_JOB && PROG_JOB.completed_at ? fmtWhen(PROG_JOB.completed_at) : "";
   const sched = PROG_JOB
     ? pkpi("调度器", esc(PROG_JOB.state), `作业 ${esc(PROG_JOB.job_id)} · ${esc(PROG_JOB.server)}${when ? " · " + esc(when) + " 结束" : ""}`,
            PROG_JOB.state === "RUNNING" ? "ok" : "")
@@ -1651,7 +1686,7 @@ function vkRow(r) {
     r.version ? esc(r.version) : "", r.mode ? `调用方式 ${esc(r.mode)}` : "",
     lib.path ? `库 <span class="mono">${esc(lib.path)}</span> · ${lib.entries} 个条目${lib.has_si ? "" : " · 没找到 Si"}` :
       (r.potcar_paths && r.potcar_paths.PBE ? `~/.vaspkit PBE_PATH <span class="mono">${esc(r.potcar_paths.PBE)}</span>` : ""),
-    r.probed_at ? `探测于 ${esc(r.probed_at.replace("T", " ").slice(0, 16))}` : "",
+    r.probed_at ? `探测于 ${esc(fmtWhen(r.probed_at))}` : "",
   ].filter(Boolean).join(" · ") : "";
   const problems = (r.problems || []).map(p => `<div style="color:var(--err)">${esc(p)}</div>`).join("");
   return `<div class="card" id="vk-${s}"><div class="row">

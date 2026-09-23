@@ -347,3 +347,132 @@ class TestFinishedJobsInTheConsole:
         state.workdirs = {}
         again = call(ui, "job.workdir", {"server": "cl9", "job_id": "5602"})
         assert again["workdir"] == RUN and again["source"] == "record"
+
+
+class TestRealStartAndEnd:
+    """cl9 runs Torque: a finished job is simply gone, so the ledger only
+    knows a window for its end until the job's own files are read."""
+
+    OUT = ("__VP_JOB__128870\n__VP_TZ__+0800\n"
+           " executed on             LinuxIFC date 2026.09.23  16:02:55\n"
+           "__VP_LAST__1790151922\n"
+           "__VP_JOB__128871\n")
+
+    def test_command_reads_the_run_directory(self):
+        from vaspilot.hpc.scheduler import timing_command
+        command = timing_command({"128870": "/public/home/wuhong/C60 opt"})
+        assert "cd -- '/public/home/wuhong/C60 opt'" in command
+        assert "executed on" in command and "*.o128870" in command
+
+    def test_command_refuses_relative_or_odd_paths(self):
+        from vaspilot.hpc.scheduler import timing_command
+        for bad in ("runs/x", "/a\nrm -rf ~"):
+            with pytest.raises(Exception):
+                timing_command({"1": bad})
+        with pytest.raises(Exception):
+            timing_command({"1;id": "/a"})
+
+    def test_parse(self):
+        from datetime import datetime, timezone
+        from vaspilot.hpc.scheduler import parse_timing
+        found = parse_timing(self.OUT)
+        start = datetime.fromtimestamp(found["128870"]["vasp_started"], timezone.utc)
+        assert start.isoformat() == "2026-09-23T08:02:55+00:00"
+        assert found["128870"]["last_write"] == 1790151922
+        assert found["128871"] == {"vasp_started": None, "last_write": None}
+
+    @staticmethod
+    def vanished(tmp_path, last_seen="2026-09-23T08:10:00+00:00",
+                 noticed="2026-09-23T08:47:00+00:00"):
+        import json
+        from vaspilot.core.jobhistory import JobLedger
+        (tmp_path / "cl9.json").write_text(json.dumps({"128870": {
+            "job_id": "128870", "name": "C60_opt", "state": "COMPLETED",
+            "elapsed": "00:06:40", "assumed_end": True, "workdir": RUN,
+            "first_seen": last_seen, "last_seen": last_seen,
+            "completed_at": noticed}}), encoding="utf-8")
+        return JobLedger(tmp_path)
+
+    def test_the_files_settle_start_end_and_duration(self, tmp_path):
+        from datetime import datetime
+        ledger = self.vanished(tmp_path)
+        assert ledger.needs_timing("cl9") == {"128870": RUN}
+        end = datetime.fromisoformat("2026-09-23T08:25:22+00:00").timestamp()
+        start = datetime.fromisoformat("2026-09-23T08:02:55+00:00").timestamp()
+        ledger.remember_timing("cl9", {"128870": {"vasp_started": start,
+                                                  "last_write": end}})
+        row = ledger.merged("cl9")[0]
+        assert row["assumed_end"] is False
+        assert row["completed_at"] == "2026-09-23T08:25:22+00:00"
+        assert row["completion_source"] == "files"
+        assert row["noticed_at"] == "2026-09-23T08:47:00+00:00"
+        assert row["started_at"] == "2026-09-23T08:02:55+00:00"
+        assert row["start_source"] == "outcar"
+        assert row["duration_seconds"] == 22 * 60 + 27
+        assert ledger.needs_timing("cl9") == {}
+
+    def test_a_later_run_in_the_same_directory_is_not_believed(self, tmp_path):
+        from datetime import datetime
+        ledger = self.vanished(tmp_path)
+        later = datetime.fromisoformat("2026-09-24T10:00:00+00:00").timestamp()
+        ledger.remember_timing("cl9", {"128870": {"vasp_started": later,
+                                                  "last_write": later}})
+        row = ledger.merged("cl9")[0]
+        assert row["assumed_end"] is True and row["duration_seconds"] is None
+        assert row["completed_at"] == "2026-09-23T08:47:00+00:00"
+        assert ledger.needs_timing("cl9") == {}  # gives up at once
+
+    def test_no_files_spends_a_try(self, tmp_path):
+        from vaspilot.core.jobhistory import JobLedger
+        ledger = self.vanished(tmp_path)
+        for _ in range(JobLedger.TIMING_TRIES):
+            assert ledger.needs_timing("cl9")
+            ledger.remember_timing("cl9", {"128870": {}})
+        assert ledger.needs_timing("cl9") == {}
+        assert ledger.merged("cl9")[0]["assumed_end"] is True
+
+    def test_an_assumed_end_has_no_duration(self, tmp_path):
+        row = self.vanished(tmp_path).merged("cl9")[0]
+        assert row["duration_seconds"] is None
+        assert row["completion_source"] == "noticed"
+
+    def test_a_queued_job_has_used_no_time(self, tmp_path):
+        from vaspilot.core.jobhistory import JobLedger
+        ledger = JobLedger(tmp_path)
+        # older gateways reported the requested walltime for queued jobs
+        ledger.observe("cl9", [{"job_id": "5", "state": "PENDING",
+                                "elapsed": "32:00:00"}])
+        assert ledger.merged("cl9")[0]["elapsed"] == ""
+        ledger.observe("cl9", [{"job_id": "5", "state": "RUNNING",
+                                "elapsed": "00:01:10"}])
+        assert ledger.merged("cl9")[0]["elapsed"] == "00:01:10"
+
+    def test_torque_start_and_completion_fields(self):
+        from vaspilot.gateway.vaspilot_gateway import _pbs_parse_qstat_f
+        raw = ("Job Id: 128875.admin\n    Job_Name = test64l\n"
+               "    job_state = C\n    start_time = Wed Sep 23 19:49:28 2026\n"
+               "    comp_time = Wed Sep 23 20:30:01 2026\n"
+               "    mtime = Wed Sep 23 20:30:05 2026\n")
+        job = _pbs_parse_qstat_f(raw)["128875"]
+        assert job["started_at"].startswith("2026-09-23T19:49:28")
+        assert job["completed_at"].startswith("2026-09-23T20:30:01")
+
+    def test_the_console_settles_a_vanished_job(self, ui):
+        from datetime import datetime
+        from tests.test_ui import call
+        state = ui["state"]
+        state.jobs["cl9"].append({"job_id": "5701", "state": "RUNNING",
+                                  "name": "C60_opt"})
+        state.workdirs = {"5701": RUN}
+        call(ui, "job.list", {"server": "cl9"})
+        call(ui, "job.recent", {"server": "cl9"})
+        state.jobs["cl9"].clear()
+        now = datetime.now().timestamp()
+        state.timings = {"5701": (now - 600, now - 1)}
+        first = call(ui, "job.recent", {"server": "cl9"})
+        row = next(j for j in first["jobs"] if j["job_id"] == "5701")
+        assert row["assumed_end"] is False and row["completion_source"] == "files"
+        assert 590 <= row["duration_seconds"] <= 600
+        asked = len(state.timing_asks)
+        call(ui, "job.recent", {"server": "cl9"})
+        assert len(state.timing_asks) == asked  # settled once
