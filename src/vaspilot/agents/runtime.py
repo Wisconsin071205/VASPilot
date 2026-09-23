@@ -98,15 +98,21 @@ def _bounded(outcome: dict[str, Any], limit: int = 4000) -> dict[str, Any]:
 class AgentRuntime:
     def __init__(self, *, provider: BaseProvider, registry: ToolRegistry,
                  mode: str, audit: AuditLog | None = None,
-                 max_turns: int = 32,
+                 max_turns: int | None = None,
                  stream_cb: Callable[[str], None] | None = None,
                  event_cb: Callable[[str, dict[str, Any]], None] | None = None,
-                 system_extra: str = "") -> None:
+                 system_extra: str = "",
+                 cancel: Any = None) -> None:
         self.provider = provider
         self.registry = registry
         self.mode = mode  # "full" | "analysis_only"
         self.audit = audit
-        self.max_turns = max(4, min(int(max_turns or 32), 200))
+        # no budget by default: the loop runs until the model answers or the
+        # user stops it (``cancel``, a threading.Event). A positive
+        # max_turns is only for scripted callers that ask for one.
+        self.max_turns = int(max_turns) if max_turns and int(max_turns) > 0 \
+            else None
+        self.cancel = cancel
         self.stream_cb = stream_cb
         # event_cb(kind, payload) lets hosts (local web UI) observe the loop:
         # kinds: "tool" (name, ok), "final" (result), "error" (message)
@@ -132,16 +138,25 @@ class AgentRuntime:
         ]
         tools = [t.to_openai() for t in self.registry.list_tools()]
         trace: list[dict[str, Any]] = []
-        nudged = False
-        hard_cap = self.max_turns * 2      # one continuation grant at the cap
         turn = 0
-        while turn < hard_cap:
+        while True:
+            if self._cancelled():
+                return self._stopped(turn, trace)
+            if self.max_turns is not None and turn >= self.max_turns:
+                result = {
+                    "ok": False,
+                    "error": f"agent used the {self.max_turns} tool turns "
+                             "this caller allowed",
+                    "turns": turn,
+                    "tool_calls": [row["tool"] for row in trace],
+                    "trace": trace,
+                    "mode": self.mode,
+                }
+                self._emit("error", result)
+                return result
             turn += 1
             reply = self.provider.chat(messages, tools,
                                        stream_cb=self.stream_cb)
-            if not reply.tool_calls and turn > self.max_turns \
-                    and not trace:
-                break                      # nothing achieved, stop early
             if reply.tool_calls:
                 messages.append({
                     "role": "assistant",
@@ -154,6 +169,8 @@ class AgentRuntime:
                         for call in reply.tool_calls],
                 })
                 for call in reply.tool_calls:
+                    if self._cancelled():
+                        return self._stopped(turn, trace, reply.text)
                     outcome = self._dispatch(call.name, call.arguments)
                     row = {"turn": turn, "tool": call.name,
                            "ok": bool(outcome.get("ok", True))}
@@ -167,17 +184,6 @@ class AgentRuntime:
                         "content": json.dumps(outcome, ensure_ascii=False,
                                               default=str)[:20000],
                     })
-                if turn == self.max_turns and not nudged:
-                    # soft budget reached: tell the model to wrap up or keep
-                    # going explicitly instead of dying mid-sentence
-                    nudged = True
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "已达到本任务的工具轮次上限。请继续：直接调用完成"
-                            "任务还需要的工具；若任务确已完成，给出简短结论。"
-                            "不要停在计划句上。"),
-                    })
                 continue
             result = {
                 "ok": True,
@@ -189,10 +195,18 @@ class AgentRuntime:
             }
             self._emit("final", result)
             return result
+
+    def _cancelled(self) -> bool:
+        return self.cancel is not None and self.cancel.is_set()
+
+    def _stopped(self, turn: int, trace: list[dict[str, Any]],
+                 text: str = "") -> dict[str, Any]:
+        """The user pressed stop: end cleanly after the step in flight."""
         result = {
             "ok": False,
-            "error": (f"agent exceeded the hard cap of {self.max_turns * 2} "
-                      f"tool turns even after a continuation nudge"),
+            "stopped": True,
+            "answer": text or "",
+            "error": "stopped by the user",
             "turns": turn,
             "tool_calls": [row["tool"] for row in trace],
             "trace": trace,

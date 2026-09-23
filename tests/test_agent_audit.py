@@ -81,36 +81,50 @@ class TestAgentRuntime:
         with pytest.raises(ValidationError):
             registry.dispatch("run_shell", {}, provider_mode=FULL)
 
-    def test_turn_limit(self, app_with_fake):
+    def test_no_turn_limit_by_default(self, app_with_fake):
+        """The loop runs as long as the model keeps calling tools."""
         app, registry = _registry_of(app_with_fake)
-        endless = [{"tool_calls": [ToolCall(call_id=str(i),
-                                            name="remote_pwd",
+        script = [{"tool_calls": [ToolCall(call_id=str(i), name="remote_pwd",
+                                           arguments={})]}
+                  for i in range(100)] + [{"text": "一百步之后完成"}]
+        runtime = AgentRuntime(provider=ScriptedProvider(script),
+                               registry=registry, mode=FULL)
+        result = runtime.run("long task")
+        assert result["ok"] is True and result["turns"] == 101
+        assert len(result["tool_calls"]) == 100
+
+    def test_stop_ends_the_turn_after_the_step_in_flight(self, app_with_fake):
+        import threading
+        app, registry = _registry_of(app_with_fake)
+        stop = threading.Event()
+
+        class Endless:
+            calls = 0
+
+            def chat(self, messages, tools, *, stream_cb=None):
+                Endless.calls += 1
+                if Endless.calls == 3:
+                    stop.set()  # the user presses stop while turn 3 runs
+                return ProviderReply(tool_calls=[ToolCall(
+                    call_id=str(Endless.calls), name="remote_pwd", arguments={})])
+
+        runtime = AgentRuntime(provider=Endless(), registry=registry,
+                               mode=FULL, cancel=stop)
+        result = runtime.run("loop forever")
+        assert result["ok"] is False and result["stopped"] is True
+        assert Endless.calls == 3
+        assert len(result["tool_calls"]) == 2  # turn 3's tool never ran
+
+    def test_an_explicit_budget_still_works_for_scripts(self, app_with_fake):
+        app, registry = _registry_of(app_with_fake)
+        endless = [{"tool_calls": [ToolCall(call_id=str(i), name="remote_pwd",
                                             arguments={})]}
                    for i in range(50)]
-        provider = ScriptedProvider(endless)
-        runtime = AgentRuntime(provider=provider, registry=registry,
-                               mode=FULL, max_turns=3)
+        runtime = AgentRuntime(provider=ScriptedProvider(endless),
+                               registry=registry, mode=FULL, max_turns=3)
         result = runtime.run("loop forever")
-        assert result["ok"] is False
-        assert "exceeded" in result["error"]
-
-    def test_turn_cap_nudge_grants_continuation(self, app_with_fake):
-        """At the soft cap the runtime injects a continuation nudge and runs
-        on, instead of ending mid-sentence like the 13-tool-call Bader run."""
-        app, registry = _registry_of(app_with_fake)
-        scripted = [
-            {"tool_calls": [ToolCall(call_id="1", name="remote_pwd",
-                                     arguments={})]},
-            {"tool_calls": [ToolCall(call_id="2", name="remote_pwd",
-                                     arguments={})]},
-            {"text": "任务完成：一切就绪"},
-        ]
-        runtime = AgentRuntime(provider=ScriptedProvider(scripted),
-                               registry=registry, mode=FULL, max_turns=2)
-        result = runtime.run("do it")
-        # max_turns=2：第 2 回合触顶注入「继续」，第 3 回合给出结论
-        assert result["ok"] is True and result["turns"] == 3
-        assert "完成" in result["answer"]
+        assert result["ok"] is False and result["turns"] == 3
+        assert "allowed" in result["error"]
 
 
 def _registry_of(app_with_fake):

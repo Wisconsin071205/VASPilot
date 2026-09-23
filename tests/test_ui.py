@@ -888,3 +888,35 @@ class TestMonitorAuthView:
         names = {s["name"]: s for s in r["servers"]}
         assert names["cl9"]["auth_mode"] == "interactive"
         assert names["cl9"]["auto_connect"] is False
+
+
+class TestChatStop:
+    def test_stop_reaches_the_running_turn(self, ui):
+        """The stop button's request finds the turn by run_id and ends it."""
+        from vaspilot.providers.base import ProviderReply
+        calls = {"n": 0}
+
+        def endless(messages, tools, *, stream_cb=None):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                assert call(ui, "chat.stop", {"run_id": "run-abc12345"})["stopped"]
+            return ProviderReply(tool_calls=[type("C", (), {
+                "call_id": str(calls["n"]), "name": "remote_pwd",
+                "arguments": {}})()])
+
+        ui["scripted"].chat = endless
+        frames = sse_chat(ui, {"provider": "mock", "message": "一直做下去",
+                               "run_id": "run-abc12345"})
+        final = next(f for f in frames
+                     if f.get("type") == "final" and "result" in f)
+        assert final["result"]["stopped"] is True
+        assert calls["n"] == 3
+        # the flag is dropped once the turn ends
+        assert call(ui, "chat.stop", {"run_id": "run-abc12345"})["stopped"] is False
+
+    def test_stop_without_a_running_turn_is_harmless(self, ui):
+        assert call(ui, "chat.stop", {"run_id": "nothing-running"}) == \
+            {"ok": True, "stopped": False}
+
+    def test_the_turn_limit_setting_is_gone(self, ui):
+        assert "agent_max_turns" not in call(ui, "settings")

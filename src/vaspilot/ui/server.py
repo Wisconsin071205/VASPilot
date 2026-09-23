@@ -81,6 +81,8 @@ class UiState:
         self.lock = threading.Lock()
         self.runs: dict[str, dict[str, Any]] = {}  # plan_id -> thread info
         self._campaign_wake: threading.Event | None = None
+        # run_id -> stop flag of each chat turn in flight
+        self.chat_runs: dict[str, threading.Event] = {}
         self.stopped = threading.Event()
 
     def start_campaign_ticker(self, interval: float = 60.0) -> None:
@@ -473,10 +475,6 @@ class UiHandler(BaseHTTPRequestHandler):
                 mode = app.config.set_agent_submit_mode(
                     str(body.get("mode") or "confirm"))
                 self._send_json({"agent_submit_mode": mode})
-            elif action == "agent.max_turns":
-                turns = app.config.set_agent_max_turns(
-                    body.get("agent_max_turns"))
-                self._send_json({"agent_max_turns": turns})
             elif action == "websearch.save":
                 api_key = str(body.get("api_key") or "")
                 if api_key.strip():
@@ -497,6 +495,11 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._monitor_save(body)
             elif action.startswith("project."):
                 self._project_action(action, body)
+            elif action == "chat.stop":
+                event = state.chat_runs.get(str(body.get("run_id") or ""))
+                if event is not None:
+                    event.set()
+                self._send_json({"ok": True, "stopped": event is not None})
             elif action.startswith("chat."):
                 self._chat_action(action, body)
             elif action.startswith("skill."):
@@ -712,8 +715,7 @@ class UiHandler(BaseHTTPRequestHandler):
                 "vlab": {**vlab, "identity_file_exists": identity_ok},
                 "agent_submit_mode": app.config.agent_submit_mode(),
                 "websearch": app.config.websearch(),
-                "temperature_alert_c": app.config.temperature_alert_c(),
-                "agent_max_turns": app.config.agent_max_turns()}
+                "temperature_alert_c": app.config.temperature_alert_c()}
 
     def _save_provider(self, body: dict) -> None:
         from ..core.config import ProviderEntry
@@ -1226,6 +1228,11 @@ class UiHandler(BaseHTTPRequestHandler):
         self.close_connection = True
         self.end_headers()
         guards = {"sentinel": False}
+        import re as _re
+        run_id = str(body.get("run_id") or "")
+        cancel = threading.Event()
+        if _re.fullmatch(r"[A-Za-z0-9_-]{8,64}", run_id):
+            state.chat_runs[run_id] = cancel
 
         def frame(payload: dict) -> None:
             if guards["sentinel"]:
@@ -1283,7 +1290,7 @@ class UiHandler(BaseHTTPRequestHandler):
                     project_root=project_dir or body.get("project_root"),
                     session_id=session_id),
                 mode=mode, audit=app.audit,
-                max_turns=app.config.agent_max_turns(),
+                cancel=cancel,
                 system_extra="\n\n".join(system_extra_parts),
                 stream_cb=lambda fragment: on_delta(fragment),
                 event_cb=lambda kind, payload: frame({"type": kind, **payload}))
@@ -1341,6 +1348,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 "message": f"{type(exc).__name__}: {exc}"}})
         finally:
             guards["sentinel"] = True
+            if state.chat_runs.get(run_id) is cancel:
+                state.chat_runs.pop(run_id, None)
             try:
                 self.wfile.flush()
             except (OSError, ValueError):

@@ -70,7 +70,8 @@ def register(sub) -> None:
     p.add_argument("--provider", default=None)
     p.add_argument("--goal", required=True)
     p.add_argument("--project-root", dest="project_root", default=None)
-    p.add_argument("--max-turns", dest="max_turns", type=int, default=12)
+    p.add_argument("--max-turns", dest="max_turns", type=int, default=0,
+                   help="stop after this many tool turns (default 0: no limit)")
 
 
 # ------------------------------------------------------------------ providers
