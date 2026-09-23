@@ -414,6 +414,14 @@ class UiHandler(BaseHTTPRequestHandler):
                     infer_missing=True)
                 self._send_json({"ok": True, "jobs": merged,
                                  "scheduler": fresh.get("scheduler")})
+            elif action == "vasp.live":
+                self._send_json(client.vasp_live(
+                    str(body.get("directory") or ""),
+                    server=_server_or_default(body, app)))
+            elif action == "job.workdir":
+                self._send_json(client.job_workdir(
+                    str(body.get("job_id") or ""),
+                    server=_server_or_default(body, app)))
             elif action == "vasp.progress":
                 self._send_json(client.vasp_progress(
                     str(body.get("directory") or ""), server=body.get("server")))

@@ -197,6 +197,20 @@ textarea:focus{outline:none;border-color:var(--acc)}
 #chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
 #chathint{max-width:860px;margin:6px auto 0;font-size:11px;color:var(--fg2);text-align:center}
 #attachbtn{padding:0 12px;font-size:16px}
+/* 作业进度：一排读数 + E0 走势 */
+.pkpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}
+.pkpi{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 11px}
+.pkpi .k{font-size:11px;color:var(--fg2)}
+.pkpi .v{font-family:var(--mono);font-size:15px;margin-top:2px}
+.pkpi .s{font-size:11px;color:var(--fg2);margin-top:1px}
+.pkpi .v.ok{color:var(--ok)} .pkpi .v.warn{color:var(--warn)}
+.spark{margin-top:12px;position:relative}
+.spark svg{width:100%;height:auto;display:block}
+.spark .tip{position:absolute;top:4px;pointer-events:none;font-family:var(--mono);font-size:11px;
+  background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:2px 7px;display:none}
+.drow{padding:7px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-family:var(--mono);font-size:12.5px}
+.drow:hover{background:var(--bg3)}
+.drow.up{color:var(--acc)}
 #chatbar.dropping{outline:2px dashed var(--acc);outline-offset:-6px}
 /* 我的计算：一行一条计算链，展开见各阶段 */
 .camp{border:1px solid var(--line);border-radius:9px;margin-top:10px;overflow:hidden}
@@ -551,17 +565,19 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <button class="btn" onclick="loadJobs()">查询作业</button>
     </div></div>
     <div class="card"><h2>活动作业</h2><table id="jobtable">
-      <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th></tr></thead>
+      <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称</th><th></th></tr></thead>
       <tbody></tbody></table></div>
     <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（本机台账：集群查不到的完成作业也会保留，含完成时间）</span></h2>
       <table id="rectable">
       <thead><tr><th>Job ID</th><th>状态</th><th>耗时</th><th>完成时间</th><th>名称</th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card">
-      <h2>VASP 科学进度（区别于调度器状态）</h2>
+    <div class="card" id="progcard">
+      <h2>VASP 计算进度 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（在上面的活动作业里点「进度」，或选一个计算目录；每分钟自动刷新）</span></h2>
       <div class="row">
         <div class="fg" style="flex:1"><label>计算目录</label>
-          <input id="progdir" style="width:420px" placeholder="/public/home/…/runs/case-1"></div>
+          <input id="progdir" style="width:100%;min-width:320px;font-family:var(--mono)"
+            placeholder="点「选择目录」浏览服务器，或直接粘贴路径" oninput="PROG_JOB = null"></div>
+        <button class="btn ghost" onclick="openDirPicker()">选择目录</button>
         <button class="btn" onclick="loadProgress()">查询</button>
       </div>
       <div id="progout"></div>
@@ -858,6 +874,18 @@ textarea:focus{outline:none;border-color:var(--acc)}
   </div>
 </div>
 
+<div id="dirpickback" class="modalwrap" onclick="if(event.target===this)this.classList.remove('on')">
+  <div class="modal" style="width:min(660px,94vw)">
+    <h2>选择计算目录</h2>
+    <div class="mono" id="dpath" style="color:var(--fg2);margin-bottom:8px;word-break:break-all"></div>
+    <div id="dlist" style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px"></div>
+    <div id="dhint" style="font-size:12px;color:var(--fg2);margin-top:8px"></div>
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn ghost" onclick="document.getElementById('dirpickback').classList.remove('on')">取消</button>
+      <button class="btn" onclick="pickDir()">选择此目录</button>
+    </div>
+  </div>
+</div>
 <div id="skillmodalback" class="modalwrap" onclick="if(event.target===this)this.classList.remove('on')">
   <div class="modal" style="width:min(640px,94vw)">
     <h2 id="sktitle">新建技能</h2>
@@ -913,7 +941,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "flow") refreshProjects();
-  if (t.dataset.v === "jobs") loadCampaigns(true);
+  if (t.dataset.v === "jobs") { loadCampaigns(true); loadJobs(true); }
   if (t.dataset.v === "files") {
     if (!document.getElementById("fpath").value) pickFileServer();
     refreshWorkspacePanel();
@@ -1267,14 +1295,22 @@ function goUp() {
 }
 
 /* ===================== 作业 ===================== */
-async function loadJobs() {
+async function loadJobs(silent = false) {
   const server = document.getElementById("jsrv").value;
-  const [jobs, recent] = await Promise.all([api("job.list", {server}), api("job.recent", {server})]);
+  if (!server) return;
+  const [jobs, recent] = await Promise.all([api("job.list", {server}, silent),
+                                            api("job.recent", {server}, silent)]);
+  if (jobs.ok && PROG_JOB && PROG_JOB.server === server) {
+    const still = (jobs.jobs || []).find(j => String(j.job_id) === String(PROG_JOB.job_id));
+    PROG_JOB.state = still ? still.state : "已离开队列";
+  }
   if (jobs.ok) document.querySelector("#jobtable tbody").innerHTML = (jobs.jobs || []).map(j => `
     <tr><td class="mono">${esc(j.job_id)}</td>
     <td>${badge(j.state, j.state === "RUNNING" ? "ok" : "info")}</td>
-    <td class="mono">${esc(j.elapsed)}</td><td>${esc(j.partition)}</td><td>${esc(j.name)}</td></tr>`).join("")
-    || `<tr><td colspan="5" class="empty">无活动作业</td></tr>`;
+    <td class="mono">${esc(j.elapsed)}</td><td>${esc(j.partition)}</td><td>${esc(j.name)}</td>
+    <td><button class="btn ghost" style="padding:2px 12px"
+      onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state)}')">进度</button></td></tr>`).join("")
+    || `<tr><td colspan="6" class="empty">无活动作业</td></tr>`;
   if (recent.ok) document.querySelector("#rectable tbody").innerHTML = (recent.jobs || []).map(j => `
     <tr><td class="mono">${esc(j.job_id)}</td>
     <td>${badge(j.state, j.state === "COMPLETED" ? "ok" : ["FAILED","TIMEOUT","CANCELLED","CANCELED"].includes(String(j.state).toUpperCase()) ? "err" : "info")}</td>
@@ -1283,23 +1319,157 @@ async function loadJobs() {
     <td>${esc(j.name || "")}</td></tr>`).join("")
     || `<tr><td colspan="5" class="empty">无历史（提交过的作业在查询时自动登记）</td></tr>`;
 }
-async function loadProgress() {
-  const server = document.getElementById("jsrv").value;
+let PROG_JOB = null;  // {server, job_id, state}：从活动作业点进来时才有
+async function jobProgress(server, jobId, state) {
+  const out = document.getElementById("progout");
+  out.innerHTML = `<div class="empty">正在向调度器查询作业 ${esc(jobId)} 的工作目录…</div>`;
+  document.getElementById("progcard").scrollIntoView({behavior: "smooth", block: "start"});
+  const w = await api("job.workdir", {server, job_id: jobId}, true);
+  if (!w.ok) {
+    out.innerHTML = `<div class="empty" style="color:var(--err)">${esc((w.error || {}).message || "查不到工作目录")}。可以点「选择目录」手动找。</div>`;
+    return;
+  }
+  document.getElementById("progdir").value = w.workdir;
+  PROG_JOB = {server, job_id: jobId, state};
+  loadProgress();
+}
+const fmtNum = (v, d = 4) => (v === null || v === undefined) ? "—" : Number(v).toFixed(d);
+const fmtSci = v => (v === null || v === undefined) ? "—" : Number(v).toExponential(1);
+function pkpi(k, v, s = "", cls = "") {
+  return `<div class="pkpi"><div class="k">${k}</div><div class="v ${cls}">${v}</div>${s ? `<div class="s">${s}</div>` : ""}</div>`;
+}
+function sparkline(rows) {
+  const pts = (rows || []).filter(r => r.e0 !== null && r.e0 !== undefined);
+  if (pts.length < 2) return "";
+  const W = 900, H = 160, L = 70, R = 14, T = 12, B = 22;
+  const xs = pts.map(p => p.step), ys = pts.map(p => p.e0);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if (y1 - y0 < 1e-9) { y0 -= 1e-3; y1 += 1e-3; }
+  const X = v => L + (W - L - R) * (v - x0) / Math.max(1, x1 - x0);
+  const Y = v => T + (H - T - B) * (y1 - v) / (y1 - y0);
+  const d = pts.map((p, i) => `${i ? "L" : "M"}${X(p.step).toFixed(1)},${Y(p.e0).toFixed(1)}`).join("");
+  const last = pts[pts.length - 1];
+  window._spark = {pts, X, Y, W};
+  return `<div class="spark" id="spark">
+    <svg viewBox="0 0 ${W} ${H}" onmousemove="sparkHover(event)" onmouseleave="sparkHover(null)">
+      <line x1="${L}" y1="${H - B}" x2="${W - R}" y2="${H - B}" stroke="var(--line)" stroke-width="1"/>
+      <text x="${L - 6}" y="${T + 4}" text-anchor="end" font-size="10" fill="var(--fg2)">${y1.toFixed(3)}</text>
+      <text x="${L - 6}" y="${H - B}" text-anchor="end" font-size="10" fill="var(--fg2)">${y0.toFixed(3)}</text>
+      <text x="${L}" y="${H - 6}" font-size="10" fill="var(--fg2)">离子步 ${x0}</text>
+      <text x="${W - R}" y="${H - 6}" text-anchor="end" font-size="10" fill="var(--fg2)">${x1}</text>
+      <path d="${d}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      <line id="sparkx" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--fg2)" stroke-width="1" stroke-dasharray="3 3" style="display:none" vector-effect="non-scaling-stroke"/>
+      <circle cx="${X(last.step).toFixed(1)}" cy="${Y(last.e0).toFixed(1)}" r="4" fill="var(--acc)" stroke="var(--bg2)" stroke-width="2"/>
+    </svg><div class="tip" id="sparktip"></div>
+    <div style="font-size:11px;color:var(--fg2)">E0（eV）随离子步的变化 · 最近 ${pts.length} 步</div></div>`;
+}
+function sparkHover(ev) {
+  const tip = document.getElementById("sparktip"), line = document.getElementById("sparkx");
+  const sp = window._spark;
+  if (!tip || !sp) return;
+  if (!ev) { tip.style.display = "none"; line.style.display = "none"; return; }
+  const box = ev.currentTarget.getBoundingClientRect();
+  const vx = (ev.clientX - box.left) / box.width * sp.W;
+  let best = sp.pts[0];
+  for (const p of sp.pts) if (Math.abs(sp.X(p.step) - vx) < Math.abs(sp.X(best.step) - vx)) best = p;
+  line.setAttribute("x1", sp.X(best.step)); line.setAttribute("x2", sp.X(best.step));
+  line.style.display = "";
+  tip.textContent = `离子步 ${best.step} · E0 = ${Number(best.e0).toFixed(5)} eV`;
+  tip.style.display = "block";
+  const px = sp.X(best.step) / sp.W * box.width;
+  tip.style.left = Math.min(Math.max(0, px - 80), box.width - 190) + "px";
+}
+async function loadProgress(silent = false) {
+  const server = (PROG_JOB && PROG_JOB.server) || document.getElementById("jsrv").value;
   const directory = document.getElementById("progdir").value.trim();
-  const r = await api("vasp.progress", {server, directory});
+  if (!directory) return silent ? null : toast("先选一个计算目录", "err");
+  const r = await api("vasp.live", {server, directory}, silent);
   if (!r.ok) return;
+  const out = document.getElementById("progout");
+  if (!(r.files_present || []).length) {
+    out.innerHTML = `<div class="empty">这个目录里还没有 INCAR / OSZICAR / OUTCAR（作业可能还在排队，或者目录选错了）。</div>`;
+    return;
+  }
+  const running = PROG_JOB && PROG_JOB.state === "RUNNING";
+  const sched = PROG_JOB
+    ? pkpi("调度器", esc(PROG_JOB.state), `作业 ${esc(PROG_JOB.job_id)} · ${esc(PROG_JOB.server)}`,
+           PROG_JOB.state === "RUNNING" ? "ok" : "")
+    : pkpi("调度器", "—", "从活动作业点「进度」进来才会显示");
+  const ionic = r.nsw ? `${r.ionic_step} / ${r.nsw}` : `${r.ionic_step}`;
+  const elec = r.current_electronic
+    ? pkpi("当前离子步 · 电子步", `${r.current_electronic} / ${r.nelm}`, `dE = ${fmtSci(r.current_de)}${running ? "（进行中）" : ""}`)
+    : pkpi("上一离子步 · 电子步", `${r.last_electronic_steps} / ${r.nelm}`, "当前没有进行中的电子迭代");
+  // EDIFFG < 0 看受力，> 0 看能量差——哪个是判据就显示哪个
+  const byForce = r.ediffg < 0;
+  const target = byForce
+    ? pkpi("最大受力（判据）", r.max_force === null ? "—" : `${fmtNum(r.max_force, 4)}`,
+           `目标 < ${Math.abs(r.ediffg)} eV/Å`,
+           r.max_force !== null && r.max_force < Math.abs(r.ediffg) ? "ok" : "")
+    : pkpi("ΔE（判据）", r.delta_e === null ? "—" : fmtSci(r.delta_e),
+           `目标 |ΔE| < ${r.ediffg} eV`,
+           r.delta_e !== null && Math.abs(r.delta_e) < r.ediffg ? "ok" : "");
+  const side = byForce
+    ? pkpi("ΔE（上一步）", r.delta_e === null ? "—" : fmtSci(r.delta_e) + " eV")
+    : pkpi("最大受力", r.max_force === null ? "—" : fmtNum(r.max_force, 4) + " eV/Å");
   const sci = r.scientific_converged;
-  document.getElementById("progout").innerHTML = `
-    <table style="margin-top:10px"><tbody>
-    <tr><th>科学收敛</th><td>${sci === undefined ? "—" : badge(sci ? "已收敛" : "未收敛", sci ? "ok" : "err")}</td></tr>
-    <tr><th>离子收敛</th><td>${badge(r.ionic_converged ? "是" : "否", r.ionic_converged ? "ok" : "warn")}</td></tr>
-    <tr><th>电子收敛</th><td>${badge(r.electronic_converged ? "是" : "否", r.electronic_converged ? "ok" : "warn")}
-      ${r.electronic_reached_nelem || r.electronic_reached_nelm ? badge("达到 NELM 上限", "err") : ""}</td></tr>
-    <tr><th>离子步数</th><td class="mono">${r.ionic_steps ?? "—"}　最后 E0: ${fmt(r.last_e0_ev)}</td></tr>
-    <tr><th>错误特征</th><td>${(r.error_signatures || []).length ? (r.error_signatures || []).map(e => badge(e, "err")).join(" ") : "无"}</td></tr>
-    <tr><th>已产出文件</th><td class="mono">${esc((r.files_present || []).join(", ") || "—")}</td></tr>
-    </tbody></table>
-    <div style="font-size:11px;color:var(--fg2);margin-top:6px">调度器状态是另一个维度：请以 job.list/recent 为准。</div>`;
+  out.innerHTML = `<div class="pkpis">
+      ${sched}
+      ${pkpi("离子步", ionic, r.nsw ? "已完成 / NSW" : "静态计算（NSW = 0）")}
+      ${elec}
+      ${pkpi("E0", r.last_e0 === null ? "—" : fmtNum(r.last_e0, 5), "eV · 最后一个完成的离子步")}
+      ${target}${side}
+    </div>
+    <div class="row" style="margin-top:10px;gap:6px">
+      ${badge(sci ? "科学收敛" : "尚未收敛", sci ? "ok" : "warn")}
+      ${badge(r.ionic_converged ? "离子收敛" : "离子未收敛", r.ionic_converged ? "ok" : "info")}
+      ${badge(r.electronic_converged ? "电子收敛" : "电子未收敛", r.electronic_converged ? "ok" : "warn")}
+      ${r.electronic_reached_nelm ? badge("有离子步撞到 NELM 上限", "err") : ""}
+      ${(r.error_signatures || []).map(e => badge(e, "err")).join(" ")}
+    </div>
+    ${sparkline(r.energies)}
+    <div class="mono" style="font-size:11px;color:var(--fg2);margin-top:8px">${esc(r.directory)} · 读到 ${esc((r.files_present || []).join(", "))}
+      · ${new Date().toLocaleTimeString()} 刷新</div>`;
+}
+setInterval(() => {
+  if (!document.getElementById("v-jobs").classList.contains("on")) return;
+  if (document.getElementById("progdir").value.trim()) loadProgress(true);
+  loadJobs(true);
+}, 60000);
+
+/* 选择目录：浏览服务器，进到有 VASP 文件的目录再点选择 */
+const DP = {server: "", path: ""};
+async function openDirPicker() {
+  DP.server = (PROG_JOB && PROG_JOB.server) || document.getElementById("jsrv").value;
+  if (!DP.server) return toast("先在上面选一台服务器", "err");
+  document.getElementById("dirpickback").classList.add("on");
+  dpBrowse(document.getElementById("progdir").value.trim() || remoteRootOf(DP.server) || "");
+}
+async function dpBrowse(path) {
+  const r = await api("remote.list", {server: DP.server, path});
+  if (!r.ok) return;
+  DP.path = r.path;
+  document.getElementById("dpath").textContent = `${DP.server}:${r.path}`;
+  const root = remoteRootOf(DP.server), parent = parentDir(r.path);
+  const up = !!parent && (!root || parent.length >= root.length);
+  const entries = r.entries || [];
+  const dirs = entries.filter(e => e.type === "dir").map(e => e.name).sort();
+  const names = new Set(entries.map(e => e.name));
+  const list = document.getElementById("dlist");
+  list.innerHTML = (up ? `<div class="drow up" data-p="${esc(parent)}">..（上一级）</div>` : "")
+    + dirs.map(n => `<div class="drow" data-p="${esc(r.path.replace(/\/+$/, "") + "/" + n)}">📁 ${esc(n)}</div>`).join("")
+    || `<div class="empty">没有子目录</div>`;
+  list.querySelectorAll(".drow").forEach(el => el.onclick = () => dpBrowse(el.dataset.p));
+  const vasp = ["INCAR", "OSZICAR", "OUTCAR", "POSCAR"].filter(n => names.has(n));
+  document.getElementById("dhint").innerHTML = vasp.length
+    ? `<span style="color:var(--ok)">✓ 这里有 ${esc(vasp.join(" / "))}，就是计算目录</span>`
+    : "这里没有 VASP 文件，进入子目录找一找。";
+}
+function pickDir() {
+  document.getElementById("progdir").value = DP.path;
+  document.getElementById("dirpickback").classList.remove("on");
+  PROG_JOB = null;
+  loadProgress();
 }
 const fmt = v => (v === null || v === undefined) ? "—" : Number(v).toFixed(4) + " eV";
 
@@ -1327,12 +1497,14 @@ function stageDetail(st, byName, campaignStatus) {
     const need = byName[st.requires];
     return need ? `等待 ${esc(need.dir.slice(0, 2))} ${esc(need.label)} 收敛` : "即将开始";
   }
-  const p = st.progress || {}, last = p.last_ionic || {}, bits = [];
-  if (p.ionic_steps) bits.push(`离子步 ${p.ionic_steps}`);
-  if (last.electronic_steps) bits.push(`电子步 ${last.electronic_steps}`);
+  const p = st.progress || {}, bits = [];
+  if (p.ionic_step) bits.push(`离子步 ${p.ionic_step}${p.nsw ? " / " + p.nsw : ""}`);
+  if (st.status === "running" && p.current_electronic)
+    bits.push(`电子步 ${p.current_electronic} / ${p.nelm} (dE ${fmtSci(p.current_de)})`);
   if (st.status === "converged") bits.push("已收敛");
-  const e = last.energy_zero_ev ?? last.energy_ev;
-  if (e !== undefined && e !== null) bits.push(`E = ${Number(e).toFixed(3)} eV`);
+  if (p.last_e0 !== undefined && p.last_e0 !== null) bits.push(`E0 = ${Number(p.last_e0).toFixed(3)} eV`);
+  if (p.max_force !== undefined && p.max_force !== null && p.ediffg < 0)
+    bits.push(`Fmax ${Number(p.max_force).toFixed(3)} / ${Math.abs(p.ediffg)}`);
   if (st.status === "running" && !bits.length)
     bits.push(st.scheduler_state === "RUNNING" ? "运行中，还没有完成的离子步" : "已提交，等待调度");
   if (st.status === "preparing") bits.push("VASPKIT 正在生成输入");

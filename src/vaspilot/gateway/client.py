@@ -612,6 +612,42 @@ class GatewayClient:
             "vasp-progress", "--server", name, self._resolve(name, directory)],
             directory=directory)
 
+    def vasp_live(self, directory: str, *, server: str | None = None) -> dict:
+        """Live progress parsed on this side from INCAR and the tails of
+        OSZICAR/OUTCAR, so it does not depend on the gateway's own parser
+        (and works with any gateway version that has read/tail)."""
+        from ..hpc.vasp import live_progress
+        name = self._require(server)
+        base = directory.rstrip("/")
+        texts: dict[str, str] = {}
+        for filename, lines in (("INCAR", 0), ("OSZICAR", 2000),
+                                ("OUTCAR", 2000)):
+            path = f"{base}/{filename}"
+            try:
+                doc = self.read(path, server=name) if not lines else \
+                    self.tail(path, lines=lines, server=name)
+                texts[filename] = str(doc.get("content", ""))
+            except (RemoteError, ValidationError):
+                texts[filename] = ""
+        progress = live_progress(texts)
+        progress["directory"] = base
+        progress["files_present"] = [f for f, text in texts.items() if text]
+        return {"ok": True, **progress}
+
+    def job_workdir(self, job_id: str, *, server: str | None = None) -> dict:
+        """Where a job runs, as its scheduler recorded it."""
+        from ..hpc.scheduler import parse_workdir, workdir_command
+        name = self._require(server)
+        result = self.run_command(workdir_command(job_id), timeout_seconds=60,
+                                  server=name)
+        workdir = parse_workdir(str(result.get("stdout", "")))
+        return {"ok": bool(workdir), "server": name, "job_id": job_id,
+                "workdir": workdir,
+                **({} if workdir else {"error": {
+                    "code": "workdir_unknown",
+                    "message": f"the scheduler did not report a working "
+                               f"directory for job {job_id}"}})}
+
     def diagnostic(self, key: str, *, server: str | None = None) -> dict:
         name = self._require(server)
         allowed = {"hostname", "system", "python", "disk", "quota",

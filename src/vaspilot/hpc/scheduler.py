@@ -7,6 +7,7 @@ passed :mod:`vaspilot.core.validation` (numeric job ids, safe script names).
 
 from __future__ import annotations
 
+import re
 import shlex
 from typing import Any
 
@@ -155,3 +156,33 @@ def merge_job_state(rows: list[dict[str, Any]]) -> str:
         if state in FAILED_STATES:
             return state
     return states[0]
+
+
+# ------------------------------------------------------------- working dir
+_PBS_MARK = "__VP_PBS__"
+
+
+def workdir_command(job_id: str) -> str:
+    """Ask whichever scheduler is present where a job runs.
+
+    Only the job id (validated digits) reaches the shell; the output is
+    parsed by :func:`parse_workdir`.
+    """
+    job = shlex.quote(valid_job_id(job_id))
+    return (f"scontrol show job -o {job} 2>/dev/null; echo {_PBS_MARK}; "
+            f"qstat -f {job} 2>/dev/null")
+
+
+def parse_workdir(stdout: str) -> str:
+    """The job's working directory, or '' when neither scheduler knows it."""
+    slurm, _, pbs = str(stdout or "").partition(_PBS_MARK)
+    match = re.search(r"\bWorkDir=(/\S*)", slurm)
+    if match:
+        return match.group(1)
+    # qstat -f wraps long values onto tab-indented continuation lines
+    joined = pbs.replace("\r", "").replace("\n\t", "")
+    match = re.search(r"^\s*init_work_dir = (/\S*)", joined, re.M)
+    if match:
+        return match.group(1)
+    match = re.search(r"PBS_O_WORKDIR=(/[^,\s]*)", joined)
+    return match.group(1) if match else ""

@@ -349,10 +349,13 @@ class FakeTransport:
                 "content": content.decode("utf-8", "replace")}
 
     def op_tail(self, args):
-        document = self.op_read(args)
+        count = int(args[args.index("--lines") + 1]) if "--lines" in args else 80
+        document = self.op_read([a for i, a in enumerate(args)
+                                 if a != "--lines" and
+                                 (i == 0 or args[i - 1] != "--lines")])
         if document.get("ok"):
             lines = document["content"].splitlines()
-            document["content"] = "\n".join(lines[-80:])
+            document["content"] = "\n".join(lines[-count:])
         return document
 
     def op_find(self, args):
@@ -615,6 +618,14 @@ class FakeTransport:
             else:
                 rc, out = 0, ""
             return {"ok": True, "server": server, "rc": rc, "stdout": out,
+                    "stderr": "", "truncated": False, "command": command}
+        if command.startswith("scontrol show job -o "):
+            # state.workdirs: {job_id: path} -> answered like Slurm would
+            job_id = command.split()[4].strip("'")
+            where = getattr(self.state, "workdirs", {}).get(job_id)
+            out = (f"JobId={job_id} JobName=x WorkDir={where} Nodes=n1\n"
+                   if where else "") + "__VP_PBS__\n"
+            return {"ok": True, "server": server, "rc": 0, "stdout": out,
                     "stderr": "", "truncated": False, "command": command}
         if command.startswith("cd -- ") and " && sha256sum -- " in command:
             import hashlib

@@ -506,9 +506,11 @@ class CampaignRunner:
             row["job_id"], server=server).get("state") or "UNKNOWN")
         row["scheduler_state"] = scheduler
         try:
-            progress = self.client.vasp_progress(row["remote_dir"], server=server)
+            progress = self.client.vasp_live(row["remote_dir"], server=server)
             row["progress"] = {key: progress.get(key) for key in (
-                "scientific_converged", "ionic_steps", "last_ionic",
+                "scientific_converged", "ionic_step", "nsw", "nelm",
+                "current_electronic", "current_de", "last_electronic_steps",
+                "last_e0", "delta_e", "ediffg", "max_force",
                 "electronic_reached_nelm", "error_signatures")}
         except VaspilotError:
             if scheduler not in TERMINAL_SCHEDULER_STATES:

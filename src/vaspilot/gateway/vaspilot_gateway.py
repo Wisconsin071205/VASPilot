@@ -742,7 +742,8 @@ def vasp_progress_payload(dir_text_files: dict) -> dict:
             last_e0 = float(e0_m.group(1)) if e0_m else last_e0
             last_energy = float(f_m.group(1)) if f_m else last_energy
             electronic_rows = 0
-        elif re.match(r"^\s*\d+\s+[-+0-9.eEdD]", line):
+        elif re.match(r"^(?:[A-Za-z]{1,4}\s*:)?\s*\d+\s+[-+0-9.eEdD]", line):
+            # real rows carry the algorithm label: "DAV:   3  -0.25E+03 ..."
             electronic_rows += 1
 
     lower = outcar.lower()

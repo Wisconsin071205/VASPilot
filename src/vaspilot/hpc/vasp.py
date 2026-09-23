@@ -148,6 +148,21 @@ class IonicStep:
     electronic_steps: int = 0
 
 
+# An electronic row as VASP writes it: the algorithm label (DAV:, RMM:, CG :,
+# ...) then the step number, E and dE. Fortran may print a D exponent.
+_ELECTRONIC_ROW = re.compile(
+    r"^(?:[A-Za-z]{1,4}\s*:)?\s*(\d+)\s+([-+0-9.eEdD]+)(?:\s+([-+0-9.eEdD]+))?")
+
+
+def _fortran_float(text: str | None) -> float | None:
+    if not text:
+        return None
+    try:
+        return float(text.replace("D", "E").replace("d", "e"))
+    except ValueError:
+        return None
+
+
 def parse_oszicar(text: str, *, nelm: int = DEFAULT_NELM) -> dict[str, Any]:
     """Parse OSZICAR into ionic steps + electronic-step bookkeeping."""
     steps: list[IonicStep] = []
@@ -177,11 +192,9 @@ def parse_oszicar(text: str, *, nelm: int = DEFAULT_NELM) -> dict[str, Any]:
                 electronic_reached_nelm = True
             electronic_rows = 0
             last_row_was_ionic = True
-        else:
-            head = re.match(r"^\s*(\d+)\s+[-+0-9.eEdD]", line)
-            if head:
-                electronic_rows += 1
-                last_row_was_ionic = False
+        elif _ELECTRONIC_ROW.match(line):
+            electronic_rows += 1
+            last_row_was_ionic = False
 
     return {
         "ionic_steps": len(steps),
@@ -196,6 +209,86 @@ def parse_oszicar(text: str, *, nelm: int = DEFAULT_NELM) -> dict[str, Any]:
         ],
         "last_ionic": vars(steps[-1]) if steps else None,
         "electronic_reached_nelm": electronic_reached_nelm,
+    }
+
+
+def _max_force(outcar: str) -> float | None:
+    """Largest atomic force (eV/Angstrom) in the last TOTAL-FORCE block."""
+    start = outcar.rfind("TOTAL-FORCE (eV/Angst)")
+    if start < 0:
+        return None
+    lines = outcar[start:].splitlines()[1:]
+    largest: float | None = None
+    dashes = 0
+    for line in lines:
+        if line.strip().startswith("---"):
+            dashes += 1
+            if dashes == 2:
+                break
+            continue
+        parts = line.split()
+        if dashes == 1 and len(parts) == 6:
+            try:
+                fx, fy, fz = (float(v) for v in parts[3:])
+            except ValueError:
+                continue
+            size = (fx * fx + fy * fy + fz * fz) ** 0.5
+            largest = size if largest is None else max(largest, size)
+    return largest
+
+
+def live_progress(files: dict[str, Any]) -> dict[str, Any]:
+    """Where a (possibly running) job is, from INCAR + the tails of
+    OSZICAR and OUTCAR: the step under way, its electronic iterations, the
+    energy trend and the forces, next to the convergence verdict.
+
+    Step numbers are read from the rows themselves, so a tail that starts
+    mid-file still reports the true ionic step.
+    """
+    incar = parse_incar(files.get("INCAR") or "")
+    oszicar = files.get("OSZICAR") or ""
+    outcar = files.get("OUTCAR") or ""
+
+    def number(key: str, default: float) -> float:
+        value = _fortran_float(incar.values.get(key))
+        return default if value is None else value
+
+    ediff = number("EDIFF", 1e-4)
+    energies: list[dict[str, Any]] = []
+    rows, current_de, last_rows = 0, None, 0
+    for raw in oszicar.splitlines():
+        line = raw.strip()
+        if "E0=" in line or "F=" in line:
+            step = re.match(r"^(\d+)", line)
+            e0 = re.search(r"E0=\s*([-+0-9.eEdD]+)", line)
+            energies.append({
+                "step": int(step.group(1)) if step else len(energies) + 1,
+                "e0": _fortran_float(e0.group(1)) if e0 else None})
+            last_rows, rows, current_de = rows, 0, None
+            continue
+        match = _ELECTRONIC_ROW.match(line)
+        if match:
+            rows += 1
+            current_de = _fortran_float(match.group(3))
+
+    known = [row["e0"] for row in energies if row["e0"] is not None]
+    status = scientific_status(scheduler_state="UNKNOWN", files=files)
+    status.pop("completed", None)
+    return {
+        **status,
+        "ionic_step": energies[-1]["step"] if energies else 0,
+        "nsw": incar.get_int("NSW", 0),
+        "nelm": incar.get_int("NELM", DEFAULT_NELM),
+        "ediff": ediff,
+        # VASP's default EDIFFG is ten times EDIFF (an energy criterion)
+        "ediffg": number("EDIFFG", ediff * 10),
+        "current_electronic": rows,
+        "current_de": current_de,
+        "last_electronic_steps": last_rows,
+        "last_e0": known[-1] if known else None,
+        "delta_e": known[-1] - known[-2] if len(known) >= 2 else None,
+        "energies": energies[-60:],
+        "max_force": _max_force(outcar),
     }
 
 

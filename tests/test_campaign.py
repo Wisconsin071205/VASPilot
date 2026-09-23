@@ -450,6 +450,20 @@ class TestRunner:
         assert record["state"]["status"] == "blocked"
         assert submits(state) == []
 
+    def test_a_running_stage_reports_where_it_is(self, chain):
+        store, runner, state, start = chain
+        campaign_id = start()
+        runner.tick(campaign_id)
+        where = stage_dir(store, campaign_id, "relax")
+        files_of(state)[f"{where}/OSZICAR"] = (
+            b"RMM:   1  -0.1E+03  -0.1E-01\n"
+            b"   1 F= -.10000000E+02  E0= -.10000000E+02  d E =-.1E-02\n"
+            b"RMM:   1  -0.1E+03  -0.3E-02\n")
+        progress = runner.tick(campaign_id)["state"]["stages"]["relax"]["progress"]
+        assert progress["ionic_step"] == 1 and progress["nsw"] == 200
+        assert progress["current_electronic"] == 1
+        assert progress["last_e0"] == pytest.approx(-10.0)
+
     def test_view_is_what_the_ui_shows(self, chain):
         store, runner, state, start = chain
         campaign_id = start()
