@@ -2,8 +2,8 @@
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.structure import (Poscar, parse_poscar, split_annotation,
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.structure import (Poscar, parse_poscar, split_annotation,
                                         structure_summary)
 
 CUBIC = """Fe2O3 cell

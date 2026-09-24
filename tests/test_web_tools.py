@@ -14,10 +14,10 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import vaspilot.tools.web as web
-from vaspilot.core.config import Config
-from vaspilot.core.errors import ValidationError
-from vaspilot.tools.registry import ToolContext, ToolRegistry
+import rsci.tools.web as web
+from rsci.core.config import Config
+from rsci.core.errors import ValidationError
+from rsci.tools.registry import ToolContext, ToolRegistry
 
 
 class TestSsrfGuard:
@@ -51,7 +51,7 @@ class TestFetch:
         pages = {
             "/page": (b"<html><head><style>x{}</style></head><body>"
                       b"<h1>Title</h1><script>evil()</script>"
-                      b"<p>Hello&nbsp;VASPilot</p></body></html>", "text/html"),
+                      b"<p>Hello&nbsp;rsci</p></body></html>", "text/html"),
             "/big": (b"<html><body>" + b"<p>lorem ipsum</p>" * 20000
                      + b"</body></html>", "text/html"),
             "/plain": (b"plain text body", "text/plain"),
@@ -85,7 +85,7 @@ class TestFetch:
 
     def test_html_stripped(self, local_server):
         result = self._fetch(local_server, "/page")
-        assert "Hello VASPilot" in result["text"]
+        assert "Hello rsci" in result["text"]
         assert "Title" in result["text"]
         assert "evil()" not in result["text"]      # scripts dropped
         assert "x{}" not in result["text"]          # styles dropped
@@ -123,6 +123,32 @@ class TestSearch:
                  "snippet": "CI-NEB setup"}]}}})
         result = web.web_search("NEB", provider="bocha", api_key="test-key")
         assert result["results"][0]["url"] == "https://vasp.example/neb"
+
+    def test_tavily_adapter(self, monkeypatch):
+        captured = {}
+
+        def post(url, payload, api_key, timeout=15):
+            captured.update(url=url, payload=payload, api_key=api_key)
+            return {"results": [{
+                "title": "VASP wiki", "url": "https://vasp.example/wiki",
+                "content": "ENCUT controls the plane-wave cutoff.",
+                "score": 0.91}]}
+
+        monkeypatch.setattr(web, "_post_json", post)
+        result = web.web_search("VASP ENCUT", provider="tavily",
+                                api_key="tvly-test-key")
+
+        assert captured["url"] == "https://api.tavily.com/search"
+        assert captured["api_key"] == "tvly-test-key"
+        assert captured["payload"] == {
+            "query": "VASP ENCUT", "search_depth": "basic",
+            "max_results": 10, "topic": "general",
+            "include_answer": False, "include_raw_content": False,
+            "include_images": False}
+        assert result["provider"] == "tavily"
+        assert result["results"][0] == {
+            "title": "VASP wiki", "url": "https://vasp.example/wiki",
+            "snippet": "ENCUT controls the plane-wave cutoff."}
 
     def test_missing_key_rejected(self):
         with pytest.raises(ValidationError):
@@ -189,7 +215,7 @@ class TestRegistryWebTools:
     @pytest.fixture()
     def registry(self, config_home, app_with_fake, monkeypatch):
         app, transport = app_with_fake
-        monkeypatch.setenv("VASPILOT_WEBSEARCH_KEY", "env-key")
+        monkeypatch.setenv("RSCI_WEBSEARCH_KEY", "env-key")
         app.config.set_websearch(provider="zhipu", enabled=True)
         context = ToolContext(config=app.config, client=app.client(),
                               audit=None)
@@ -205,13 +231,13 @@ class TestRegistryWebTools:
 
     def test_web_search_disabled_rejected(self, registry, monkeypatch):
         registry.context.config.set_websearch(provider="zhipu", enabled=False)
-        from vaspilot.core.errors import ValidationError as VE
+        from rsci.core.errors import ValidationError as VE
         with pytest.raises(VE):
             registry.dispatch("web_search", {"query": "x"})
         registry.context.config.set_websearch(provider="zhipu", enabled=True)
 
     def test_web_fetch_tool_ssrf(self, registry):
-        from vaspilot.core.errors import ValidationError as VE
+        from rsci.core.errors import ValidationError as VE
         with pytest.raises(VE):
             registry.dispatch("web_fetch", {"url": "http://127.0.0.1/x"})
 

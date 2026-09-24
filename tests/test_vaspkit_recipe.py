@@ -2,8 +2,8 @@
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.recipe import (DEFAULT_KSPACING, expand_stages,
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.recipe import (DEFAULT_KSPACING, expand_stages,
                                      validate_recipe)
 
 ELEMENTS = ("Fe", "O")

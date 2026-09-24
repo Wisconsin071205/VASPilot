@@ -6,7 +6,7 @@ import * as path from "path";
 export class ConsoleUnavailableError extends Error {
   constructor() {
     super(
-      "本地控制台未运行或无法访问：请先启动「远端控制智能体」控制台" +
+      "本地控制台未运行或无法访问：请先启动「晶织：VASP 服务端计算控制智能体」控制台" +
         "（桌面快捷方式），或在扩展设置 huwei-bridge.consoleUrl 填写控制台地址"
     );
   }
@@ -67,13 +67,13 @@ export interface WorkspaceStatus {
 }
 
 export function discoveryFilePath(): string {
-  return path.join(os.homedir(), ".vaspilot", "ui.json");
+  return path.join(os.homedir(), ".rsci", "ui.json");
 }
 
 /** 读取控制台启动时写出的发现文件（url + token）。 */
 export function readDiscoveryFile(homedir?: string): ConsoleInfo {
   const base = homedir ?? os.homedir();
-  const p = path.join(base, ".vaspilot", "ui.json");
+  const p = path.join(base, ".rsci", "ui.json");
   let data: any;
   try {
     data = JSON.parse(fs.readFileSync(p, "utf-8"));
@@ -114,7 +114,7 @@ export class ConsoleClient {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Vaspilot-Token": this.token,
+          "X-RSCI-Token": this.token,
         },
         body: JSON.stringify(body),
       });

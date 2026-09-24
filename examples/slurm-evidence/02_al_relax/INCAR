@@ -1,0 +1,20 @@
+SYSTEM = Al-relax
+ENCUT  = 350
+PREC   = Accurate
+EDIFF  = 1E-6
+EDIFFG = -0.02
+ALGO   = Normal
+
+IBRION = 2
+ISIF   = 3
+NSW    = 25
+POTIM  = 0.5
+
+ISMEAR = 1
+SIGMA  = 0.20
+LREAL  = .FALSE.
+LASPH  = .TRUE.
+
+LWAVE  = .FALSE.
+LCHARG = .FALSE.
+

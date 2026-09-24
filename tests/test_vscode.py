@@ -11,8 +11,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-import vaspilot.ui.vscode as vs
-from vaspilot.core.errors import ValidationError
+import rsci.ui.vscode as vs
+from rsci.core.errors import ValidationError
 
 def test_workspace_alias_terminates_on_vlab_only():
     block = vs.workspace_vlab_ssh_config_block(

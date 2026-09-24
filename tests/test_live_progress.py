@@ -6,9 +6,9 @@ import pytest
 
 from tests.test_ui import ui  # noqa: F401  (fixture)
 
-from vaspilot.hpc.scheduler import (parse_workdir, parse_workdirs,
+from rsci.hpc.scheduler import (parse_workdir, parse_workdirs,
                                     workdir_command, workdirs_command)
-from vaspilot.hpc.vasp import live_progress, parse_oszicar
+from rsci.hpc.vasp import live_progress, parse_oszicar
 
 # Real OSZICAR rows carry the algorithm label (DAV:/RMM:) before the step.
 OSZICAR = """       N       E                     dE             d eps       ncg     rms          rms(c)
@@ -195,13 +195,13 @@ class TestWorkdir:
 
 class TestGatewayPayload:
     def test_the_gateway_counts_labelled_rows_too(self):
-        from vaspilot.gateway.vaspilot_gateway import vasp_progress_payload
+        from rsci.gateway.rsci_gateway import vasp_progress_payload
         payload = vasp_progress_payload({"INCAR": "NELM = 3\nNSW = 200\n",
                                          "OSZICAR": OSZICAR, "OUTCAR": ""})
         assert payload["electronic_reached_nelm"] is True
 
 
-RUN = "/hpc/home/tester/vaspilot-root/runs/C60_opt"
+RUN = "/hpc/home/tester/rsci-root/runs/C60_opt"
 
 
 class TestThroughTheClient:
@@ -269,18 +269,18 @@ class TestPbsOwnJobsOnly:
              "    job_state = R\n    queue = long\n")
 
     def test_other_users_jobs_are_dropped(self):
-        from vaspilot.gateway.vaspilot_gateway import _pbs_own_jobs
+        from rsci.gateway.rsci_gateway import _pbs_own_jobs
         assert list(_pbs_own_jobs(self.QSTAT)) == ["128870"]
 
     def test_without_a_user_line_nothing_is_dropped(self):
-        from vaspilot.gateway.vaspilot_gateway import _pbs_own_jobs
+        from rsci.gateway.rsci_gateway import _pbs_own_jobs
         raw = self.QSTAT.split("\n", 1)[1]
         assert sorted(_pbs_own_jobs(raw)) == ["128842", "128870"]
 
 
 class TestLedgerRemembersWhereJobsRan:
     def test_remember_and_retry_limit(self, tmp_path):
-        from vaspilot.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
         ledger = JobLedger(tmp_path)
         ledger.observe("cl9", [{"job_id": "7", "state": "RUNNING"},
                                {"job_id": "8", "state": "RUNNING"}])
@@ -297,7 +297,7 @@ class TestLedgerRemembersWhereJobsRan:
         assert row["state"] == "COMPLETED" and row["workdir"] == RUN
 
     def test_relative_paths_are_not_recorded(self, tmp_path):
-        from vaspilot.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
         ledger = JobLedger(tmp_path)
         ledger.seed_submitted("cl9", "9", workdir="runs/x")
         assert ledger.workdir("cl9", "9") == ""
@@ -359,13 +359,13 @@ class TestRealStartAndEnd:
            "__VP_JOB__128871\n")
 
     def test_command_reads_the_run_directory(self):
-        from vaspilot.hpc.scheduler import timing_command
+        from rsci.hpc.scheduler import timing_command
         command = timing_command({"128870": "/public/home/wuhong/C60 opt"})
         assert "cd -- '/public/home/wuhong/C60 opt'" in command
         assert "executed on" in command and "*.o128870" in command
 
     def test_command_refuses_relative_or_odd_paths(self):
-        from vaspilot.hpc.scheduler import timing_command
+        from rsci.hpc.scheduler import timing_command
         for bad in ("runs/x", "/a\nrm -rf ~"):
             with pytest.raises(Exception):
                 timing_command({"1": bad})
@@ -374,7 +374,7 @@ class TestRealStartAndEnd:
 
     def test_parse(self):
         from datetime import datetime, timezone
-        from vaspilot.hpc.scheduler import parse_timing
+        from rsci.hpc.scheduler import parse_timing
         found = parse_timing(self.OUT)
         start = datetime.fromtimestamp(found["128870"]["vasp_started"], timezone.utc)
         assert start.isoformat() == "2026-09-23T08:02:55+00:00"
@@ -385,7 +385,7 @@ class TestRealStartAndEnd:
     def vanished(tmp_path, last_seen="2026-09-23T08:10:00+00:00",
                  noticed="2026-09-23T08:47:00+00:00"):
         import json
-        from vaspilot.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
         (tmp_path / "cl9.json").write_text(json.dumps({"128870": {
             "job_id": "128870", "name": "C60_opt", "state": "COMPLETED",
             "elapsed": "00:06:40", "assumed_end": True, "workdir": RUN,
@@ -423,7 +423,7 @@ class TestRealStartAndEnd:
         assert ledger.needs_timing("cl9") == {}  # gives up at once
 
     def test_no_files_spends_a_try(self, tmp_path):
-        from vaspilot.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
         ledger = self.vanished(tmp_path)
         for _ in range(JobLedger.TIMING_TRIES):
             assert ledger.needs_timing("cl9")
@@ -437,7 +437,7 @@ class TestRealStartAndEnd:
         assert row["completion_source"] == "noticed"
 
     def test_a_queued_job_has_used_no_time(self, tmp_path):
-        from vaspilot.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
         ledger = JobLedger(tmp_path)
         # older gateways reported the requested walltime for queued jobs
         ledger.observe("cl9", [{"job_id": "5", "state": "PENDING",
@@ -448,7 +448,7 @@ class TestRealStartAndEnd:
         assert ledger.merged("cl9")[0]["elapsed"] == "00:01:10"
 
     def test_torque_start_and_completion_fields(self):
-        from vaspilot.gateway.vaspilot_gateway import _pbs_parse_qstat_f
+        from rsci.gateway.rsci_gateway import _pbs_parse_qstat_f
         raw = ("Job Id: 128875.admin\n    Job_Name = test64l\n"
                "    job_state = C\n    start_time = Wed Sep 23 19:49:28 2026\n"
                "    comp_time = Wed Sep 23 20:30:01 2026\n"

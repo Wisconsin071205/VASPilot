@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from vaspilot.core.metricsstore import (DEFAULT_EXCLUDED_USERS,
+from rsci.core.metricsstore import (DEFAULT_EXCLUDED_USERS,
                                         KEEP_DAYS, MetricsStore)
 
 

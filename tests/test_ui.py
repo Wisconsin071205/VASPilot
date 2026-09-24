@@ -17,9 +17,9 @@ from tests.conftest import ROOT
 @pytest.fixture()
 def ui(config_home, fake_state, monkeypatch):
     """A running UI server wired to the fake gateway transport."""
-    from vaspilot.ui import server as ui_server
-    from vaspilot.cli.main import App
-    from vaspilot.core.config import Config, ServerEntry, ProviderEntry
+    from rsci.ui import server as ui_server
+    from rsci.cli.main import App
+    from rsci.core.config import Config, ServerEntry, ProviderEntry
     from tests.conftest import FakeTransport
 
     config = Config(config_home)
@@ -36,14 +36,14 @@ def ui(config_home, fake_state, monkeypatch):
     transport = FakeTransport(fake_state)
     monkeypatch.setattr(App, "transport", lambda self: transport)
     # bind a scripted provider so agent chat works without network; patch the
-    # name as imported INSIDE vaspilot.cli.agent (module-level import)
+    # name as imported INSIDE rsci.cli.agent (module-level import)
     scripted = ScriptedProvider([
         {"tool_calls": [type("C", (), {"call_id": "1", "name": "remote_pwd",
                                        "arguments": {}})()]},
         {"text": "远端根目录已确认。"},
     ])
     monkeypatch.setattr(
-        "vaspilot.cli.agent.provider_by_id",
+        "rsci.cli.agent.provider_by_id",
         lambda config, pid: (config.load_providers()[0], scripted))
 
     httpd, url = ui_server.serve(app, host="127.0.0.1", port=0,
@@ -70,7 +70,7 @@ class ScriptedProvider:
                                     "api_key_env": ""})()
 
     def probe(self):
-        from vaspilot.providers.base import CapabilityProbe
+        from rsci.providers.base import CapabilityProbe
         from datetime import datetime, timezone
         return CapabilityProbe(reachable=True, streaming=True,
                                tool_calling=True, structured_json=True,
@@ -79,7 +79,7 @@ class ScriptedProvider:
                                .isoformat(timespec="seconds"))
 
     def chat(self, messages, tools, *, stream_cb=None):
-        from vaspilot.providers.base import ProviderReply
+        from rsci.providers.base import ProviderReply
         self.calls.append([dict(m) for m in messages])
         action = self.script.pop(0)
         return ProviderReply(**action)
@@ -97,7 +97,7 @@ def call(ui, action, body=None, token=None, method=None):
         data = json.dumps(body or {}).encode()
     req = urllib.request.Request(url, data=data, method=method or "POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Vaspilot-Token", token if token is not None else ui["token"])
+    req.add_header("X-RSCI-Token", token if token is not None else ui["token"])
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -119,18 +119,18 @@ class TestTokenGuard:
             urllib.request.urlopen(f"{ui['base']}/t/old-token", timeout=10)
         body = exc.value.read().decode("utf-8")
         assert exc.value.code == 403
-        assert "会话已过期" in body and "vaspilot ui" in body
+        assert "会话已过期" in body and "rsci ui" in body
 
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "远端控制智能体" in body and "vaspilot ui" in body
+        assert "晶织：VASP 服务端计算控制智能体" in body and "rsci ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "远端控制智能体" in html and "chatinput" in html
+        assert "晶织：VASP 服务端计算控制智能体" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
@@ -140,6 +140,36 @@ class TestTokenGuard:
         assert "通过 Vlab 打开完整工作区" in html
         assert "在 VS Code 中安全编辑" in html
         assert "downloadRemoteFile" in html
+        assert "openRemotePathPicker" in html
+        assert "pickLocalPath" in html
+        assert "pathpickmodalback" in html
+        assert "mroute" in html and "直接连接目标服务器" in html
+        assert "server.direct_key_setup" in html and "配钥" in html
+        assert "mcredentialpassword" in html and "mcredentialtotp" in html
+        assert "server.credentials_confirm" in html
+        assert "cfgautodeploy" in html and "网关缺失时自动部署" in html
+        assert "chatfileinput" in html and "addChatFiles" in html
+        assert "fsearch" in html and "filterFileRows" in html
+        assert "project.update" in html and 'data-act="edit"' in html
+
+    def test_local_path_picker_returns_selected_path(self, ui, monkeypatch):
+        from rsci.ui import server as ui_server
+        monkeypatch.setattr(
+            ui_server, "_pick_local_path",
+            lambda kind, *, title, initial: (
+                r"C:\\cases\\case-01" if kind == "directory"
+                else r"C:\\keys\\vlab.pem"))
+        selected = call(ui, "local.pick", {
+            "kind": "directory", "title": "选择输入目录",
+            "initial": r"C:\\cases"})
+        assert selected["ok"]
+        assert selected["kind"] == "directory"
+        assert selected["path"].endswith(r"cases\\case-01")
+
+    def test_local_path_picker_rejects_unknown_kind(self, ui):
+        payload = call(ui, "local.pick", {"kind": "volume"})
+        assert payload["ok"] is False
+        assert payload["error"]["code"] == "validation_error"
 
 
 class TestPortFallback:
@@ -149,7 +179,7 @@ class TestPortFallback:
         Windows SO_REUSEADDR would let a second bind succeed silently, so
         the failure is injected at the constructor instead.
         """
-        from vaspilot.ui import server as ui_server
+        from rsci.ui import server as ui_server
         base_port = int(ui["base"].rsplit(":", 1)[1])
         real_server = ui_server.ThreadingHTTPServer
 
@@ -169,7 +199,7 @@ class TestPortFallback:
                                      run_forever=False)
         try:
             used = int(url.rsplit(":", 1)[1].split("/")[0])
-            assert used == base_port + 1
+            assert base_port < used <= base_port + 9
         finally:
             httpd.server_close()
 
@@ -229,6 +259,16 @@ class TestViews:
         doctor = call(ui, "workspace.doctor", {"server": "cl9", "path": ROOT})
         assert doctor["ok"] and doctor["checks"][0]["name"] == "rclone"
 
+    def test_workspace_discovers_and_registers_blank_remote_root(self, ui):
+        entry = ui["app"].client().server_entry("cl9")
+        entry.remote_root = ""
+        ui["app"].config.upsert_server(entry)
+        doctor = call(ui, "workspace.doctor", {"server": "cl9", "path": ROOT})
+        assert doctor["ok"]
+        assert ui["app"].client().server_entry("cl9").remote_root == ROOT
+        assert any(row[0] == "server-edit" and "--root" in row and ROOT in row
+                   for row in ui["app"].transport().calls)
+
     def test_direct_target_vscode_open_is_blocked(self, ui):
         payload = call(ui, "vscode.open", {"server": "cl9", "path": ROOT})
         assert payload["ok"] is False
@@ -247,6 +287,55 @@ class TestViews:
                         {"server": "cl9", "directory": f"{ROOT}/runs/good"})
         assert progress["ok"]
         assert progress["scientific_converged"] is True
+
+    def test_older_job_can_bind_directory_once(self, ui):
+        directory = f"{ROOT}/runs/legacy"
+        ui["state"].dirs["cl9"].add(directory)
+        ui["state"].jobs["cl9"] = [{
+            "job_id": "777", "state": "RUNNING", "name": "legacy"}]
+        call(ui, "job.list", {"server": "cl9"})
+        bound = call(ui, "job.bind_directory", {
+            "server": "cl9", "job_id": "777", "directory": directory})
+        assert bound["ok"] and bound["job"]["directory"] == directory
+        rows = call(ui, "job.recent", {"server": "cl9"})["jobs"]
+        assert next(row for row in rows if row["job_id"] == "777")[
+            "directory"] == directory
+
+    def test_job_analysis_reads_bounded_logs(self, ui):
+        directory = f"{ROOT}/runs/good"
+        ui["state"].files["cl9"][f"{directory}/vasp.err"] = (
+            b"slurmstepd: error: Detected 1 oom-kill event\n")
+        report = call(ui, "job.analyze", {
+            "server": "cl9", "directory": directory,
+            "job_id": "50481", "scheduler_state": "FAILED"})
+        assert report["ok"] is True
+        assert report["status"] == "需要处理"
+        assert "内存不足" in report["findings"][0]
+        assert report["engine"] == "builtin-rules-v1"
+        assert report["evidence"]["job_id"] == "50481"
+        assert "oom-kill" in report["evidence_markdown"]
+        assert report["evidence"]["logs"][0]["scope"]
+
+    def test_job_evidence_survives_missing_vasp_files(self, ui, monkeypatch):
+        from rsci.gateway.client import GatewayClient
+        from tests.test_evidence import snapshot
+        monkeypatch.setattr(GatewayClient, "job_evidence", lambda *a, **kw: snapshot())
+        def unavailable(*a, **kw):
+            raise RuntimeError("files not yet available")
+        monkeypatch.setattr(GatewayClient, "vasp_progress", unavailable)
+        report = call(ui, "job.analyze", {"server": "cl9", "job_id": "42",
+                       "directory": f"{ROOT}/runs/good", "scheduler_state": "PENDING"})
+        assert report["ok"]
+        assert report["scheduler_state"] == "COMPLETED"
+        assert report["evidence"]["summary"]["queue_wait_seconds"] == 300
+        assert any("进度读取失败" in w for w in report["evidence"]["warnings"])
+
+    def test_automation_stack_status_is_honest(self, ui):
+        report = call(ui, "automation.stack")
+        assert report["ok"] is True
+        assert {row["name"] for row in report["layers"]} == {
+            "pymatgen", "custodian", "atomate2", "dpdispatcher", "aiida"}
+        assert all(row["configured"] is False for row in report["layers"])
 
 
 class TestWorkflowLoop:
@@ -291,7 +380,7 @@ class TestWorkflowLoop:
             if status.get("status") not in ("running", None):
                 break
             time.sleep(0.05)
-        assert status["status"] == "completed"
+        assert status["status"] == "completed", status.get("failure", status)
         assert status["scientific_converged"] is True
 
     def test_duplicate_run_rejected(self, ui, vasp_inputs):
@@ -338,7 +427,7 @@ class TestChatStream:
                              "message": "查看远端根目录"}).encode(),
             method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-Vaspilot-Token", ui["token"])
+        req.add_header("X-RSCI-Token", ui["token"])
         with urllib.request.urlopen(req, timeout=60) as response:
             body = response.read().decode("utf-8")
         frames = [json.loads(line[5:])
@@ -348,6 +437,7 @@ class TestChatStream:
         assert "meta" in kinds
         assert "tool" in kinds
         assert "final" in kinds
+        assert kinds.count("final") == 1
         tool = next(f for f in frames if f["type"] == "tool")
         assert tool["tool"] == "remote_pwd" and tool["ok"] is True
         final = next(f for f in frames if f.get("type") == "final"
@@ -363,6 +453,49 @@ class TestChatStream:
             call(ui, "no.such.action", {})
         assert exc.value.code == 404
 
+    def test_answer_can_be_cancelled(self, ui, monkeypatch):
+        from rsci.providers.base import CapabilityProbe, ProviderReply
+
+        started = threading.Event()
+        finished: list[list[dict]] = []
+
+        class SlowProvider:
+            entry = type("E", (), {"id": "slow"})()
+            emitted = 0
+
+            def probe(self):
+                return CapabilityProbe(provider_id="slow", reachable=True,
+                                       streaming=True, tool_calling=True)
+
+            def chat(self, messages, tools, *, stream_cb=None):
+                for _ in range(1000):
+                    started.set()
+                    self.emitted += 1
+                    if stream_cb:
+                        stream_cb("片段")
+                    time.sleep(0.01)
+                return ProviderReply(text="不应完整结束")
+
+        provider = SlowProvider()
+        entry = ui["app"].config.load_providers()[0]
+        monkeypatch.setattr(
+            "rsci.cli.agent.provider_by_id",
+            lambda config, pid: (entry, provider))
+        request_id = "cancel-test-request"
+        thread = threading.Thread(target=lambda: finished.append(sse_chat(ui, {
+            "provider": "mock", "message": "请持续输出",
+            "request_id": request_id})))
+        thread.start()
+        assert started.wait(timeout=3)
+        stopped = call(ui, "chat.stop", {"request_id": request_id})
+        assert stopped["ok"] and stopped["stopped"] is True
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+        final = next(frame for frame in finished[0]
+                     if frame.get("type") == "final")
+        assert final["result"]["cancelled"] is True
+        assert provider.emitted < 1000
+
 
 import urllib.error  # noqa: E402  (used in exceptions above)
 
@@ -371,7 +504,7 @@ class TestSettingsApi:
     """The 配置 page: providers CRUD + DPAPI key vault + vlab settings."""
 
     def test_save_provider_with_key_roundtrip(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPILOT_API_KEY_WEB_X", raising=False)
+        monkeypatch.delenv("RSCI_API_KEY_WEB_X", raising=False)
         payload = {"id": "web1", "name": "Web GLM",
                    "protocol": "openai-chat-compatible",
                    "base_url": "https://api.example.com/v1",
@@ -391,7 +524,7 @@ class TestSettingsApi:
 
         # a FRESH resolution (no env var) finds the key via the vault —
         # this is the exact path chat/probe uses
-        from vaspilot.providers import provider_by_id
+        from rsci.providers import provider_by_id
         entry, provider = provider_by_id(ui["app"].config, "web1")
         assert provider.api_key == "sk-secret-123"
 
@@ -405,7 +538,7 @@ class TestSettingsApi:
         assert provider2.entry.model == "glm-web-2"
 
     def test_save_reports_missing_auth_but_still_saves(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPILOT_UNSET_REMOTE_Y", raising=False)
+        monkeypatch.delenv("RSCI_UNSET_REMOTE_Y", raising=False)
         saved = call(ui, "provider.save", {
             "id": "noserver", "name": "NoKey Cloud",
             "protocol": "openai-chat-compatible",
@@ -414,8 +547,8 @@ class TestSettingsApi:
         assert saved["ok"] is True
         assert saved["auth_ready"] is False
         # chat would fail with the actionable message, not 401
-        from vaspilot.providers import provider_by_id
-        from vaspilot.core.errors import ProviderError
+        from rsci.providers import provider_by_id
+        from rsci.core.errors import ProviderError
         with pytest.raises(ProviderError, match="noserver"):
             provider_by_id(ui["app"].config, "noserver")
 
@@ -465,6 +598,12 @@ class TestServerAdminApi:
         assert entry.remote_root == "/public/home/tester/runs"
         assert entry.scheduler == "pbs"
 
+        auto = call(ui, "server.edit", {
+            "id": "ghost5", "new_name": "", "scheduler": "auto",
+            "route": "vlab"})
+        assert auto["ok"]
+        assert ui["app"].client().server_entry("ghost5").scheduler == "auto"
+
         removed = call(ui, "provider.delete", {"id": "ghost5"})  # wrong action guard
         del removed
         # rename requires a disconnected server in the fake too
@@ -494,13 +633,34 @@ class TestServerAdminApi:
             "scheduler": "slurm"})
         assert r["ok"] is False
 
+    def test_vlab_credentials_save_and_connect_automatically(self, ui):
+        password = "target-password!"
+        seed = "JBSWY3DPEHPK3PXP"
+        call(ui, "server.disconnect", {"server": "cl9"})
+        saved = call(ui, "server.edit", {
+            "id": "cl9", "new_name": "", "target": "user@cl9",
+            "port": 22, "remote_root": ROOT, "persist": "8h",
+            "scheduler": "slurm", "route": "vlab",
+            "credential_password": password,
+            "credential_totp_seed": seed,
+            "credential_confirm_days": 3})
+        assert saved["ok"] is True
+
+        ui["state"].connected["cl9"] = False
+        connected = call(ui, "server.connect", {"server": "cl9"})
+        assert connected["ok"] is True
+        assert connected["automatic"] is True
+        assert connected["route"] == "vlab"
+        raw = json.dumps(ui["app"].config.load_settings(), ensure_ascii=False)
+        assert password not in raw and seed not in raw
+
 
 def sse_chat(ui, body):
     req = urllib.request.Request(
         f"{ui['base']}/api/agent/chat",
         data=json.dumps(body).encode(), method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-Vaspilot-Token", ui["token"])
+    req.add_header("X-RSCI-Token", ui["token"])
     with urllib.request.urlopen(req, timeout=60) as response:
         text = response.read().decode("utf-8")
     frames = [json.loads(line[5:])
@@ -563,12 +723,130 @@ class TestChatMemory:
         missing = call(ui, "chat.load", {"session_id": session_id})
         assert missing["ok"] is False
 
+    def test_chat_delete_removes_one_session(self, ui):
+        first = call(ui, "chat.new", {"title": "保留的对话"})["session_id"]
+        second = call(ui, "chat.new", {"title": "待删除的对话"})["session_id"]
+
+        deleted = call(ui, "chat.delete", {"session_id": second})
+
+        assert deleted["ok"] and deleted["deleted"] is True
+        assert call(ui, "chat.load", {"session_id": second})["ok"] is False
+        sessions = call(ui, "chat.sessions")["sessions"]
+        assert second not in {row["session_id"] for row in sessions}
+        assert first in {row["session_id"] for row in sessions}
+
     def test_sessions_listed_with_pending_counts(self, ui):
         listing = call(ui, "chat.sessions")
         assert listing["ok"] and "sessions" in listing
 
+    def test_fork_and_compact_keep_visible_history(self, ui):
+        from rsci.agents.memory import ConversationStore
+
+        session_id = call(ui, "chat.new", {"title": "原会话"})["session_id"]
+        memory = ConversationStore(ui["app"].config.chat_dir)
+        for index in range(6):
+            memory.append(session_id, "user", f"问题 {index}")
+            memory.append(session_id, "assistant", f"回答 {index}")
+
+        branch = call(ui, "chat.fork", {"session_id": session_id})
+        assert branch["ok"] and branch["parent_session_id"] == session_id
+        assert len(branch["messages"]) == 12
+
+        compacted = call(ui, "chat.compact", {
+            "session_id": branch["session_id"], "keep_last": 4})
+        assert compacted["compacted_now"] == 8
+        assert len(compacted["archived_messages"]) == 8
+        assert len(compacted["messages"]) == 4
+        assert "问题 0" in compacted["context_summary"]
+
+        ui["scripted"].script.clear()
+        ui["scripted"].script.append({"text": "继续完成。"})
+        sse_chat(ui, {"provider": "mock", "message": "继续",
+                      "session_id": branch["session_id"]})
+        sent = ui["scripted"].calls[-1]
+        assert "Compacted context" in sent[0]["content"]
+        assert not any(row.get("content") == "问题 0" for row in sent[1:])
+
+    def test_context_meter_and_auto_compaction(self, ui):
+        from rsci.agents.memory import ConversationStore
+
+        session_id = call(ui, "chat.new", {})["session_id"]
+        memory = ConversationStore(ui["app"].config.chat_dir)
+        for index in range(12):
+            memory.append(session_id, "user", f"问题 {index} " + "x" * 2200)
+            memory.append(session_id, "assistant", f"回答 {index} " + "y" * 2200)
+
+        stats = call(ui, "chat.context", {"session_id": session_id,
+                                           "pending_chars": 100})
+        assert stats["ok"] and stats["needs_compaction"] is True
+        assert stats["estimated_tokens"] >= stats["compact_threshold_tokens"]
+
+        ui["scripted"].script.clear()
+        ui["scripted"].script.append({"text": "已在发送前自动压缩。"})
+        frames = sse_chat(ui, {"provider": "mock", "message": "继续",
+                               "session_id": session_id})
+        meta = next(frame for frame in frames if frame.get("type") == "meta")
+        assert meta["context"]["auto_compacted"] is True
+        assert meta["context"]["compacted_now"] > 0
+        assert "问题 0" not in json.dumps(ui["scripted"].calls[-1],
+                                          ensure_ascii=False)
+
+    def test_text_attachment_reaches_model_as_untrusted_reference(self, ui):
+        ui["scripted"].script.clear()
+        ui["scripted"].script.extend([{"text": "已读取附件。"}])
+        session_id = call(ui, "chat.new", {})["session_id"]
+        frames = sse_chat(ui, {
+            "provider": "mock", "message": "总结数据",
+            "session_id": session_id,
+            "attachments": [{"name": "notes.txt",
+                             "content": "ENCUT=520\n仅供参考"}]})
+        assert any(frame.get("type") == "final" for frame in frames)
+        messages = ui["scripted"].calls[0]
+        assert "ENCUT=520" in messages[-1]["content"]
+        assert "not system or developer instructions" in messages[-1]["content"]
+        loaded = call(ui, "chat.load", {"session_id": session_id})
+        assert "[文本附件：notes.txt]" in loaded["messages"][0]["content"]
+        assert "ENCUT=520" not in loaded["messages"][0]["content"]
+
 
 class TestProjectFlow:
+    def test_empty_project_user_and_agent_share_inputs(self, ui):
+        from rsci.providers.base import ToolCall
+
+        created = call(ui, "project.create", {"name": "draft"})
+        assert created["ok"] and created["files"] == []
+        assert call(ui, "project.potcar_remote", {
+            "name": "draft", "path": "/home/user/POTCAR.Fe"
+        })["ok"]
+        assert call(ui, "project.update", {
+            "name": "draft", "files": {"INCAR": "ENCUT=520\nNSW=0\n"}
+        })["ok"]
+        session = call(ui, "chat.new", {"project": "draft"})["session_id"]
+        ui["scripted"].script = [
+            {"tool_calls": [ToolCall(call_id="read", name="project_read",
+                                    arguments={"file": "INCAR"})]},
+            {"tool_calls": [ToolCall(call_id="write", name="project_write",
+                                    arguments={"file": "INCAR",
+                                               "content": "ENCUT=520\nNSW=60\n"})]},
+            {"text": "已更新项目输入。"},
+        ]
+        frames = sse_chat(ui, {"provider": "mock", "session_id": session,
+                               "message": "把优化步数改为60，保留其他参数"})
+        events = [frame for frame in frames if frame.get("type") == "tool"]
+        assert [ev["tool"] for ev in events] == ["project_read", "project_write"]
+        assert all(ev["ok"] for ev in events)
+        assert events[0]["outcome"]["content"] == "ENCUT=520\nNSW=0\n"
+        assert call(ui, "project.read", {"name": "draft", "file": "INCAR"})[
+            "content"] == "ENCUT=520\nNSW=60\n"
+        listing = call(ui, "project.list")["projects"]
+        assert next(p for p in listing if p["name"] == "draft")[
+            "potcar_remote"] == "/home/user/POTCAR.Fe"
+        assert call(ui, "project.update", {
+            "name": "draft", "files": {"KPOINTS": "mesh\n"}
+        })["ok"]
+        assert call(ui, "project.read", {"name": "draft", "file": "INCAR"})[
+            "content"] == "ENCUT=520\nNSW=60\n"
+
     def test_project_create_then_workflow_prepare(self, ui):
         created = call(ui, "project.create", {
             "name": "ui-case", "files": {
@@ -582,7 +860,7 @@ class TestProjectFlow:
         listing = call(ui, "project.list")
         entry = next(p for p in listing["projects"]
                      if p["name"] == "ui-case")
-        assert entry["complete"] is True and entry["missing"] == ["POTCAR"]
+        assert entry["complete"] is False and entry["missing"] == ["POTCAR"]
 
         prepared = call(ui, "workflow.prepare", {"spec": {
             "from_dir": created["path"], "server": "cl9",
@@ -594,9 +872,11 @@ class TestProjectFlow:
 
     def test_project_run_job_sh_adopted(self, ui):
         created = call(ui, "project.create", {
-            "name": "custom-script", "files": {"INCAR": "NSW=0\n",
-                                               "KPOINTS": "0\n",
-                                               "POSCAR": "s\n"}})
+            "name": "custom-script", "files": {
+                "INCAR": "SYSTEM = Na\nNSW=0\n",
+                "KPOINTS": "Automatic mesh\n0\nGamma\n1 1 1\n0 0 0\n",
+                "POSCAR": "Na\n1.0\n3 0 0\n0 3 0\n0 0 3\n"
+                          "Na\n1\nDirect\n0 0 0\n"}})
         call(ui, "project.write", {
             "name": "custom-script", "file": "run.job.sh",
             "content": "#!/bin/bash\n# custom marker\nsrun vasp_std\n"})
@@ -626,6 +906,24 @@ class TestProjectFlow:
         assert deleted["ok"] and "trash" in deleted["moved_to"].replace(
             "\\", "/").lower() or ".trash" in deleted["moved_to"]
 
+    def test_project_update_renames_bound_sessions(self, ui):
+        call(ui, "project.create", {"name": "old-name",
+                                    "files": {"INCAR": "NSW=0\n"}})
+        session_id = call(ui, "chat.new", {"project": "old-name"})["session_id"]
+        updated = call(ui, "project.update", {
+            "name": "old-name", "new_name": "new-name",
+            "files": {"INCAR": "NSW=8\n", "KPOINTS": "mesh\n",
+                      "POSCAR": "structure\n"},
+            "potcar_remote": "/home/user/potpaw/POTCAR.Fe"})
+        assert updated["ok"] and updated["name"] == "new-name"
+        assert updated["sessions_updated"] == 1
+        loaded = call(ui, "chat.load", {"session_id": session_id})
+        assert loaded["project"] == "new-name"
+        listing = call(ui, "project.list")["projects"]
+        assert not any(row["name"] == "old-name" for row in listing)
+        assert next(row for row in listing if row["name"] == "new-name")[
+            "potcar_remote"].endswith("POTCAR.Fe")
+
     def test_project_templates_listed(self, ui):
         templates = call(ui, "project.templates")
         names = [t["name"] for t in templates["templates"]]
@@ -652,7 +950,7 @@ class TestProjectFlow:
                              "session_id": session_id}).encode(),
             method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-Vaspilot-Token", ui["token"])
+        req.add_header("X-RSCI-Token", ui["token"])
         with urllib.request.urlopen(req, timeout=60) as response:
             sse_body = response.read().decode("utf-8")
         # drain done; the final (or error) frame explains any short-circuit
@@ -671,11 +969,27 @@ class TestProjectFlow:
 
 
 class TestSubmitConfirmation:
+    def test_expired_card_can_be_regenerated(self, ui):
+        from rsci.workflow.pending import PendingSubmitStore
+
+        app = ui["app"]
+        store = PendingSubmitStore(app.config.pending_submits_path)
+        old = store.create(server="cl9", directory=f"{ROOT}/runs/expired",
+                           script="run.job.sh", ttl_seconds=-1)
+        assert store.get(old["id"])["status"] == "expired"
+        history = call(ui, "submit.history", {"session_id": ""})
+        assert any(e["id"] == old["id"] and e["status"] == "expired"
+                   for e in history["entries"])
+        fresh = call(ui, "submit.regenerate", {"id": old["id"]})
+        assert fresh["ok"] and fresh["regenerated"] is True
+        assert fresh["entry"]["id"] != old["id"]
+        assert store.get(fresh["entry"]["id"])["status"] == "pending"
+
     def test_confirm_flow_executes_frozen_params(self, ui):
         app = ui["app"]
         app.config.set_agent_submit_mode("confirm")
-        from vaspilot.core.hashing import text_sha256
-        from vaspilot.workflow.pending import PendingSubmitStore
+        from rsci.core.hashing import text_sha256
+        from rsci.workflow.pending import PendingSubmitStore
         directory = f"{ROOT}/runs/confirm-case"
         ui["state"].files["cl9"][f"{directory}/run.job.sh"] = b"#!/bin/bash\n"
         store = PendingSubmitStore(app.config.pending_submits_path)
@@ -701,6 +1015,10 @@ class TestSubmitConfirmation:
                         {"id": entry["id"], "approve": True})
         assert approved["ok"] is True and approved["settled"] == "approved"
         assert approved["result"]["job_id"]
+        from rsci.core.jobhistory import JobLedger
+        saved = next(row for row in JobLedger(app.config.jobs_dir).merged("cl9")
+                     if row["job_id"] == approved["result"]["job_id"])
+        assert saved["directory"] == directory
 
         again = call(ui, "submit.confirm",
                      {"id": entry["id"], "approve": True})
@@ -708,7 +1026,7 @@ class TestSubmitConfirmation:
 
     def test_reject_flow_never_submits(self, ui):
         app = ui["app"]
-        from vaspilot.workflow.pending import PendingSubmitStore
+        from rsci.workflow.pending import PendingSubmitStore
         store = PendingSubmitStore(app.config.pending_submits_path)
         entry = store.create(server="cl9", directory=f"{ROOT}/runs/rej",
                              script="run.job.sh")
@@ -761,7 +1079,7 @@ class TestServerMetricsApi:
 
 class TestWebsearchSettingsApi:
     def test_save_and_toggle(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPILOT_WEBSEARCH_KEY", raising=False)
+        monkeypatch.delenv("RSCI_WEBSEARCH_KEY", raising=False)
         saved = call(ui, "websearch.save", {"provider": "bocha",
                                             "enabled": True})
         assert saved["ok"] and saved["websearch"]["provider"] == "bocha"
@@ -770,6 +1088,11 @@ class TestWebsearchSettingsApi:
         settings = call(ui, "settings")
         assert settings["websearch"]["provider"] == "bocha"
         assert settings["agent_submit_mode"] == "confirm"
+
+        tavily = call(ui, "websearch.save", {"provider": "tavily",
+                                              "enabled": True})
+        assert tavily["ok"]
+        assert tavily["websearch"]["provider"] == "tavily"
 
 
 class TestSkillsApi:
@@ -789,6 +1112,42 @@ class TestSkillsApi:
 
 
 class TestJobLedger:
+    def test_empty_accounting_does_not_complete_active_job(self, ui,
+                                                            monkeypatch):
+        st = ui["state"]
+        st.jobs["cl9"] = [{"job_id": "50481", "state": "RUNNING",
+                            "name": "NaOH_relax", "elapsed": "0:05"}]
+        transport = ui["app"].transport()
+        monkeypatch.setattr(transport, "op_recent", lambda args: {
+            "ok": True, "scheduler": "slurm", "jobs": [],
+            "warning": "sacct unavailable"})
+
+        result = call(ui, "job.recent", {"server": "cl9"})
+        row = next(j for j in result["jobs"] if j["job_id"] == "50481")
+
+        assert row["state"] == "RUNNING"
+        assert row["completed_at"] is None
+        assert result["active_job_ids"] == ["50481"]
+        assert result["warning"] == "sacct unavailable"
+
+    def test_parallel_writes_are_serialized(self, ui):
+        from concurrent.futures import ThreadPoolExecutor
+        from rsci.core.jobhistory import JobLedger
+
+        directory = ui["app"].config.jobs_dir
+
+        def write(index):
+            JobLedger(directory).observe("cl9", [{
+                "job_id": str(60000 + index), "state": "RUNNING",
+                "name": f"job-{index}"}])
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            list(pool.map(write, range(32)))
+
+        rows = JobLedger(directory).merged("cl9")
+        assert {row["job_id"] for row in rows} >= {
+            str(60000 + index) for index in range(32)}
+
     def test_history_persists_with_completion_time(self, ui):
         """Cluster forgets finished jobs (PBS); the local ledger must not."""
         st = ui["state"]
@@ -861,7 +1220,7 @@ class TestMonitorApi:
         r = call(ui, "server.metrics", {"server": "cl9"})
         assert r["ok"] and any(g.get("util_pct") is not None
                                for g in r["gpus"])
-        from vaspilot.core.metricsstore import MetricsStore
+        from rsci.core.metricsstore import MetricsStore
         bucket = MetricsStore(ui["app"].config.metrics_dir).latest("cl9")
         assert bucket and bucket["g"]["0"][0] == pytest.approx(5.0)
 
@@ -893,7 +1252,7 @@ class TestMonitorAuthView:
 class TestChatStop:
     def test_stop_reaches_the_running_turn(self, ui):
         """The stop button's request finds the turn by run_id and ends it."""
-        from vaspilot.providers.base import ProviderReply
+        from rsci.providers.base import ProviderReply
         calls = {"n": 0}
 
         def endless(messages, tools, *, stream_cb=None):

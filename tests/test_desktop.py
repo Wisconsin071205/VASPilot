@@ -1,4 +1,4 @@
-"""Desktop shell (`vaspilot desktop`): offline tests with a fake pywebview.
+"""Desktop shell (`rsci desktop`): offline tests with a fake pywebview.
 
 No test here imports the real ``webview`` package; a stub module is injected
 into ``sys.modules`` so the suite runs on machines without the desktop extra.
@@ -58,7 +58,7 @@ def fake_webview(monkeypatch):
 
 @pytest.fixture()
 def fake_serve(config_home, monkeypatch):
-    """Replace vaspilot.ui.serve; writes ui.json exactly like the real one."""
+    """Replace rsci.ui.serve; writes ui.json exactly like the real one."""
     record = {"calls": [], "httpd": FakeHttpd(),
               "url": "http://127.0.0.1:8930/t/tok123"}
 
@@ -69,14 +69,14 @@ def fake_serve(config_home, monkeypatch):
              "pid": os.getpid()}), encoding="utf-8")
         return record["httpd"], record["url"]
 
-    monkeypatch.setattr("vaspilot.ui.serve", serve)
+    monkeypatch.setattr("rsci.ui.serve", serve)
     return record
 
 
 @pytest.fixture()
 def message_box(monkeypatch):
     shown = []
-    monkeypatch.setattr("vaspilot.desktop._message_box",
+    monkeypatch.setattr("rsci.desktop._message_box",
                         lambda text, **kw: shown.append(text))
     return shown
 
@@ -93,18 +93,18 @@ class TestCli:
         assert "desktop" in text
 
     def test_platform_refusal_is_validation_error(self, config_home, monkeypatch):
-        from vaspilot.core.errors import ValidationError
+        from rsci.core.errors import ValidationError
 
         def refuse(app, *, port):
             raise ValidationError("desktop mode needs Windows or macOS")
 
-        monkeypatch.setattr("vaspilot.desktop.main", refuse)
+        monkeypatch.setattr("rsci.desktop.main", refuse)
         code, document, _, _ = run_cli(["desktop"], monkeypatch)
         assert code == 5
         assert document["error"]["code"] == "validation_error"
 
     def test_nonzero_shell_exit_becomes_error(self, config_home, monkeypatch):
-        monkeypatch.setattr("vaspilot.desktop.main", lambda app, *, port: 1)
+        monkeypatch.setattr("rsci.desktop.main", lambda app, *, port: 1)
         code, document, _, _ = run_cli(["desktop"], monkeypatch)
         assert code == 1
         assert document["error"]["code"] == "error"
@@ -112,15 +112,15 @@ class TestCli:
 
 class TestPlatformGuard:
     def test_main_refuses_unsupported_platform(self, config_home):
-        from vaspilot.core.errors import ValidationError
-        from vaspilot.desktop import main
+        from rsci.core.errors import ValidationError
+        from rsci.desktop import main
 
         with pytest.raises(ValidationError) as caught:
             main(app=None, platform="linux")
-        assert "vaspilot ui" in str(caught.value)
+        assert "rsci ui" in str(caught.value)
 
     def test_supported_platforms_are_windows_and_macos(self):
-        from vaspilot.desktop import GUI_BACKENDS
+        from rsci.desktop import GUI_BACKENDS
 
         assert GUI_BACKENDS == {"win32": "edgechromium", "darwin": "cocoa"}
 
@@ -128,7 +128,7 @@ class TestPlatformGuard:
 class TestSelfStart:
     def test_starts_server_opens_window_and_stops_on_close(
             self, config_home, fake_webview, fake_serve):
-        from vaspilot.desktop import main, WINDOW_TITLE
+        from rsci.desktop import main, WINDOW_TITLE
 
         code = main(app=None, platform="win32")
 
@@ -147,14 +147,14 @@ class TestSelfStart:
 
     def test_port_argument_reaches_serve(self, config_home, fake_webview,
                                          fake_serve):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         main(app=None, port=8935, platform="win32")
         assert fake_serve["calls"][0]["port"] == 8935
 
     def test_log_file_records_start(self, config_home, fake_webview,
                                     fake_serve):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         main(app=None, platform="win32")
         log = (config_home / "desktop.log").read_text(encoding="utf-8")
@@ -164,7 +164,7 @@ class TestSelfStart:
 class TestPythonnetRuntime:
     def test_defaults_to_netfx(self, config_home, fake_webview, fake_serve,
                                monkeypatch):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         monkeypatch.delenv("PYTHONNET_RUNTIME", raising=False)
         main(app=None, platform="win32")
@@ -172,7 +172,7 @@ class TestPythonnetRuntime:
 
     def test_keeps_explicit_value(self, config_home, fake_webview,
                                   fake_serve, monkeypatch):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         monkeypatch.setenv("PYTHONNET_RUNTIME", "coreclr")
         main(app=None, platform="win32")
@@ -188,7 +188,7 @@ def _write_ui_json(home: Path, pid: int) -> None:
 class TestReuse:
     def test_reuses_live_console_without_starting_or_stopping(
             self, config_home, fake_webview, fake_serve, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=4242)
         monkeypatch.setattr(desktop, "_pid_alive", lambda pid: pid == 4242)
@@ -207,7 +207,7 @@ class TestReuse:
 
     def test_dead_pid_falls_back_to_self_start(
             self, config_home, fake_webview, fake_serve, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=4242)
         monkeypatch.setattr(desktop, "_pid_alive", lambda pid: False)
@@ -221,7 +221,7 @@ class TestReuse:
 
     def test_unhealthy_console_falls_back_to_self_start(
             self, config_home, fake_webview, fake_serve, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=4242)
         monkeypatch.setattr(desktop, "_pid_alive", lambda pid: True)
@@ -232,7 +232,7 @@ class TestReuse:
 
     def test_malformed_ui_json_is_ignored(self, config_home, fake_webview,
                                           fake_serve):
-        from vaspilot import desktop
+        from rsci import desktop
 
         (config_home / "ui.json").write_text("{not json", encoding="utf-8")
         desktop.main(app=None, platform="win32")
@@ -240,7 +240,7 @@ class TestReuse:
 
     def test_read_running_instance_ignores_own_pid(self, config_home,
                                                    monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=os.getpid())
         monkeypatch.setattr(desktop, "_healthz_ok", lambda base: True)
@@ -249,14 +249,14 @@ class TestReuse:
 
 class TestProbes:
     def test_pid_alive_for_self_and_dead_for_bogus(self):
-        from vaspilot.desktop import _pid_alive
+        from rsci.desktop import _pid_alive
 
         assert _pid_alive(os.getpid()) is True
         assert _pid_alive(0) is False
         assert _pid_alive(-1) is False
 
     def test_healthz_ok_false_when_nothing_listens(self):
-        from vaspilot.desktop import _healthz_ok
+        from rsci.desktop import _healthz_ok
 
         # port 9 (discard) is never served on a workstation
         assert _healthz_ok("http://127.0.0.1:9") is False
@@ -265,7 +265,7 @@ class TestProbes:
 class TestFallbacks:
     def test_missing_webview_opens_browser_and_keeps_serving(
             self, config_home, fake_serve, message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         monkeypatch.setitem(sys.modules, "webview", None)  # import -> ImportError
         opened = []
@@ -282,12 +282,12 @@ class TestFallbacks:
 
     def test_all_ports_busy_reports_and_exits_one(
             self, config_home, fake_webview, message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         def busy(app, **kwargs):
             raise OSError(10048, "address already in use")
 
-        monkeypatch.setattr("vaspilot.ui.serve", busy)
+        monkeypatch.setattr("rsci.ui.serve", busy)
         code = desktop.main(app=None, platform="win32")
         assert code == 1
         assert len(message_box) == 1
@@ -296,7 +296,7 @@ class TestFallbacks:
 
     def test_unexpected_exception_is_logged_and_boxed(
             self, config_home, fake_serve, message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         def boom(*args, **kwargs):
             raise RuntimeError("WebView2 runtime missing")
@@ -318,7 +318,7 @@ class TestFallbacks:
 class TestMacos:
     def test_window_uses_the_cocoa_backend(self, config_home, fake_webview,
                                            fake_serve):
-        from vaspilot.desktop import main, WINDOW_TITLE
+        from rsci.desktop import main, WINDOW_TITLE
 
         code = main(app=None, platform="darwin")
 
@@ -329,7 +329,7 @@ class TestMacos:
 
     def test_pythonnet_runtime_is_not_touched(self, config_home, fake_webview,
                                               fake_serve, monkeypatch):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         monkeypatch.delenv("PYTHONNET_RUNTIME", raising=False)
         main(app=None, platform="darwin")
@@ -338,7 +338,7 @@ class TestMacos:
     def test_message_box_uses_osascript_with_argv(self, monkeypatch):
         """Text and title travel as argv, so quotes and newlines need no
         escaping — the reason this is not an -e string interpolation."""
-        from vaspilot import desktop
+        from rsci import desktop
 
         calls = []
         monkeypatch.setattr(subprocess, "run",
@@ -352,7 +352,7 @@ class TestMacos:
         assert calls[0][3:] == ['he said "hi"\nand left', "T"]
 
     def test_message_box_survives_missing_osascript(self, monkeypatch, capsys):
-        from vaspilot import desktop
+        from rsci import desktop
 
         def missing(cmd, **kwargs):
             raise FileNotFoundError("osascript")
@@ -363,7 +363,7 @@ class TestMacos:
 
     def test_browser_fallback_reports_the_extra(self, config_home, fake_serve,
                                                 message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         monkeypatch.setitem(sys.modules, "webview", None)
         opened = []
@@ -377,7 +377,7 @@ class TestMacos:
 class TestPidProbeOnPosix:
     def test_permission_error_counts_as_alive(self, monkeypatch):
         """A console owned by another user is running, not gone."""
-        from vaspilot import desktop
+        from rsci import desktop
 
         if os.name == "nt":
             pytest.skip("POSIX branch")

@@ -1,7 +1,19 @@
-# 认证信息轮换检查清单
+# 认证信息轮换与本机凭据保留检查清单
 
 > 背景：conversation-export.html 曾包含服务器认证信息。已将其加入 .gitignore 并禁止入库。
 > **凡出现在任何导出、日志或聊天记录中的凭据，一律视为已泄露，必须轮换。**
+
+## 本机加密凭据策略
+
+- Vlab 中转和直连服务器都可选择保存登录密码和 TOTP 种子；二者以 Windows DPAPI
+  `CurrentUser` 作用域加密，写入 `~/.rsci/settings.json` 的仅是密文。
+- 密文只在发起认证时短暂解密，不进入计划、审计或聊天导出。直连由本机
+  OpenSSH 使用；Vlab 中转只经已验证的 SSH 通道发送密码和即时生成的六位码，
+  TOTP 种子不离开本机，Vlab 不落盘保存密码或验证码。
+- 默认每 3 天必须在 Web 控制台点击一次「确认凭据」。复核到期后自动连接
+  不会读取密文，直到用户确认；服务器删除时同步删除对应密文。
+- Windows DPAPI 绑定当前 Windows 用户。更换 Windows 账户、重装系统或
+  无法解密时，应重新输入凭据，不应复制 `settings.json` 作为备份。
 
 ## 必须轮换的凭据（按优先级）
 
@@ -11,8 +23,8 @@
 | 2 | TOTP 种子（六位验证码） | 在认证源（如统一身份认证/企业微信/Google Authenticator）重新生成绑定，**旧 seed 作废** | 旧 OTP 无法再登录 |
 | 3 | Vlab PEM 私钥 | Vlab 平台「SSH 密钥管理」重新生成并下载，替换 `~/.ssh/vlab-identity.pem` | 旧公钥从 Vlab 授权列表删除 |
 | 4 | DeepSeek/OpenAI API Key | 服务商控制台吊销并新建 | 旧 key 调用立即 401 |
-| 5 | 本机 Windows 凭据中的 API Key | UI 设置中更新为新 key（secure_store 会覆盖加密条目） | — |
-| 6 | 本地账号密码（vaspilot 历史加密用） | 若账号密码曾在导出中出现，更换密码并重新加密历史 | — |
+| 5 | 本机 Windows 凭据中的 API Key | UI 设置中更新为新 key（DPAPI 会覆盖加密条目） | — |
+| 6 | 本机 DPAPI 凭据条目 | 删除服务器或在编辑窗口勾选「清除已保存凭据」，再重新录入 | `credential_saved=false` |
 
 ## 轮换后清理
 

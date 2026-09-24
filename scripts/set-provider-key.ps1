@@ -1,9 +1,9 @@
 # Interactive helper: store a provider API key into the USER environment.
-# The value is typed blind (no echo), never written to disk by VASPilot,
+# The value is typed blind (no echo), never written to disk by rsci,
 # and never printed back. New processes pick it up after restart.
 #
 # Usage:
-#   powershell -ExecutionPolicy Bypass -File scripts\set-provider-key.ps1 VASPILOT_API_KEY_P_GLM
+#   powershell -ExecutionPolicy Bypass -File scripts\set-provider-key.ps1 RSCI_API_KEY_P_GLM
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$EnvVarName
@@ -34,5 +34,5 @@ if (-not $check) {
     exit 1
 }
 Write-Host ("Saved {0} (length {1}) into the user environment." -f $EnvVarName, $check.Length)
-Write-Host "Now RESTART 'vaspilot ui' (close the minimized VASPilot UI window,"
+Write-Host "Now RESTART 'rsci ui' (close the minimized rsci UI window,"
 Write-Host "then use the desktop shortcut) so new processes inherit the variable."

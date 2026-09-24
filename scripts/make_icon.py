@@ -1,6 +1,6 @@
 """Generate the desktop icons with the standard library alone.
 
-Writes src/vaspilot/desktop/assets/icon.ico (Windows) and icon.icns (macOS).
+Writes src/rsci/desktop/assets/icon.ico (Windows) and icon.icns (macOS).
 
 Deterministic: rerunning produces byte-identical output.  The mark is a
 rounded deep-blue tile with a white chevron ("V" for VASP) and a small
@@ -17,7 +17,7 @@ import struct
 import zlib
 from pathlib import Path
 
-ASSETS = (Path(__file__).resolve().parents[1] / "src" / "vaspilot"
+ASSETS = (Path(__file__).resolve().parents[1] / "src" / "rsci"
           / "desktop" / "assets")
 OUT_ICO = ASSETS / "icon.ico"
 OUT_ICNS = ASSETS / "icon.icns"

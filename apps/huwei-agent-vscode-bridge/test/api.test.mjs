@@ -16,7 +16,7 @@ function startMockConsole() {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(doc));
       };
-      if (req.headers["x-vaspilot-token"] !== "tok") {
+      if (req.headers["x-rsci-token"] !== "tok") {
         return send({ ok: false, error: { code: "unauthorized", message: "bad token" } });
       }
       if (action === "remote.list") {
@@ -103,9 +103,9 @@ test("discovery file reader parses ui.json", async () => {
   const fs = await import("node:fs");
   const path = await import("node:path");
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bridge-"));
-  fs.mkdirSync(path.join(tmp, ".vaspilot"));
+  fs.mkdirSync(path.join(tmp, ".rsci"));
   fs.writeFileSync(
-    path.join(tmp, ".vaspilot", "ui.json"),
+    path.join(tmp, ".rsci", "ui.json"),
     JSON.stringify({ url: "http://127.0.0.1:8930", token: "abc", pid: 1 })
   );
   const info = readDiscoveryFile(tmp);

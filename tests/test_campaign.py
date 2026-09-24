@@ -7,12 +7,12 @@ import json
 import pytest
 
 from tests.conftest import FAKE_INCAR_TEMPLATES, ROOT
-from vaspilot.core.config import ServerEntry
-from vaspilot.core.errors import AuthRequiredError, ValidationError
-from vaspilot.core.hashing import text_sha256
-from vaspilot.hpc.vasp import parse_incar
-from vaspilot.vaspkit.verify import check_incar
-from vaspilot.workflow.campaign import (CampaignRunner, CampaignStore,
+from rsci.core.config import ServerEntry
+from rsci.core.errors import AuthRequiredError, ValidationError
+from rsci.core.hashing import text_sha256
+from rsci.hpc.vasp import parse_incar
+from rsci.vaspkit.verify import check_incar
+from rsci.workflow.campaign import (CampaignRunner, CampaignStore,
                                         apply_settings, campaign_dir,
                                         plan_campaign, same_cell,
                                         stage_settings, view)

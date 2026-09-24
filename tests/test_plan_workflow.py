@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-from vaspilot.core.errors import ApprovalError, ValidationError
-from vaspilot.core.hashing import file_sha256, text_sha256
-from vaspilot.workflow.plan import build_plan, plan_files_hash, verify_plan_integrity
+from rsci.core.errors import ApprovalError, ValidationError
+from rsci.core.hashing import file_sha256, text_sha256
+from rsci.workflow.plan import build_plan, plan_files_hash, verify_plan_integrity
 
-REMOTE_DIR = "/hpc/home/tester/vaspilot-root/runs/case-1"
+REMOTE_DIR = "/hpc/home/tester/rsci-root/runs/case-1"
 
 
 def spec(from_dir, server="cl9", remote_dir=REMOTE_DIR):

@@ -1,4 +1,4 @@
-# 远端控制智能体：单版本 VS Code 远端工作区
+# 晶织：VASP 服务端计算控制智能体：单版本 VS Code 远端工作区
 
 本项目只使用一个最新版 VS Code。请不要安装 VS Code 1.85 或为老服务器保留第二个
 VS Code。`cl12`、`minus` 等 CentOS 7 服务器不安装 VS Code Server，也不会被
@@ -55,7 +55,9 @@ VS Code Server 只会出现在 Vlab，不会出现在 `cl12/minus`。
 3. 在智能体中配置本机自己的 Vlab PEM 路径和服务器信息。
 4. 对将使用完整工作区的服务器完成一次 Vlab 专用密钥配置；目标服务器主机密钥必须
    已由人工确认并保存到 Vlab 的 `known_hosts`。
-5. 在本机运行：
+5. 若“配置 → 连接设置”保持“网关缺失时自动部署”（默认），首次调用 Vlab
+   操作会自动上传、校验并安装核心 Gateway；也可以在本机手动运行。核心 Gateway
+   只负责受限文件/作业操作，下面的 Workspace Gateway 仍需显式安装：
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts\install-vlab-gateway.ps1
@@ -80,7 +82,7 @@ VS Code Server 只会出现在 Vlab，不会出现在 `cl12/minus`。
 5. 查看底部状态栏：
 
    ```text
-   远端控制智能体: cl12 · 01_relax · 已同步
+   晶织：VASP 服务端计算控制智能体: cl12 · 01_relax · 已同步
    ```
 
    图标含义：勾号为已同步、蓝色旋转图标为上传中、黄色警告为存在未同步修改、锁为
@@ -141,9 +143,11 @@ huwei workspace cleanup --apply --confirm CLEANUP-CLOSED-WORKSPACES
 管理员提供 rclone/FUSE。
 
 **提示 Vlab 专用密钥未配置**：完整工作区需要 Vlab 到目标服务器的无交互密钥登录。
-按智能体的服务器密钥流程完成一次人工密码/验证码登录即可。
+按智能体的服务器密钥流程完成一次人工密码/验证码登录即可；若使用直连，
+也可在服务器编辑窗口将密码和 TOTP 种子按 Windows DPAPI 加密保存，按周期
+确认后自动连接。完整工作区本身仍只通过 Vlab。
 
-**提示写入租约冲突**：说明已有远端控制智能体创建的重叠可写工作区。关闭前一个，
+**提示写入租约冲突**：说明已有 晶织：VASP 服务端计算控制智能体创建的重叠可写工作区。关闭前一个，
 或将当前目录改为只读打开。
 
 **提示同步未完成，不能关闭**：这是保护行为。保持工作区，稍后重试关闭或使用

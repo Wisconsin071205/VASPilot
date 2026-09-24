@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.core.validation import (confirm_match, join_remote,
+from rsci.core.errors import ValidationError
+from rsci.core.validation import (confirm_match, join_remote,
                                       local_project_path, no_shell_meta,
                                       remote_path, valid_filename, valid_glob,
                                       valid_job_id, valid_server_name,
                                       valid_trash_id)
 
-ROOT = "/hpc/home/tester/vaspilot-root"
+ROOT = "/hpc/home/tester/rsci-root"
 
 
 class TestRemotePath:

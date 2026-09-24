@@ -18,10 +18,10 @@ NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
 
 class TestGatewayRunner:
-    """vaspilot.gateway.transport.default_runner runs every ssh/scp call."""
+    """rsci.gateway.transport.default_runner runs every ssh/scp call."""
 
     def test_captured_run_asks_for_no_window(self, monkeypatch):
-        from vaspilot.gateway import transport
+        from rsci.gateway import transport
 
         seen = {}
 
@@ -37,7 +37,7 @@ class TestGatewayRunner:
 
     def test_interactive_run_keeps_the_current_console(self, monkeypatch):
         """capture=False is the CLI login: the user types the password there."""
-        from vaspilot.gateway import transport
+        from rsci.gateway import transport
 
         seen = {}
 
@@ -52,8 +52,8 @@ class TestGatewayRunner:
 
     def test_login_terminal_still_opens_a_visible_console(self, monkeypatch):
         """The opposite guarantee: this one MUST be seen by the user."""
-        from vaspilot.core.config import Config
-        from vaspilot.gateway.transport import SshTransport
+        from rsci.core.config import Config
+        from rsci.gateway.transport import SshTransport
 
         captured = []
         monkeypatch.setattr(subprocess, "Popen",
@@ -82,9 +82,9 @@ class TestShellTool:
 
 class TestCodexBridge:
     def test_bridge_process_asks_for_no_window(self, monkeypatch):
-        from vaspilot.core.config import ProviderEntry
-        from vaspilot.core.errors import ProviderError
-        from vaspilot.providers.codex_sdk import CodexSdkProvider
+        from rsci.core.config import ProviderEntry
+        from rsci.core.errors import ProviderError
+        from rsci.providers.codex_sdk import CodexSdkProvider
 
         seen = {}
 

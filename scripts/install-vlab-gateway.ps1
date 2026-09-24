@@ -16,7 +16,7 @@ $source = Join-Path $repoRoot "gateway\huwei-workspace-gateway\huwei_workspace_g
 if (-not (Test-Path -LiteralPath $source)) { throw "缺少 Workspace Gateway 源文件：$source" }
 
 if (-not $HostName -or -not $UserName -or -not $IdentityFile) {
-    $settingsPath = Join-Path $env:USERPROFILE ".vaspilot\settings.json"
+    $settingsPath = Join-Path $env:USERPROFILE ".rsci\settings.json"
     if (Test-Path -LiteralPath $settingsPath) {
         $settings = Get-Content -Raw -LiteralPath $settingsPath | ConvertFrom-Json
         $vlab = $settings.vlab

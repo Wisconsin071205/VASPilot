@@ -1,10 +1,10 @@
-# 桌面应用端（`vaspilot desktop`）设计
+# 桌面应用端（`rsci desktop`）设计
 
 日期：2026-09-19 · 状态：已批准，待实施 · 方案：A（pywebview 壳）
 
 ## 1. 目标与边界
 
-把现有的本地 Web 控制台（`vaspilot ui`）以**独立窗口的桌面应用**形式提供：
+把现有的本地 Web 控制台（`rsci ui`）以**独立窗口的桌面应用**形式提供：
 双击桌面快捷方式即弹出自己的窗口（有标题栏与图标，没有浏览器地址栏和标签页），
 关闭窗口即停止服务。先服务本机使用，架构上预留日后用 PyInstaller 打包分发的可能。
 
@@ -24,9 +24,9 @@
 ## 3. 架构与生命周期
 
 ```
-vaspilot desktop
+rsci desktop
    │
-   ├─ 读 ~/.vaspilot/ui.json ──► pid 存活 且 GET {url}/healthz == 200 ?
+   ├─ 读 ~/.rsci/ui.json ──► pid 存活 且 GET {url}/healthz == 200 ?
    │        │ 是：复用（不起服务，关窗不停服）
    │        ▼ 否：
    ├─ serve(app, open_browser=False, run_forever=False) ──► (httpd, url)
@@ -45,16 +45,16 @@ vaspilot desktop
 
 | 路径 | 变更 | 职责 |
 | --- | --- | --- |
-| `src/vaspilot/desktop/__init__.py` | 新增 | `main(argv) -> int`：第 3 节流程 + 第 5 节错误处理；pywebview 懒导入；约 150 行 |
-| `src/vaspilot/desktop/assets/icon.ico` | 新增（生成后提交） | 应用与快捷方式图标；由 `scripts/make_icon.py` 用 stdlib（`zlib`+`struct`，PNG-in-ICO）生成一次 |
-| `src/vaspilot/cli/main.py` | 修改 | 在 `ui` 旁注册 `desktop` 子命令（参数仅 `--port`，默认 8930）；handler 返回 `None`（不输出 JSON） |
-| `pyproject.toml` | 修改 | `[project.optional-dependencies] desktop = ["pywebview>=6,<7"]`；package-data 加入 `vaspilot.desktop = ["assets/*.ico"]` |
+| `src/rsci/desktop/__init__.py` | 新增 | `main(argv) -> int`：第 3 节流程 + 第 5 节错误处理；pywebview 懒导入；约 150 行 |
+| `src/rsci/desktop/assets/icon.ico` | 新增（生成后提交） | 应用与快捷方式图标；由 `scripts/make_icon.py` 用 stdlib（`zlib`+`struct`，PNG-in-ICO）生成一次 |
+| `src/rsci/cli/main.py` | 修改 | 在 `ui` 旁注册 `desktop` 子命令（参数仅 `--port`，默认 8930）；handler 返回 `None`（不输出 JSON） |
+| `pyproject.toml` | 修改 | `[project.optional-dependencies] desktop = ["pywebview>=6,<7"]`；package-data 加入 `rsci.desktop = ["assets/*.ico"]` |
 | `scripts/install-desktop.ps1` | 新增（UTF-8 BOM） | 幂等安装：定位稳定 Python ≥3.11 → 必要时重建 `.venv` → `pip install -e .[desktop,dev]` → 桌面 + 开始菜单创建 `远端控制智能体.lnk` |
 | `README.md` | 修改 | 把"桌面快捷方式已有"的表述改为真实安装命令；安装示例不再写死 `py -3.12` |
 | `tests/test_desktop.py` | 新增 | 第 6 节 |
 
-快捷方式规格：目标 `<repo>\.venv\Scripts\pythonw.exe`，参数 `-m vaspilot desktop`，
-工作目录 `<repo>`，图标 `<repo>\src\vaspilot\desktop\assets\icon.ico`。用 `pythonw`
+快捷方式规格：目标 `<repo>\.venv\Scripts\pythonw.exe`，参数 `-m rsci desktop`，
+工作目录 `<repo>`，图标 `<repo>\src\rsci\desktop\assets\icon.ico`。用 `pythonw`
 是为了不弹控制台窗口。
 
 ## 5. 错误处理
@@ -65,7 +65,7 @@ vaspilot desktop
 | 8930–8939 全部不可绑定 | MessageBox 说明端口冲突；退出码 1 |
 | `ui.json` 存在但 pid 已死或 healthz 不通 | 视为无现有实例，走自起路径；不删别人的文件 |
 | 任何未捕获异常 | 写入日志后 MessageBox 摘要；退出码 1 |
-| 日志 | `pythonw` 无控制台，全部输出追加到 `~/.vaspilot/desktop.log` |
+| 日志 | `pythonw` 无控制台，全部输出追加到 `~/.rsci/desktop.log` |
 
 非 Windows 平台：`desktop` 命令直接报 `ValidationError("desktop mode is Windows-only")`，退出码 5。
 
@@ -79,7 +79,7 @@ vaspilot desktop
 3. `ui.json` 指向已死 pid → 走自起路径。
 4. `PYTHONNET_RUNTIME` 未设时被设为 `netfx`；已设为其他值时不覆盖。
 5. `import webview` 抛 `ImportError` → 调用 `webbrowser.open(url)`，返回 0。
-6. CLI：`vaspilot desktop --help` 退出 0；`desktop` 在子命令列表中。
+6. CLI：`rsci desktop --help` 退出 0；`desktop` 在子命令列表中。
 
 手工验收（Windows）：运行 `scripts/install-desktop.ps1` → 桌面出现图标 → 双击弹窗并能登录/浏览 → 关窗后 `Get-Process pythonw` 无残留、8930 端口释放 → 服务已在运行时双击第二次只开窗不起新服务。
 

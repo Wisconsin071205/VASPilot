@@ -6,7 +6,7 @@
 
 **Architecture:** 四个新模块组成一条单向管道：`structure.py` 切标注并体检结构 → `recipe.py` 校验模型产出的配方 → `verify.py` 提供值归一化与比较原语 → `stages.py` 把配方展开成阶段图并挂上断言。`stages.py` 复用 `verify.py` 的比较函数来做「override 与断言冲突」检查，因此没有第二份比较逻辑。
 
-**Tech Stack:** Python 3.11+，仅标准库。错误一律抛 `vaspilot.core.errors.ValidationError`。INCAR 解析复用既有的 `vaspilot.hpc.vasp.parse_incar`。
+**Tech Stack:** Python 3.11+，仅标准库。错误一律抛 `rsci.core.errors.ValidationError`。INCAR 解析复用既有的 `rsci.hpc.vasp.parse_incar`。
 
 **Spec:** `docs/superpowers/specs/2026-09-23-vaspkit-campaign-design.md`
 
@@ -25,11 +25,11 @@
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/vaspilot/vaspkit/__init__.py` | 包标记，无逻辑 |
-| `src/vaspilot/vaspkit/structure.py` | `.vasp` 的切分、解析、体检、结构摘要 |
-| `src/vaspilot/vaspkit/recipe.py` | 配方 schema、范围校验、阶段依赖展开 |
-| `src/vaspilot/vaspkit/verify.py` | INCAR 值归一化、比较原语、断言比对 |
-| `src/vaspilot/vaspkit/stages.py` | 配方 → 阶段图 + 断言表 + override 冲突检查 |
+| `src/rsci/vaspkit/__init__.py` | 包标记，无逻辑 |
+| `src/rsci/vaspkit/structure.py` | `.vasp` 的切分、解析、体检、结构摘要 |
+| `src/rsci/vaspkit/recipe.py` | 配方 schema、范围校验、阶段依赖展开 |
+| `src/rsci/vaspkit/verify.py` | INCAR 值归一化、比较原语、断言比对 |
+| `src/rsci/vaspkit/stages.py` | 配方 → 阶段图 + 断言表 + override 冲突检查 |
 | `tests/test_vaspkit_structure.py` | 对应 Task 1 |
 | `tests/test_vaspkit_recipe.py` | 对应 Task 2 |
 | `tests/test_vaspkit_verify.py` | 对应 Task 3 |
@@ -40,12 +40,12 @@
 ### Task 1: 切标注、体检结构
 
 **Files:**
-- Create: `src/vaspilot/vaspkit/__init__.py`
-- Create: `src/vaspilot/vaspkit/structure.py`
+- Create: `src/rsci/vaspkit/__init__.py`
+- Create: `src/rsci/vaspkit/structure.py`
 - Test: `tests/test_vaspkit_structure.py`
 
 **Interfaces:**
-- Consumes: `vaspilot.core.errors.ValidationError`
+- Consumes: `rsci.core.errors.ValidationError`
 - Produces:
   - `Poscar` 冻结数据类，字段 `comment: str`、`scale: float`、`lattice: tuple[tuple[float,float,float], ...]`、`symbols: tuple[str, ...]`、`counts: tuple[int, ...]`、`selective: bool`、`coord_mode: str`、`positions: tuple[str, ...]`、`text: str`，属性 `natoms: int`
   - `split_annotation(text: str) -> tuple[str, str]`
@@ -61,8 +61,8 @@
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.structure import (Poscar, parse_poscar, split_annotation,
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.structure import (Poscar, parse_poscar, split_annotation,
                                         structure_summary)
 
 CUBIC = """Fe2O3 cell
@@ -174,11 +174,11 @@ class TestStructureSummary:
 - [ ] **Step 2: 跑测试确认它失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vaspkit_structure.py -q -p no:cacheprovider --basetemp=%TEMP%\vp-pt-%RANDOM%%RANDOM%`
-Expected: 收集阶段即 FAIL，`ModuleNotFoundError: No module named 'vaspilot.vaspkit'`
+Expected: 收集阶段即 FAIL，`ModuleNotFoundError: No module named 'rsci.vaspkit'`
 
 - [ ] **Step 3: 写实现**
 
-创建 `src/vaspilot/vaspkit/__init__.py`：
+创建 `src/rsci/vaspkit/__init__.py`：
 
 ```python
 """VASPKIT 接入：从一个 VESTA 导出的 .vasp 到一条可执行的计算链。
@@ -188,7 +188,7 @@ Expected: 收集阶段即 FAIL，`ModuleNotFoundError: No module named 'vaspilot
 """
 ```
 
-创建 `src/vaspilot/vaspkit/structure.py`：
+创建 `src/rsci/vaspkit/structure.py`：
 
 ```python
 """VESTA 导出的 `.vasp`：切标注、体检、摘要。全是文本上的纯函数。
@@ -387,7 +387,7 @@ Expected: PASS（14 项）
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/vaspilot/vaspkit/__init__.py src/vaspilot/vaspkit/structure.py tests/test_vaspkit_structure.py
+git add src/rsci/vaspkit/__init__.py src/rsci/vaspkit/structure.py tests/test_vaspkit_structure.py
 git commit -m "feat(vaspkit): read a VESTA .vasp file and its annotation"
 ```
 
@@ -396,11 +396,11 @@ git commit -m "feat(vaspkit): read a VESTA .vasp file and its annotation"
 ### Task 2: 配方校验
 
 **Files:**
-- Create: `src/vaspilot/vaspkit/recipe.py`
+- Create: `src/rsci/vaspkit/recipe.py`
 - Test: `tests/test_vaspkit_recipe.py`
 
 **Interfaces:**
-- Consumes: `vaspilot.core.errors.ValidationError`
+- Consumes: `rsci.core.errors.ValidationError`
 - Produces:
   - 常量 `STAGES: tuple[str, ...]`、`STAGE_REQUIRES: dict[str, str]`、`DEFAULT_KSPACING: dict[str, float]`
   - `expand_stages(names: list[str], *, structure_relaxed: bool = False) -> tuple[str, ...]`
@@ -415,8 +415,8 @@ git commit -m "feat(vaspkit): read a VESTA .vasp file and its annotation"
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.recipe import (DEFAULT_KSPACING, expand_stages,
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.recipe import (DEFAULT_KSPACING, expand_stages,
                                      validate_recipe)
 
 ELEMENTS = ("Fe", "O")
@@ -558,11 +558,11 @@ class TestShape:
 - [ ] **Step 2: 跑测试确认它失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vaspkit_recipe.py -q -p no:cacheprovider --basetemp=%TEMP%\vp-pt-%RANDOM%%RANDOM%`
-Expected: FAIL，`ModuleNotFoundError: No module named 'vaspilot.vaspkit.recipe'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'rsci.vaspkit.recipe'`
 
 - [ ] **Step 3: 写实现**
 
-创建 `src/vaspilot/vaspkit/recipe.py`：
+创建 `src/rsci/vaspkit/recipe.py`：
 
 ```python
 """配方：模型唯一被允许产出的结构化东西。
@@ -767,7 +767,7 @@ Expected: PASS（24 项）
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/vaspilot/vaspkit/recipe.py tests/test_vaspkit_recipe.py
+git add src/rsci/vaspkit/recipe.py tests/test_vaspkit_recipe.py
 git commit -m "feat(vaspkit): validate the recipe the model produces"
 ```
 
@@ -776,11 +776,11 @@ git commit -m "feat(vaspkit): validate the recipe the model produces"
 ### Task 3: INCAR 断言比对
 
 **Files:**
-- Create: `src/vaspilot/vaspkit/verify.py`
+- Create: `src/rsci/vaspkit/verify.py`
 - Test: `tests/test_vaspkit_verify.py`
 
 **Interfaces:**
-- Consumes: `vaspilot.hpc.vasp.parse_incar`、`vaspilot.core.errors.ValidationError`
+- Consumes: `rsci.hpc.vasp.parse_incar`、`rsci.core.errors.ValidationError`
 - Produces:
   - `OPS: tuple[str, ...]`
   - `normalize_value(raw: str) -> str`
@@ -796,8 +796,8 @@ git commit -m "feat(vaspkit): validate the recipe the model produces"
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.verify import check_incar, compare, normalize_value
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.verify import check_incar, compare, normalize_value
 
 RELAX = """SYSTEM = Fe2O3
 ISIF = 3        # full relaxation
@@ -895,11 +895,11 @@ class TestCheckIncar:
 - [ ] **Step 2: 跑测试确认它失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vaspkit_verify.py -q -p no:cacheprovider --basetemp=%TEMP%\vp-pt-%RANDOM%%RANDOM%`
-Expected: FAIL，`ModuleNotFoundError: No module named 'vaspilot.vaspkit.verify'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'rsci.vaspkit.verify'`
 
 - [ ] **Step 3: 写实现**
 
-创建 `src/vaspilot/vaspkit/verify.py`：
+创建 `src/rsci/vaspkit/verify.py`：
 
 ```python
 """自检：把 VASPKIT 刚写出来的 INCAR 和批准过的断言对一遍。
@@ -987,7 +987,7 @@ Expected: PASS（22 项）
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/vaspilot/vaspkit/verify.py tests/test_vaspkit_verify.py
+git add src/rsci/vaspkit/verify.py tests/test_vaspkit_verify.py
 git commit -m "feat(vaspkit): check a generated INCAR against the approved assertions"
 ```
 
@@ -996,11 +996,11 @@ git commit -m "feat(vaspkit): check a generated INCAR against the approved asser
 ### Task 4: 阶段图与断言表
 
 **Files:**
-- Create: `src/vaspilot/vaspkit/stages.py`
+- Create: `src/rsci/vaspkit/stages.py`
 - Test: `tests/test_vaspkit_stages.py`
 
 **Interfaces:**
-- Consumes: `vaspilot.vaspkit.recipe.validate_recipe` 的返回值；`vaspilot.vaspkit.verify.compare`
+- Consumes: `rsci.vaspkit.recipe.validate_recipe` 的返回值；`rsci.vaspkit.verify.compare`
 - Produces:
   - `STAGE_DIRS: dict[str, str]`、`KPOINTS_TASK: dict[str, int]`、`BASE_ASSERTIONS: dict[str, tuple]`
   - `build_campaign(recipe: dict[str, Any]) -> dict[str, Any]`，返回 `{"stages": [...], "server": str, "functional": str}`；每个 stage 含 `index`/`name`/`dir`/`poscar_from`/`chgcar_from`/`kpoints_task`/`kspacing`/`requires`/`assertions`/`overrides`
@@ -1014,9 +1014,9 @@ git commit -m "feat(vaspkit): check a generated INCAR against the approved asser
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.recipe import validate_recipe
-from vaspilot.vaspkit.stages import build_campaign
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.recipe import validate_recipe
+from rsci.vaspkit.stages import build_campaign
 
 ELEMENTS = ("Fe", "O")
 STRUCTURE = {"file": "Fe2O3.vasp", "formula": "Fe2O3", "sha256": "ab" * 32}
@@ -1128,11 +1128,11 @@ class TestOverrideConflicts:
 - [ ] **Step 2: 跑测试确认它失败**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/test_vaspkit_stages.py -q -p no:cacheprovider --basetemp=%TEMP%\vp-pt-%RANDOM%%RANDOM%`
-Expected: FAIL，`ModuleNotFoundError: No module named 'vaspilot.vaspkit.stages'`
+Expected: FAIL，`ModuleNotFoundError: No module named 'rsci.vaspkit.stages'`
 
 - [ ] **Step 3: 写实现**
 
-创建 `src/vaspilot/vaspkit/stages.py`：
+创建 `src/rsci/vaspkit/stages.py`：
 
 ```python
 """把配方展开成阶段图，并给每个阶段挂上运行时自检要核对的断言。
@@ -1240,7 +1240,7 @@ Expected: 既有的 345 passed / 1 skipped 全部仍然通过，加上本批新�
 - [ ] **Step 6: 提交**
 
 ```bash
-git add src/vaspilot/vaspkit/stages.py tests/test_vaspkit_stages.py
+git add src/rsci/vaspkit/stages.py tests/test_vaspkit_stages.py
 git commit -m "feat(vaspkit): expand a recipe into the stage graph and its assertions"
 ```
 

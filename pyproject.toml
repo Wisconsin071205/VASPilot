@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vaspilot"
-# single source of truth: src/vaspilot/__init__.py
+name = "rsci"
+# The release version is defined once in the Python package.
 dynamic = ["version"]
 description = "CLI-first, multi-model VASP/HPC agent with restricted, auditable remote operations"
 requires-python = ">=3.11"
@@ -13,27 +13,31 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-# Windows-only native window over the local web console (`vaspilot desktop`).
 desktop = ["pywebview>=6,<7"]
+materials = ["pymatgen", "custodian", "atomate2"]
+dispatch = ["dpdispatcher"]
+provenance = ["aiida-core"]
+automation = ["pymatgen", "custodian", "atomate2", "dpdispatcher", "aiida-core"]
 
 [project.scripts]
-vaspilot = "vaspilot.cli.main:main"
-huwei = "vaspilot.cli.main:main"
+rsci = "rsci.cli.main:main"
+huwei = "rsci.cli.main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.dynamic]
-version = { attr = "vaspilot.__version__" }
+version = { attr = "rsci.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vaspilot.gateway" = ["codex_bridge.mjs"]
-"vaspilot.desktop" = ["assets/*.ico", "assets/*.icns"]
+"rsci.providers" = ["codex_bridge.mjs"]
+"rsci.ui" = ["static/*.html"]
+"rsci.desktop" = ["assets/*.ico", "assets/*.icns"]
 
 [tool.pytest.ini_options]
-# Tests must exercise this checkout even when another VASPilot install exists.
+# Tests must exercise this checkout even when another rsci install exists.
 pythonpath = ["src"]
 testpaths = ["tests"]

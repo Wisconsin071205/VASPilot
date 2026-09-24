@@ -2,9 +2,9 @@
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.recipe import validate_recipe
-from vaspilot.vaspkit.stages import build_campaign
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.recipe import validate_recipe
+from rsci.vaspkit.stages import build_campaign
 
 ELEMENTS = ("Fe", "O")
 STRUCTURE = {"file": "Fe2O3.vasp", "formula": "Fe2O3", "sha256": "ab" * 32}

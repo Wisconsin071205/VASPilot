@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from vaspilot.hpc.scheduler import (build_cancel, build_submit, parse_qstat,
+from rsci.hpc.scheduler import (build_cancel, build_submit, parse_qstat,
                                     parse_sacct, parse_squeue)
-from vaspilot.hpc.vasp import (parse_incar, parse_oszicar,
+from rsci.hpc.vasp import (parse_incar, parse_oszicar,
                                parse_outcar_tail, potcar_metadata,
                                scientific_status, validate_inputs)
 
@@ -27,6 +27,8 @@ class TestSchedulerParsing:
         assert rows[0]["job_id"] == "12345"
         assert rows[0]["state"] == "RUNNING"
         assert rows[1]["state"] == "PENDING"
+        assert parse_squeue("12347|CG|0:12|8:00:00|cpu|relax01|node1\n")[0][
+            "state"] == "COMPLETING"
 
     def test_sacct(self):
         rows = parse_sacct("12345|COMPLETED|01:02:03|64|0:0\n"
@@ -42,7 +44,7 @@ class TestSchedulerParsing:
         assert rows[0]["state"] == "RUNNING"
 
     def test_builders_validate_inputs(self):
-        from vaspilot.core.errors import ValidationError
+        from rsci.core.errors import ValidationError
         assert build_submit("/root/dir", "run.sh", scheduler="slurm") == \
             ["sbatch", "--parsable", "/root/dir/run.sh"]
         with pytest.raises(ValidationError):
@@ -103,6 +105,20 @@ class TestScientificStatus:
         result = validate_inputs({"INCAR": ""}, require_potcar=False)
         assert result["ok"] is False
         assert any("missing" in e for e in result["errors"])
+
+    def test_validate_inputs_rejects_placeholder_and_empty_files(self):
+        result = validate_inputs({
+            "INCAR": "NSW=0\n",
+            "KPOINTS": "k\n0\nGamma\n2 2 2\n0 0 0\n",
+            "POSCAR": ("placeholder structure\n1.0\n3 0 0\n0 3 0\n0 0 3\n"
+                        "Na\n1\nDirect\n0 0 0\n"),
+        }, require_potcar=False)
+        assert result["ok"] is False
+        assert any("placeholder" in error for error in result["errors"])
+        result = validate_inputs({"INCAR": "NSW=0\n", "KPOINTS": "", "POSCAR": ""},
+                                 require_potcar=False)
+        assert any("missing required input KPOINTS" in error
+                   for error in result["errors"])
 
     def test_potcar_metadata_only(self):
         meta = potcar_metadata(

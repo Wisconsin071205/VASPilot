@@ -3,10 +3,10 @@
 
 Invoked as:  python fake_hpc.py <server> <shell-command>
 
-It emulates exactly the fixed command shapes the VASPilot gateway builds
+It emulates exactly the fixed command shapes the rsci gateway builds
 (single-quoted POSIX arguments), operating on a REAL local directory that
 stands in for the server filesystem. The mapping comes from the JSON config
-file named by VASPILOT_FAKE_HPC_CONFIG:
+file named by RSCI_FAKE_HPC_CONFIG:
 
     {"servers": {"cl9": {"root": "/hpc/.../root", "real": "C:/tmp/cl9fs",
                           "scheduler": "slurm"}},
@@ -77,7 +77,7 @@ def path_tokens(command: str) -> list[str]:
 
 class FakeHpc:
     def __init__(self, server: str) -> None:
-        config_path = os.environ["VASPILOT_FAKE_HPC_CONFIG"]
+        config_path = os.environ["RSCI_FAKE_HPC_CONFIG"]
         with open(config_path, "r", encoding="utf-8") as handle:
             self.config = json.load(handle)
         self.server = server
@@ -100,7 +100,7 @@ class FakeHpc:
 
     # -- path mapping ---------------------------------------------------------
     def to_real(self, posix_path: str) -> Path:
-        if posix_path.startswith("/tmp/vaspilot-"):
+        if posix_path.startswith("/tmp/rsci-"):
             return self.stage_dir / posix_path[len("/tmp/"):]
         rel = posix_path[len(self.root):]
         return self.real / rel.lstrip("/")
@@ -442,7 +442,7 @@ class FakeHpc:
         return 0, f"{total}\t{posix_path}\n"
 
     def _trash_list(self, root: str) -> tuple[int, str]:
-        trash_root = self.to_real(root or self.root + "/.vaspilot-trash")
+        trash_root = self.to_real(root or self.root + "/.rsci-trash")
         out = []
         if trash_root.is_dir():
             for meta in sorted(trash_root.glob("*/metadata.json")):
@@ -470,8 +470,8 @@ def main() -> int:
             src.read_bytes()))
         return 0
     code, out = FakeHpc(server).execute(command)
-    if os.environ.get("VASPILOT_FAKE_DEBUG"):
-        with open(os.environ["VASPILOT_FAKE_DEBUG"], "a", encoding="utf-8") as d:
+    if os.environ.get("RSCI_FAKE_DEBUG"):
+        with open(os.environ["RSCI_FAKE_DEBUG"], "a", encoding="utf-8") as d:
             d.write(f"rc={code} cmd={command[:160]}\n")
     sys.stdout.write(out)
     return code

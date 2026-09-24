@@ -7,13 +7,13 @@ import re
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.adapter import (GEN_OK, ProfileStore, doctor_script,
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.adapter import (GEN_OK, ProfileStore, doctor_script,
                                       generation_script, invoke, parse_doctor,
                                       remote_command, valid_command)
 
 READY = {"command": "/opt/vaspkit/bin/vaspkit", "mode": "stdin", "ready": True}
-STAGE_DIR = "/hpc/home/tester/vaspilot-root/campaigns/abc/02-static"
+STAGE_DIR = "/hpc/home/tester/rsci-root/campaigns/abc/02-static"
 
 
 def probe_output(*, command="/opt/vaspkit/bin/vaspkit", pbe=True,

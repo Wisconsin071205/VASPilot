@@ -1,10 +1,10 @@
-# 桌面应用端（`vaspilot desktop`）实施计划
+# 桌面应用端（`rsci desktop`）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把现有本地 Web 控制台包进一个 pywebview/WebView2 独立窗口，双击桌面快捷方式即打开，关窗即停服。
 
-**Architecture:** 新增 `vaspilot.desktop` 包：复用（或自起）`ui.serve()` 得到带令牌 URL，在守护线程里 `serve_forever`，主线程用 pywebview 开一个窗口加载该 URL，窗口关闭后仅在服务由本进程启动时 `shutdown()`。CLI 增加 `desktop` 子命令；`scripts/install-desktop.ps1` 负责重建 `.venv`、安装 `desktop` extra、创建快捷方式。
+**Architecture:** 新增 `rsci.desktop` 包：复用（或自起）`ui.serve()` 得到带令牌 URL，在守护线程里 `serve_forever`，主线程用 pywebview 开一个窗口加载该 URL，窗口关闭后仅在服务由本进程启动时 `shutdown()`。CLI 增加 `desktop` 子命令；`scripts/install-desktop.ps1` 负责重建 `.venv`、安装 `desktop` extra、创建快捷方式。
 
 **Tech Stack:** Python 3.11（CPython 3.11.15，见全局约束）、pywebview 6.x（`edgechromium` 渲染器，`PYTHONNET_RUNTIME=netfx`）、stdlib（`ctypes`、`urllib`、`zlib`、`struct`）、PowerShell 5.1、pytest。
 
@@ -15,13 +15,13 @@
 - **所有命令在 Windows 上、仓库 `D:\VASP_new` 内执行**（从 VM 经 `ssh win`；VM 只是跳板，不在 VM 上跑任何项目代码）。隧道会抖动：超过约 60 秒的命令（pytest、pip install）用 `schtasks` 分离执行并把输出写到 `%TEMP%` 文件再取回。
 - 解释器：`%APPDATA%\uv\python\cpython-3.11.15-windows-x86_64-none\python.exe`；项目 `.venv` 必须基于它（3.14.0a5 上 pythonnet/cffi 不可用；Store 的 `py -3.12` 是死桩）。下文 `PY` 指 `D:\VASP_new\.venv\Scripts\python.exe`。
 - pytest 调用固定为：`PY -m pytest -p no:cacheprovider --basetemp=%TEMP%\vp-pytest -q`（避免 Windows 上 `pytest-current` 符号链接的 PermissionError）。
-- 核心包保持零第三方依赖：pywebview 只出现在 `[project.optional-dependencies] desktop`，`vaspilot.desktop` 里对 `webview` 一律**懒导入**。
+- 核心包保持零第三方依赖：pywebview 只出现在 `[project.optional-dependencies] desktop`，`rsci.desktop` 里对 `webview` 一律**懒导入**。
 - 测试全部离线，**不得要求安装 pywebview**（向 `sys.modules` 注入假 `webview`）。
 - 窗口标题固定 `远端控制智能体`；尺寸 1280×840，最小 900×600；渲染器 `gui="edgechromium"`。
 - 端口默认 8930，回退到 8939（由 `ui.serve()` 内部的 `_bind_with_fallback` 完成，本计划不改它）。
 - 错误退出码沿用项目约定：0 ok / 1 error / 5 validation；非 Windows 平台 `ValidationError("desktop mode is Windows-only")`。
 - `.gitattributes` 规定 `*.py text eol=lf`：从 Linux 侧上传的 `.py` 必须是 LF；PowerShell 脚本必须带 UTF-8 BOM（PS 5.1 才能正确读中文）。
-- 不改 `src/vaspilot/ui/server.py`、`static/index.html`（控制台本身零改动）。
+- 不改 `src/rsci/ui/server.py`、`static/index.html`（控制台本身零改动）。
 - 分支 `feat/desktop-app`（已从 `master` 开出，含规格提交 `d2c39eb`）；不直接在 `master` 上提交；每个 Task 一次提交，提交信息末尾加 `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`。
 - 补丁脚本必须**幂等**（用标记检查再插入），因为 ssh 重试可能让同一脚本执行两次。
 
@@ -31,11 +31,11 @@
 
 | 路径 | 动作 | 职责 |
 | --- | --- | --- |
-| `src/vaspilot/desktop/__init__.py` | 新增 | `main(app, *, port, platform)`、`read_running_instance(home)`、`_pid_alive`、`_healthz_ok`、`_message_box`、`_import_webview`、日志 |
-| `src/vaspilot/desktop/assets/icon.ico` | 新增（生成物，提交） | 快捷方式图标 |
+| `src/rsci/desktop/__init__.py` | 新增 | `main(app, *, port, platform)`、`read_running_instance(home)`、`_pid_alive`、`_healthz_ok`、`_message_box`、`_import_webview`、日志 |
+| `src/rsci/desktop/assets/icon.ico` | 新增（生成物，提交） | 快捷方式图标 |
 | `scripts/make_icon.py` | 新增 | 用 stdlib 生成上面的 `.ico`（PNG-in-ICO，4 个尺寸） |
-| `src/vaspilot/cli/main.py` | 修改 | 注册 `desktop` 子命令 + `cmd_desktop` |
-| `pyproject.toml` | 修改 | `desktop` extra；`vaspilot.desktop` package-data |
+| `src/rsci/cli/main.py` | 修改 | 注册 `desktop` 子命令 + `cmd_desktop` |
+| `pyproject.toml` | 修改 | `desktop` extra；`rsci.desktop` package-data |
 | `tests/test_desktop.py` | 新增 | 规格 §6 的 6 个测试 + 图标存在性 + 端口全忙 |
 | `scripts/install-desktop.ps1` | 新增 | 幂等安装：选解释器 → 重建 `.venv` → `pip install -e .[desktop,dev]` → 桌面/开始菜单快捷方式 |
 | `README.md` | 修改 | 安装命令去掉 `py -3.12`；"桌面快捷方式已有"改为真实安装步骤；新增"桌面应用"小节 |
@@ -84,7 +84,7 @@ echo EXIT=%ERRORLEVEL% >> %TEMP%\vp-install.log
 
 用 `schtasks /create /tn vp-install /tr "%TEMP%\vp-install.cmd" /sc once /st 00:00 /f` 加 `schtasks /run /tn vp-install` 启动；轮询直到日志末行出现 `EXIT=`；然后 `schtasks /delete /tn vp-install /f`。
 
-Expected: 日志末行 `EXIT=0`；`.venv\Scripts\python.exe -m pip show vaspilot` 显示 `Location: D:\VASP_new\src`（或 editable 指向仓库）。
+Expected: 日志末行 `EXIT=0`；`.venv\Scripts\python.exe -m pip show rsci` 显示 `Location: D:\VASP_new\src`（或 editable 指向仓库）。
 
 - [ ] **Step 4: 跑全部测试（分离执行）**
 
@@ -111,20 +111,20 @@ Expected: 无输出（`.venv` 在 `.gitignore` 中）。本 Task 无提交。
 
 **Files:**
 - Modify: `pyproject.toml`（`[project.optional-dependencies]`、`[tool.setuptools.package-data]`）
-- Create: `src/vaspilot/desktop/__init__.py`
-- Modify: `src/vaspilot/cli/main.py:130-137`（`ui` 子命令之后）与 `cmd_ui` 之后
+- Create: `src/rsci/desktop/__init__.py`
+- Modify: `src/rsci/cli/main.py:130-137`（`ui` 子命令之后）与 `cmd_ui` 之后
 - Test: `tests/test_desktop.py`
 
 **Interfaces:**
-- Produces: `vaspilot.desktop.main(app, *, port: int = 8930, platform: str | None = None) -> int`；`vaspilot.desktop.DEFAULT_PORT = 8930`、`WINDOW_TITLE = "远端控制智能体"`。
-- Produces: CLI `vaspilot desktop [--port N]`，handler `cmd_desktop(app, args)` 返回 `None`；`main()` 返回非 0 时抛 `VaspilotError`（退出码 1）。
+- Produces: `rsci.desktop.main(app, *, port: int = 8930, platform: str | None = None) -> int`；`rsci.desktop.DEFAULT_PORT = 8930`、`WINDOW_TITLE = "远端控制智能体"`。
+- Produces: CLI `rsci desktop [--port N]`，handler `cmd_desktop(app, args)` 返回 `None`；`main()` 返回非 0 时抛 `rsciError`（退出码 1）。
 
 - [ ] **Step 1: 写失败的测试**
 
 创建 `tests/test_desktop.py`：
 
 ```python
-"""Desktop shell (`vaspilot desktop`): offline tests with a fake pywebview.
+"""Desktop shell (`rsci desktop`): offline tests with a fake pywebview.
 
 No test here imports the real ``webview`` package; a stub module is injected
 into ``sys.modules`` so the suite runs on machines without the desktop extra.
@@ -149,18 +149,18 @@ class TestCli:
         assert "desktop" in text
 
     def test_non_windows_is_validation_error(self, config_home, monkeypatch):
-        from vaspilot.core.errors import ValidationError
+        from rsci.core.errors import ValidationError
 
         def refuse(app, *, port):
             raise ValidationError("desktop mode is Windows-only")
 
-        monkeypatch.setattr("vaspilot.desktop.main", refuse)
+        monkeypatch.setattr("rsci.desktop.main", refuse)
         code, document, _, _ = run_cli(["desktop"], monkeypatch)
         assert code == 5
         assert document["error"]["code"] == "validation_error"
 
     def test_nonzero_shell_exit_becomes_error(self, config_home, monkeypatch):
-        monkeypatch.setattr("vaspilot.desktop.main", lambda app, *, port: 1)
+        monkeypatch.setattr("rsci.desktop.main", lambda app, *, port: 1)
         code, document, _, _ = run_cli(["desktop"], monkeypatch)
         assert code == 1
         assert document["error"]["code"] == "error"
@@ -168,8 +168,8 @@ class TestCli:
 
 class TestPlatformGuard:
     def test_main_refuses_non_windows(self, config_home):
-        from vaspilot.core.errors import ValidationError
-        from vaspilot.desktop import main
+        from rsci.core.errors import ValidationError
+        from rsci.desktop import main
 
         with pytest.raises(ValidationError):
             main(app=None, platform="linux")
@@ -178,16 +178,16 @@ class TestPlatformGuard:
 - [ ] **Step 2: 运行确认失败**
 
 Run: `PY -m pytest -p no:cacheprovider --basetemp=%TEMP%\vp-pytest -q tests/test_desktop.py`
-Expected: FAIL —— `ModuleNotFoundError: No module named 'vaspilot.desktop'`（以及 `desktop --help` 退出码 2）。
+Expected: FAIL —— `ModuleNotFoundError: No module named 'rsci.desktop'`（以及 `desktop --help` 退出码 2）。
 
 - [ ] **Step 3: 写包骨架**
 
-创建 `src/vaspilot/desktop/__init__.py`（LF 换行）：
+创建 `src/rsci/desktop/__init__.py`（LF 换行）：
 
 ```python
-"""Desktop shell for the local web console (``vaspilot desktop``).
+"""Desktop shell for the local web console (``rsci desktop``).
 
-The console (``vaspilot.ui``) stays untouched; this module only decides which
+The console (``rsci.ui``) stays untouched; this module only decides which
 server to show (a running one or one it starts itself), opens a pywebview /
 WebView2 window on the token URL, and stops the server it owns when the
 window closes.  pywebview is an optional extra and is imported lazily.
@@ -214,7 +214,7 @@ def main(app, *, port: int = DEFAULT_PORT, platform: str | None = None) -> int:
 
 - [ ] **Step 4: 注册 CLI 子命令**
 
-在 `src/vaspilot/cli/main.py` 的 `ui.set_defaults(handler=cmd_ui)` 之后、`return parser` 之前插入：
+在 `src/rsci/cli/main.py` 的 `ui.set_defaults(handler=cmd_ui)` 之后、`return parser` 之前插入：
 
 ```python
     desktop = sub.add_parser(
@@ -233,12 +233,12 @@ def cmd_desktop(app, args):
     from .. import desktop
     code = desktop.main(app, port=args.port)
     if code:
-        raise VaspilotError("desktop shell exited with an error",
+        raise rsciError("desktop shell exited with an error",
                             detail={"exit_code": code})
     return None
 ```
 
-（`VaspilotError` 已在文件顶部导入。注意用 `desktop.main(...)` 属性访问而不是 `from ..desktop import main`，否则测试里对 `vaspilot.desktop.main` 的 monkeypatch 不生效。）
+（`rsciError` 已在文件顶部导入。注意用 `desktop.main(...)` 属性访问而不是 `from ..desktop import main`，否则测试里对 `rsci.desktop.main` 的 monkeypatch 不生效。）
 
 - [ ] **Step 5: pyproject 加 extra 与 package-data**
 
@@ -247,7 +247,7 @@ def cmd_desktop(app, args):
 ```toml
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-# Windows-only native window over the local web console (`vaspilot desktop`).
+# Windows-only native window over the local web console (`rsci desktop`).
 desktop = ["pywebview>=6,<7"]
 ```
 
@@ -255,8 +255,8 @@ desktop = ["pywebview>=6,<7"]
 
 ```toml
 [tool.setuptools.package-data]
-"vaspilot.gateway" = ["codex_bridge.mjs"]
-"vaspilot.desktop" = ["assets/*.ico"]
+"rsci.gateway" = ["codex_bridge.mjs"]
+"rsci.desktop" = ["assets/*.ico"]
 ```
 
 - [ ] **Step 6: 运行测试确认通过**
@@ -267,7 +267,7 @@ Expected: 全部 PASS（5 个新测试 + 原 CLI 测试）。
 - [ ] **Step 7: 提交**
 
 ```bash
-git add pyproject.toml src/vaspilot/desktop/__init__.py src/vaspilot/cli/main.py tests/test_desktop.py
+git add pyproject.toml src/rsci/desktop/__init__.py src/rsci/cli/main.py tests/test_desktop.py
 git commit -m "feat(desktop): add desktop extra, package skeleton and CLI subcommand
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -278,12 +278,12 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ### Task 3: 自起路径 + 关窗停服 + `PYTHONNET_RUNTIME`
 
 **Files:**
-- Modify: `src/vaspilot/desktop/__init__.py`
+- Modify: `src/rsci/desktop/__init__.py`
 - Test: `tests/test_desktop.py`
 
 **Interfaces:**
-- Consumes: `vaspilot.ui.serve(app, *, host, port, open_browser, run_forever) -> (httpd, url)`；`url` 形如 `http://127.0.0.1:8930/t/<token>`；`serve` 自己把 `{url(base), token, pid}` 写到 `ui.json`。
-- Produces: `vaspilot.desktop.ui_home() -> Path`（与 `serve` 相同规则：`VASPILOT_HOME` 或 `~/.vaspilot`）；`_import_webview()`；`_open_log(home)`；测试夹具 `fake_webview`、`fake_serve`（后续 Task 复用）。
+- Consumes: `rsci.ui.serve(app, *, host, port, open_browser, run_forever) -> (httpd, url)`；`url` 形如 `http://127.0.0.1:8930/t/<token>`；`serve` 自己把 `{url(base), token, pid}` 写到 `ui.json`。
+- Produces: `rsci.desktop.ui_home() -> Path`（与 `serve` 相同规则：`RSCI_HOME` 或 `~/.rsci`）；`_import_webview()`；`_open_log(home)`；测试夹具 `fake_webview`、`fake_serve`（后续 Task 复用）。
 
 - [ ] **Step 1: 写失败的测试（夹具 + 测试 1、4）**
 
@@ -340,7 +340,7 @@ def fake_webview(monkeypatch):
 
 @pytest.fixture()
 def fake_serve(config_home, monkeypatch):
-    """Replace vaspilot.ui.serve; writes ui.json exactly like the real one."""
+    """Replace rsci.ui.serve; writes ui.json exactly like the real one."""
     record = {"calls": [], "httpd": FakeHttpd(),
               "url": "http://127.0.0.1:8930/t/tok123"}
 
@@ -351,7 +351,7 @@ def fake_serve(config_home, monkeypatch):
              "pid": os.getpid()}), encoding="utf-8")
         return record["httpd"], record["url"]
 
-    monkeypatch.setattr("vaspilot.ui.serve", serve)
+    monkeypatch.setattr("rsci.ui.serve", serve)
     return record
 ```
 
@@ -361,7 +361,7 @@ def fake_serve(config_home, monkeypatch):
 class TestSelfStart:
     def test_starts_server_opens_window_and_stops_on_close(
             self, config_home, fake_webview, fake_serve):
-        from vaspilot.desktop import main, WINDOW_TITLE
+        from rsci.desktop import main, WINDOW_TITLE
 
         code = main(app=None, platform="win32")
 
@@ -380,14 +380,14 @@ class TestSelfStart:
 
     def test_port_argument_reaches_serve(self, config_home, fake_webview,
                                          fake_serve):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         main(app=None, port=8935, platform="win32")
         assert fake_serve["calls"][0]["port"] == 8935
 
     def test_log_file_records_start(self, config_home, fake_webview,
                                     fake_serve):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         main(app=None, platform="win32")
         log = (config_home / "desktop.log").read_text(encoding="utf-8")
@@ -397,7 +397,7 @@ class TestSelfStart:
 class TestPythonnetRuntime:
     def test_defaults_to_netfx(self, config_home, fake_webview, fake_serve,
                                monkeypatch):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         monkeypatch.delenv("PYTHONNET_RUNTIME", raising=False)
         main(app=None, platform="win32")
@@ -405,7 +405,7 @@ class TestPythonnetRuntime:
 
     def test_keeps_explicit_value(self, config_home, fake_webview,
                                   fake_serve, monkeypatch):
-        from vaspilot.desktop import main
+        from rsci.desktop import main
 
         monkeypatch.setenv("PYTHONNET_RUNTIME", "coreclr")
         main(app=None, platform="win32")
@@ -419,12 +419,12 @@ Expected: `TestSelfStart` 与 `TestPythonnetRuntime` 全部 FAIL（`fake_serve["
 
 - [ ] **Step 3: 实现自起路径**
 
-把 `src/vaspilot/desktop/__init__.py` 改为：
+把 `src/rsci/desktop/__init__.py` 改为：
 
 ```python
-"""Desktop shell for the local web console (``vaspilot desktop``).
+"""Desktop shell for the local web console (``rsci desktop``).
 
-The console (``vaspilot.ui``) stays untouched; this module only decides which
+The console (``rsci.ui``) stays untouched; this module only decides which
 server to show (a running one or one it starts itself), opens a pywebview /
 WebView2 window on the token URL, and stops the server it owns when the
 window closes.  pywebview is an optional extra and is imported lazily.
@@ -448,8 +448,8 @@ DEFAULT_PORT = 8930
 
 
 def ui_home() -> Path:
-    """Same rule as ui.serve(): VASPILOT_HOME or ~/.vaspilot."""
-    return Path(os.environ.get("VASPILOT_HOME") or (Path.home() / ".vaspilot"))
+    """Same rule as ui.serve(): RSCI_HOME or ~/.rsci."""
+    return Path(os.environ.get("RSCI_HOME") or (Path.home() / ".rsci"))
 
 
 def _open_log(home: Path):
@@ -509,7 +509,7 @@ def _run(app, *, port: int, home: Path, log) -> int:
     httpd, url = ui.serve(app, port=port, open_browser=False,
                           run_forever=False)
     threading.Thread(target=httpd.serve_forever, daemon=True,
-                     name="vaspilot-ui").start()
+                     name="rsci-ui").start()
     _log(log, f"serving {url}")
     try:
         webview = _import_webview()
@@ -533,7 +533,7 @@ Expected: 全部 PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/vaspilot/desktop/__init__.py tests/test_desktop.py
+git add src/rsci/desktop/__init__.py tests/test_desktop.py
 git commit -m "feat(desktop): start the console, open the WebView2 window, stop on close
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -544,7 +544,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ### Task 4: 复用正在运行的控制台；死 pid 视为无实例
 
 **Files:**
-- Modify: `src/vaspilot/desktop/__init__.py`
+- Modify: `src/rsci/desktop/__init__.py`
 - Test: `tests/test_desktop.py`
 
 **Interfaces:**
@@ -564,7 +564,7 @@ def _write_ui_json(home: Path, pid: int) -> None:
 class TestReuse:
     def test_reuses_live_console_without_starting_or_stopping(
             self, config_home, fake_webview, fake_serve, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=4242)
         monkeypatch.setattr(desktop, "_pid_alive", lambda pid: pid == 4242)
@@ -583,7 +583,7 @@ class TestReuse:
 
     def test_dead_pid_falls_back_to_self_start(
             self, config_home, fake_webview, fake_serve, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=4242)
         monkeypatch.setattr(desktop, "_pid_alive", lambda pid: False)
@@ -597,7 +597,7 @@ class TestReuse:
 
     def test_unhealthy_console_falls_back_to_self_start(
             self, config_home, fake_webview, fake_serve, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=4242)
         monkeypatch.setattr(desktop, "_pid_alive", lambda pid: True)
@@ -608,7 +608,7 @@ class TestReuse:
 
     def test_malformed_ui_json_is_ignored(self, config_home, fake_webview,
                                           fake_serve):
-        from vaspilot import desktop
+        from rsci import desktop
 
         (config_home / "ui.json").write_text("{not json", encoding="utf-8")
         desktop.main(app=None, platform="win32")
@@ -616,7 +616,7 @@ class TestReuse:
 
     def test_read_running_instance_ignores_own_pid(self, config_home,
                                                    monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         _write_ui_json(config_home, pid=os.getpid())
         monkeypatch.setattr(desktop, "_healthz_ok", lambda base: True)
@@ -625,14 +625,14 @@ class TestReuse:
 
 class TestProbes:
     def test_pid_alive_for_self_and_dead_for_bogus(self):
-        from vaspilot.desktop import _pid_alive
+        from rsci.desktop import _pid_alive
 
         assert _pid_alive(os.getpid()) is True
         assert _pid_alive(0) is False
         assert _pid_alive(-1) is False
 
     def test_healthz_ok_false_when_nothing_listens(self):
-        from vaspilot.desktop import _healthz_ok
+        from rsci.desktop import _healthz_ok
 
         # port 9 (discard) is never served on a workstation
         assert _healthz_ok("http://127.0.0.1:9") is False
@@ -641,11 +641,11 @@ class TestProbes:
 - [ ] **Step 2: 运行确认失败**
 
 Run: `PY -m pytest -p no:cacheprovider --basetemp=%TEMP%\vp-pytest -q tests/test_desktop.py -k "Reuse or Probes"`
-Expected: FAIL —— `AttributeError: module 'vaspilot.desktop' has no attribute '_pid_alive'`。
+Expected: FAIL —— `AttributeError: module 'rsci.desktop' has no attribute '_pid_alive'`。
 
 - [ ] **Step 3: 实现复用路径与探针**
 
-在 `src/vaspilot/desktop/__init__.py` 的 `import threading` 之后加 `import urllib.error`、`import urllib.request`；模块常量后加 `HEALTH_TIMEOUT = 1.5`。在 `_remove_own_ui_json` 之前加：
+在 `src/rsci/desktop/__init__.py` 的 `import threading` 之后加 `import urllib.error`、`import urllib.request`；模块常量后加 `HEALTH_TIMEOUT = 1.5`。在 `_remove_own_ui_json` 之前加：
 
 ```python
 def _pid_alive(pid: int) -> bool:
@@ -723,7 +723,7 @@ def _run(app, *, port: int, home: Path, log) -> int:
         httpd, url = ui.serve(app, port=port, open_browser=False,
                               run_forever=False)
         threading.Thread(target=httpd.serve_forever, daemon=True,
-                         name="vaspilot-ui").start()
+                         name="rsci-ui").start()
         _log(log, f"serving {url}")
     try:
         webview = _import_webview()
@@ -748,7 +748,7 @@ Expected: 全部 PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/vaspilot/desktop/__init__.py tests/test_desktop.py
+git add src/rsci/desktop/__init__.py tests/test_desktop.py
 git commit -m "feat(desktop): reuse a live console from ui.json; treat dead pid as none
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -759,7 +759,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ### Task 5: 错误处理：缺 pywebview 退回浏览器、端口全忙、未捕获异常
 
 **Files:**
-- Modify: `src/vaspilot/desktop/__init__.py`
+- Modify: `src/rsci/desktop/__init__.py`
 - Test: `tests/test_desktop.py`
 
 **Interfaces:**
@@ -773,7 +773,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 @pytest.fixture()
 def message_box(monkeypatch):
     shown = []
-    monkeypatch.setattr("vaspilot.desktop._message_box",
+    monkeypatch.setattr("rsci.desktop._message_box",
                         lambda text, **kw: shown.append(text))
     return shown
 
@@ -781,7 +781,7 @@ def message_box(monkeypatch):
 class TestFallbacks:
     def test_missing_webview_opens_browser_and_keeps_serving(
             self, config_home, fake_serve, message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         monkeypatch.setitem(sys.modules, "webview", None)  # import -> ImportError
         opened = []
@@ -798,12 +798,12 @@ class TestFallbacks:
 
     def test_all_ports_busy_reports_and_exits_one(
             self, config_home, fake_webview, message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         def busy(app, **kwargs):
             raise OSError(10048, "address already in use")
 
-        monkeypatch.setattr("vaspilot.ui.serve", busy)
+        monkeypatch.setattr("rsci.ui.serve", busy)
         code = desktop.main(app=None, platform="win32")
         assert code == 1
         assert len(message_box) == 1
@@ -812,7 +812,7 @@ class TestFallbacks:
 
     def test_unexpected_exception_is_logged_and_boxed(
             self, config_home, fake_serve, message_box, monkeypatch):
-        from vaspilot import desktop
+        from rsci import desktop
 
         def boom(*args, **kwargs):
             raise RuntimeError("WebView2 runtime missing")
@@ -838,7 +838,7 @@ Expected: FAIL —— `AttributeError: ... has no attribute '_message_box'`。
 
 - [ ] **Step 3: 实现**
 
-在 `src/vaspilot/desktop/__init__.py` 中加 `import traceback`、`import webbrowser`。在 `_import_webview` 之前加：
+在 `src/rsci/desktop/__init__.py` 中加 `import traceback`、`import webbrowser`。在 `_import_webview` 之前加：
 
 ```python
 def _message_box(text: str, *, title: str = WINDOW_TITLE) -> None:
@@ -886,7 +886,7 @@ def _run(app, *, port: int, home: Path, log) -> int:
                          f"请关闭占用这些端口的程序后重试。\n\n{exc}")
             return 1
         thread = threading.Thread(target=httpd.serve_forever, daemon=True,
-                                  name="vaspilot-ui")
+                                  name="rsci-ui")
         thread.start()
         _log(log, f"serving {url}")
     try:
@@ -913,7 +913,7 @@ def _run(app, *, port: int, home: Path, log) -> int:
             _log(log, "server stopped")
 ```
 
-（真实 `httpd.serve_forever()` 在浏览器退路下会一直阻塞到进程被结束；这是预期行为 —— 与 `vaspilot ui` 一致。`FakeHttpd.serve_forever` 立即返回，所以测试不会挂。）
+（真实 `httpd.serve_forever()` 在浏览器退路下会一直阻塞到进程被结束；这是预期行为 —— 与 `rsci ui` 一致。`FakeHttpd.serve_forever` 立即返回，所以测试不会挂。）
 
 - [ ] **Step 4: 运行确认通过**
 
@@ -923,7 +923,7 @@ Expected: 全部 PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/vaspilot/desktop/__init__.py tests/test_desktop.py
+git add src/rsci/desktop/__init__.py tests/test_desktop.py
 git commit -m "feat(desktop): browser fallback without pywebview; port and crash notices
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -935,11 +935,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 **Files:**
 - Create: `scripts/make_icon.py`
-- Create: `src/vaspilot/desktop/assets/icon.ico`（运行脚本生成后提交）
+- Create: `src/rsci/desktop/assets/icon.ico`（运行脚本生成后提交）
 - Test: `tests/test_desktop.py`
 
 **Interfaces:**
-- Produces: `src/vaspilot/desktop/assets/icon.ico`，ICO 容器内 4 张 PNG（256、48、32、16）；`scripts/make_icon.py` 幂等（重跑得到字节相同的文件）。
+- Produces: `src/rsci/desktop/assets/icon.ico`，ICO 容器内 4 张 PNG（256、48、32、16）；`scripts/make_icon.py` 幂等（重跑得到字节相同的文件）。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -951,7 +951,7 @@ class TestIcon:
         import struct
         from importlib import resources
 
-        data = (resources.files("vaspilot.desktop") / "assets" / "icon.ico").read_bytes()
+        data = (resources.files("rsci.desktop") / "assets" / "icon.ico").read_bytes()
         reserved, kind, count = struct.unpack("<HHH", data[:6])
         assert (reserved, kind) == (0, 1)
         assert count >= 4
@@ -975,7 +975,7 @@ Expected: FAIL —— `FileNotFoundError` 或 `IsADirectoryError`（`assets` 不
 创建 `scripts/make_icon.py`（LF）：
 
 ```python
-"""Generate src/vaspilot/desktop/assets/icon.ico with the standard library.
+"""Generate src/rsci/desktop/assets/icon.ico with the standard library.
 
 Deterministic: rerunning produces byte-identical output.  The mark is a
 rounded deep-blue tile with a white chevron ("V" for VASP) and a small
@@ -992,7 +992,7 @@ import struct
 import zlib
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parents[1] / "src" / "vaspilot" / "desktop" / "assets" / "icon.ico"
+OUT = Path(__file__).resolve().parents[1] / "src" / "rsci" / "desktop" / "assets" / "icon.ico"
 SIZES = (256, 48, 32, 16)
 BLUE = (28, 62, 122)      # tile
 WHITE = (255, 255, 255)   # chevron
@@ -1103,23 +1103,23 @@ if __name__ == "__main__":
 ```bat
 cd /d D:\VASP_new
 .venv\Scripts\python.exe scripts\make_icon.py
-certutil -hashfile src\vaspilot\desktop\assets\icon.ico SHA256 > %TEMP%\icon1.txt
+certutil -hashfile src\rsci\desktop\assets\icon.ico SHA256 > %TEMP%\icon1.txt
 .venv\Scripts\python.exe scripts\make_icon.py
-certutil -hashfile src\vaspilot\desktop\assets\icon.ico SHA256 > %TEMP%\icon2.txt
+certutil -hashfile src\rsci\desktop\assets\icon.ico SHA256 > %TEMP%\icon2.txt
 fc %TEMP%\icon1.txt %TEMP%\icon2.txt
 ```
 
-Expected: 打印 `wrote ...`；`fc` 报告两文件无差异。用资源管理器或 `powershell -c "[System.Drawing.Icon]::new('D:\VASP_new\src\vaspilot\desktop\assets\icon.ico').Size"`（先 `Add-Type -AssemblyName System.Drawing`）确认可解析。
+Expected: 打印 `wrote ...`；`fc` 报告两文件无差异。用资源管理器或 `powershell -c "[System.Drawing.Icon]::new('D:\VASP_new\src\rsci\desktop\assets\icon.ico').Size"`（先 `Add-Type -AssemblyName System.Drawing`）确认可解析。
 
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `PY -m pytest -p no:cacheprovider --basetemp=%TEMP%\vp-pytest -q tests/test_desktop.py`
-Expected: 全部 PASS。同时确认可编辑安装能找到资源：`PY -c "from importlib import resources;print((resources.files('vaspilot.desktop')/'assets'/'icon.ico').is_file())"` 打印 `True`。
+Expected: 全部 PASS。同时确认可编辑安装能找到资源：`PY -c "from importlib import resources;print((resources.files('rsci.desktop')/'assets'/'icon.ico').is_file())"` 打印 `True`。
 
 - [ ] **Step 6: 提交**
 
 ```bash
-git add scripts/make_icon.py src/vaspilot/desktop/assets/icon.ico tests/test_desktop.py
+git add scripts/make_icon.py src/rsci/desktop/assets/icon.ico tests/test_desktop.py
 git commit -m "feat(desktop): stdlib-generated application icon (PNG-in-ICO)
 
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
@@ -1134,7 +1134,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - Modify: `README.md:25-40`（安装段）、`README.md:97`（快捷方式句）、`## 统一 Web 控制台` 之后新增小节
 
 **Interfaces:**
-- Consumes: `.venv\Scripts\pythonw.exe -m vaspilot desktop`（Task 2）；`src\vaspilot\desktop\assets\icon.ico`（Task 6）。
+- Consumes: `.venv\Scripts\pythonw.exe -m rsci desktop`（Task 2）；`src\rsci\desktop\assets\icon.ico`（Task 6）。
 - Produces: 桌面与开始菜单的 `远端控制智能体.lnk`。
 
 - [ ] **Step 1: 写安装脚本**
@@ -1151,7 +1151,7 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
   the Microsoft Store stub), rebuilds .venv on it if the current .venv uses a
   different interpreter, installs the project with the desktop extra, verifies
   pywebview imports, and (re)creates the Desktop and Start Menu shortcuts that
-  launch `pythonw -m vaspilot desktop` in the repository directory.
+  launch `pythonw -m rsci desktop` in the repository directory.
 
 .PARAMETER Python
   Explicit interpreter to use instead of the automatic search.
@@ -1165,7 +1165,7 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 $Venv = Join-Path $Repo '.venv'
 $ShortcutName = '远端控制智能体.lnk'
-$Icon = Join-Path $Repo 'src\vaspilot\desktop\assets\icon.ico'
+$Icon = Join-Path $Repo 'src\rsci\desktop\assets\icon.ico'
 
 function Test-StablePython([string]$Exe) {
     if (-not $Exe -or -not (Test-Path $Exe)) { return $null }
@@ -1243,10 +1243,10 @@ $targets = @(
 foreach ($lnk in $targets) {
     $sc = $shell.CreateShortcut($lnk)
     $sc.TargetPath = $venvPyw
-    $sc.Arguments = '-m vaspilot desktop'
+    $sc.Arguments = '-m rsci desktop'
     $sc.WorkingDirectory = $Repo
     $sc.IconLocation = "$Icon,0"
-    $sc.Description = 'VASPilot desktop console'
+    $sc.Description = 'rsci desktop console'
     $sc.WindowStyle = 1
     $sc.Save()
     Write-Host "Shortcut: $lnk"
@@ -1285,25 +1285,25 @@ Expected: 日志含 `.venv already on 3.11.15; keeping it`、`pywebview 6.`、�
 # any stable CPython >= 3.11 (the Store `py -3.12` stub does not work here)
 python -m venv .venv
 .venv\Scripts\python -m pip install -e .[dev]
-huwei --help               # 兼容命令: vaspilot --help
+huwei --help               # 兼容命令: rsci --help
 .venv\Scripts\python -m pytest         # fully offline
 ```
 
 (b) 把其余 `py -3.12` 替换为 `.venv\Scripts\python`（`set PYTHONPATH=src && ...` 与 `scripts\install_vlab_gateway.py` 两处）。
 
-(c) 把行 `桌面快捷方式「VASPilot 控制台」或 \`%USERPROFILE%\bin\vaspilot-ui.cmd\` 一键启动。` 替换为：
+(c) 把行 `桌面快捷方式「rsci 控制台」或 \`%USERPROFILE%\bin\rsci-ui.cmd\` 一键启动。` 替换为：
 
 ```markdown
-命令行启动 `vaspilot ui`（或 `%USERPROFILE%\bin\vaspilot-ui.cmd`）；桌面窗口形态见下一节。
+命令行启动 `rsci ui`（或 `%USERPROFILE%\bin\rsci-ui.cmd`）；桌面窗口形态见下一节。
 ```
 
 (d) 在 `## VS Code 安全编辑` 之前插入新小节：
 
 ```markdown
-## 桌面应用（`vaspilot desktop`）
+## 桌面应用（`rsci desktop`）
 
 同一个控制台，装进独立窗口（pywebview / WebView2，Windows 专用）：双击桌面快捷方式
-「远端控制智能体」即打开，关闭窗口即停止服务；若控制台已在运行（`vaspilot ui`），
+「远端控制智能体」即打开，关闭窗口即停止服务；若控制台已在运行（`rsci ui`），
 只开窗、不重复起服务。
 
 ```powershell
@@ -1312,14 +1312,14 @@ powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1
 
 脚本幂等：选择稳定的 CPython ≥ 3.11（跳过 Store 桩与 alpha 版），必要时重建 `.venv`，
 安装 `desktop` extra（`pip install -e .[desktop]`），在桌面与开始菜单创建快捷方式
-（目标 `.venv\Scripts\pythonw.exe -m vaspilot desktop`，无控制台窗口）。
-未安装 extra 时 `vaspilot desktop` 会提示并退回浏览器。日志：`~/.vaspilot/desktop.log`。
+（目标 `.venv\Scripts\pythonw.exe -m rsci desktop`，无控制台窗口）。
+未安装 extra 时 `rsci desktop` 会提示并退回浏览器。日志：`~/.rsci/desktop.log`。
 ```
 
 - [ ] **Step 5: 复核 README 无遗漏**
 
 ```bat
-cd /d D:\VASP_new && findstr /n /c:"py -3.12" README.md & findstr /n /c:"VASPilot 控制台" README.md
+cd /d D:\VASP_new && findstr /n /c:"py -3.12" README.md & findstr /n /c:"rsci 控制台" README.md
 ```
 
 Expected: 两条都无输出。
@@ -1348,11 +1348,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: 冷启动验收（无控制台运行）**
 
 先确认没有旧服务：`powershell -c "Get-Process pythonw -EA SilentlyContinue | Measure-Object | % Count"` 为 0；`netstat -ano | findstr :8930` 无输出。
-用 `schtasks ... /it` 分离执行：`"D:\VASP_new\.venv\Scripts\pythonw.exe" -m vaspilot desktop`（等价于双击快捷方式）。等 8 秒后检查：
+用 `schtasks ... /it` 分离执行：`"D:\VASP_new\.venv\Scripts\pythonw.exe" -m rsci desktop`（等价于双击快捷方式）。等 8 秒后检查：
 
 - `netstat -ano | findstr :8930` 有 LISTENING；
-- `type %USERPROFILE%\.vaspilot\ui.json` 的 `pid` 等于该 `pythonw` 进程；
-- `type %USERPROFILE%\.vaspilot\desktop.log` 末尾含 `desktop start` 与 `serving http://127.0.0.1:8930/t/`；
+- `type %USERPROFILE%\.rsci\ui.json` 的 `pid` 等于该 `pythonw` 进程；
+- `type %USERPROFILE%\.rsci\desktop.log` 末尾含 `desktop start` 与 `serving http://127.0.0.1:8930/t/`；
 - `powershell -c "(Get-Process pythonw).MainWindowTitle"` 为 `远端控制智能体`。
 
 Expected: 以上全部满足（窗口在用户桌面可见）。
@@ -1365,13 +1365,13 @@ Expected: `Get-Process pythonw` 无结果；`netstat -ano | findstr :8930` 无�
 
 - [ ] **Step 3: 复用验收**
 
-分离启动 `vaspilot ui --no-open`（`.venv\Scripts\python.exe -m vaspilot ui --no-open`），等 3 秒；再分离启动 `pythonw -m vaspilot desktop`。
+分离启动 `rsci ui --no-open`（`.venv\Scripts\python.exe -m rsci ui --no-open`），等 3 秒；再分离启动 `pythonw -m rsci desktop`。
 
-Expected: 日志出现 `reusing running console http://127.0.0.1:8930`；`netstat` 仍只有一个 8930 监听（属于 `python.exe`）。关闭窗口后 `vaspilot ui` 进程仍在、8930 仍监听。最后结束 `vaspilot ui`（`taskkill /pid <pid>`），清理 `ui.json`。
+Expected: 日志出现 `reusing running console http://127.0.0.1:8930`；`netstat` 仍只有一个 8930 监听（属于 `python.exe`）。关闭窗口后 `rsci ui` 进程仍在、8930 仍监听。最后结束 `rsci ui`（`taskkill /pid <pid>`），清理 `ui.json`。
 
 - [ ] **Step 4: 缺 extra 退路验收**
 
-`.venv\Scripts\python.exe -c "import sys,vaspilot.desktop as d; sys.modules['webview']=None; sys.exit(d.main(None))"`（分离 `/it`）：
+`.venv\Scripts\python.exe -c "import sys,rsci.desktop as d; sys.modules['webview']=None; sys.exit(d.main(None))"`（分离 `/it`）：
 
 Expected: 弹出提示框（含 `pip install -e .[desktop]`），默认浏览器打开控制台；进程持续服务直到被结束。结束该进程后清理。
 

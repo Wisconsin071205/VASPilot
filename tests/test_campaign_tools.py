@@ -9,7 +9,7 @@ import pytest
 from tests.conftest import ROOT
 from tests.test_campaign import VASP_FILE
 from tests.test_ui import call, ui  # noqa: F401  (fixture)
-from vaspilot.core.errors import ValidationError
+from rsci.core.errors import ValidationError
 
 RECIPE = {"functional": "PBE", "stages": ["band", "dos"],
           "resources": {"ntasks": 16, "walltime": "12:00:00"}}
@@ -40,7 +40,7 @@ class TestTools:
         result = doctor(registry)
         assert result["ready"] is True
         assert result["mode"] == "stdin"
-        from vaspilot.workflow.campaign import profile_store
+        from rsci.workflow.campaign import profile_store
         assert profile_store(app.config).get("cl9")["ready"] is True
 
     def test_plan_without_recipe_returns_the_annotation(self, tools):

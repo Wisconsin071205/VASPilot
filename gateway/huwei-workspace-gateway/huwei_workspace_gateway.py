@@ -151,14 +151,14 @@ class WorkspaceGateway:
     """Vlab 上的工作区状态、租约和 rclone 挂载管理器。"""
 
     def __init__(self, root: Path | None = None,
-                 vaspilot_config: Path | None = None) -> None:
+                 rsci_config: Path | None = None) -> None:
         self.root = (root or Path(os.environ.get(
             "HUWEI_WORKSPACE_ROOT", "~/.huwei-agent/workspaces"))).expanduser()
         self.state_path = self.root / "state.json"
         self.config_path = self.root / "config.json"
         self.lock_path = self.root / ".lock"
-        self.vaspilot_config = (vaspilot_config or Path(os.environ.get(
-            "VASPILOT_GATEWAY_CONFIG", "~/.config/vaspilot/servers.json"))).expanduser()
+        self.rsci_config = (rsci_config or Path(os.environ.get(
+            "RSCI_GATEWAY_CONFIG", "~/.config/rsci/servers.json"))).expanduser()
 
     @contextlib.contextmanager
     def _lock(self) -> Iterator[None]:
@@ -198,7 +198,7 @@ class WorkspaceGateway:
         _atomic_json(self.state_path, state)
 
     def _servers(self) -> dict[str, dict[str, Any]]:
-        raw = _load_json(self.vaspilot_config, {"servers": {}})
+        raw = _load_json(self.rsci_config, {"servers": {}})
         servers = raw.get("servers", {})
         if not isinstance(servers, dict):
             raise GatewayError("catalog_unreadable", "Vlab server catalog is invalid")
@@ -223,7 +223,7 @@ class WorkspaceGateway:
 
     @staticmethod
     def _key_path(server: str) -> Path:
-        return Path.home() / ".ssh" / "vaspilot" / server
+        return Path.home() / ".ssh" / "rsci" / server
 
     @staticmethod
     def _known_hosts_path() -> Path:

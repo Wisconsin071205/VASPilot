@@ -7,7 +7,7 @@
   the Microsoft Store stub), rebuilds .venv on it if the current .venv uses a
   different interpreter, installs the project with the desktop extra, verifies
   pywebview imports, and (re)creates the Desktop and Start Menu shortcuts that
-  launch `pythonw -m vaspilot desktop` in the repository directory.
+  launch `pythonw -m rsci desktop` in the repository directory.
 
 .PARAMETER Python
   Explicit interpreter to use instead of the automatic search.
@@ -21,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 $Venv = Join-Path $Repo '.venv'
 $ShortcutName = '远端控制智能体.lnk'
-$Icon = Join-Path $Repo 'src\vaspilot\desktop\assets\icon.ico'
+$Icon = Join-Path $Repo 'src\rsci\desktop\assets\icon.ico'
 
 function Test-StablePython([string]$Exe) {
     if (-not $Exe -or -not (Test-Path $Exe)) { return $null }
@@ -101,10 +101,10 @@ $targets = @(
 foreach ($lnk in $targets) {
     $sc = $shell.CreateShortcut($lnk)
     $sc.TargetPath = $venvPyw
-    $sc.Arguments = '-m vaspilot desktop'
+    $sc.Arguments = '-m rsci desktop'
     $sc.WorkingDirectory = $Repo
     $sc.IconLocation = "$Icon,0"
-    $sc.Description = 'VASPilot desktop console'
+    $sc.Description = 'rsci desktop console'
     $sc.WindowStyle = 1
     $sc.Save()
     Write-Host "Shortcut: $lnk"

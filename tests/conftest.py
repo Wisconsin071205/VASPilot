@@ -13,7 +13,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-ROOT = "/hpc/home/tester/vaspilot-root"
+ROOT = "/hpc/home/tester/rsci-root"
 
 
 class FakeGatewayState:
@@ -123,6 +123,7 @@ class FakeTransport:
     def __init__(self, state: FakeGatewayState):
         self.state = state
         self.calls: list[list] = []
+        self.credential_connects: list[dict] = []
 
     # -- transport surface ----------------------------------------------------
     def run_gateway(self, args, *, timeout=180, tty=False, capture=True):
@@ -136,7 +137,7 @@ class FakeTransport:
         if isinstance(document, dict) and not document.get("ok") \
                 and isinstance(document.get("error"), dict) \
                 and document["error"].get("code") == "disconnected":
-            from vaspilot.core.errors import AuthRequiredError
+            from rsci.core.errors import AuthRequiredError
             raise AuthRequiredError(document["error"]["message"])
         return document
 
@@ -184,7 +185,7 @@ class FakeTransport:
         return {"ok": False, "error": {"code": "unknown", "message": op}}
 
     def stage_path(self):
-        return "/tmp/vaspilot-deadbeef"
+        return "/tmp/rsci-deadbeef"
 
     def scp_to_stage(self, local_path, stage, *, timeout=600):
         self._stage = Path(local_path).read_bytes()
@@ -207,6 +208,17 @@ class FakeTransport:
         self.state.servers.setdefault(server, {"target": target, "port": port,
                                                "root": "", "scheduler": "auto"})
         return {"opened": True, "server": server}
+
+    def connect_with_credentials(self, *, server, password, totp_seed="",
+                                 timeout=120):
+        # Record metadata only, mirroring the production audit boundary.
+        self.credential_connects.append({
+            "server": server, "password_present": bool(password),
+            "totp_present": bool(totp_seed),
+        })
+        self.state.connected[server] = True
+        return {"ok": True, "server": server, "connected": True,
+                "via": "saved_credential"}
 
     # -- helpers ---------------------------------------------------------------
     def _server(self, args):
@@ -272,7 +284,7 @@ class FakeTransport:
             return {"ok": False, "error": {
                 "code": "disconnected",
                 "message": f"{server} has no reusable SSH session; run "
-                           f"'vaspilot server connect {server}' in a terminal"}}
+                           f"'rsci server connect {server}' in a terminal"}}
         entry = self.state.servers[server]
         return {"ok": True, "server": server, "connected": True,
                 "auth_mode": entry.get("auth_mode", "interactive"),
@@ -297,7 +309,7 @@ class FakeTransport:
             return {"ok": False, "error": {
                 "code": "disconnected",
                 "message": f"{server} has no reusable SSH session; run "
-                           f"'vaspilot server connect {server}' in a terminal"}}
+                           f"'rsci server connect {server}' in a terminal"}}
         root = self.state.servers[server]["root"]
         return {"ok": True, "server": server, "root": root, "pwd": root}
 
@@ -445,7 +457,7 @@ class FakeTransport:
         self.state.trash[server].append(meta)
         for store in (self.state.files[server], ):
             if path in store:
-                store[f"{ROOT}/.vaspilot-trash/{trash_id}/payload"] = store.pop(path)
+                store[f"{ROOT}/.rsci-trash/{trash_id}/payload"] = store.pop(path)
         self.state.dirs[server].discard(path)
         return {"ok": True, "trash_id": trash_id, "moved": path}
 
@@ -461,7 +473,7 @@ class FakeTransport:
         if meta is None:
             return {"ok": False, "error": {"code": "not_found",
                                            "message": "no such trash entry"}}
-        payload = f"{ROOT}/.vaspilot-trash/{trash_id}/payload"
+        payload = f"{ROOT}/.rsci-trash/{trash_id}/payload"
         if payload in self.state.files[server]:
             self.state.files[server][meta["original_path"]] = \
                 self.state.files[server].pop(payload)
@@ -515,7 +527,8 @@ class FakeTransport:
         scheduler = self.state.scheduler.get(server, "slurm")
         jobs = [{"job_id": str(j["job_id"]), "state": j["state"],
                  "elapsed": "0:00", "limit": "0", "partition": "cpu",
-                 "name": j.get("name", ""), "nodes": "n1"}
+                 "name": j.get("name", ""), "nodes": "n1",
+                 "directory": j.get("directory", "")}
                 for j in self.state.jobs[server]
                 if j["state"] in ("RUNNING", "PENDING")]
         return {"ok": True, "scheduler": scheduler, "jobs": jobs}
@@ -526,16 +539,21 @@ class FakeTransport:
                 "jobs": [{"job_id": str(j["job_id"]), "state": j["state"],
                           "name": j.get("name", ""),
                           "elapsed": j.get("elapsed", ""),
-                          "partition": "cpu"}
+                          "partition": "cpu",
+                          "directory": j.get("directory", "")}
                          for j in self.state.jobs[server]]}
 
     def op_submit(self, args):
         server = self._server(args)
         self.state.job_seq += 1
         job_id = str(self.state.job_seq)
+        positionals = self._positionals(args)
+        directory = positionals[0] if positionals else ""
         self.state.jobs[server].append({"job_id": job_id, "state": "RUNNING",
-                                        "name": "vaspilot"})
-        return {"ok": True, "job_id": job_id, "scheduler": "slurm"}
+                                        "name": "rsci",
+                                        "directory": directory})
+        return {"ok": True, "job_id": job_id, "scheduler": "slurm",
+                "directory": directory}
 
     def op_cancel(self, args):
         job_id = self._positionals(args)[0]
@@ -576,7 +594,7 @@ class FakeTransport:
             raw = files.get(f"{directory}/{name}")
             return raw.decode("utf-8", "replace") if raw else ""
 
-        from vaspilot.hpc.vasp import scientific_status
+        from rsci.hpc.vasp import scientific_status
         status = scientific_status(scheduler_state="UNKNOWN", files={
             "INCAR": text("INCAR"), "OSZICAR": text("OSZICAR"),
             "OUTCAR": text("OUTCAR")})
@@ -803,10 +821,10 @@ from pathlib import PurePosixPath  # noqa: E402  (used above)
 
 @pytest.fixture()
 def config_home(tmp_path, monkeypatch):
-    home = tmp_path / "vaspilot-home"
+    home = tmp_path / "rsci-home"
     home.mkdir()
-    monkeypatch.setenv("VASPILOT_HOME", str(home))
-    monkeypatch.delenv("VASPILOT_IDENTITY_FILE", raising=False)
+    monkeypatch.setenv("RSCI_HOME", str(home))
+    monkeypatch.delenv("RSCI_IDENTITY_FILE", raising=False)
     (home / "settings.json").write_text(json.dumps(
         {"vlab": {"host": "vlab.invalid", "user": "tester", "port": 22,
                   "identity_file": str(tmp_path / "id_test.pem")}}),
@@ -843,8 +861,8 @@ def fake_state(tmp_path):
 @pytest.fixture()
 def app_with_fake(config_home, fake_state, monkeypatch):
     """An App wired to the FakeTransport (no network, no ssh)."""
-    from vaspilot.cli.main import App
-    from vaspilot.core.config import Config, ServerEntry
+    from rsci.cli.main import App
+    from rsci.core.config import Config, ServerEntry
 
     config = Config(config_home)
     config.upsert_server(ServerEntry(name="cl9", target="user@cl9", port=22,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/vaspilot/calculation-manifest-v2.schema.json",
-  "title": "VASPilot CalculationManifest v2",
+  "$id": "https://example.invalid/rsci/calculation-manifest-v2.schema.json",
+  "title": "rsci CalculationManifest v2",
   "type": "object",
   "required": [
     "schema_version", "run_id", "workflow", "parameters", "structure",

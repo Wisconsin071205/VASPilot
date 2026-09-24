@@ -51,16 +51,16 @@ Fe2O3.vasp  (VESTA 导出 + 末尾中文标注)
 
 | 路径 | 变更 | 职责 |
 | --- | --- | --- |
-| `src/vaspilot/vaspkit/structure.py` | 新增 | `split_annotation()`、`normalize_poscar()`、`structure_summary()`；纯函数，不联网 |
-| `src/vaspilot/vaspkit/recipe.py` | 新增 | 配方 schema、`validate_recipe()`、`build_campaign()`（阶段图 + 断言表） |
-| `src/vaspilot/vaspkit/adapter.py` | 新增 | **唯一**知道 VASPKIT 命令行长什么样的地方；`doctor()` 与各 task 的命令构造（两种调用模式） |
-| `src/vaspilot/vaspkit/verify.py` | 新增 | INCAR 断言比对与「危险偏离」表 |
-| `src/vaspilot/workflow/campaign.py` | 新增 | `CampaignStore`（持久化）、`CampaignRunner`（串阶段、判依赖、写日志） |
-| `src/vaspilot/workflow/plan.py` | 修改 | 新增步骤类型 `generate` / `verify` / `stage_inputs`；允许文件 provenance 为 `vaspkit`（无本地路径，哈希在运行时记录） |
-| `src/vaspilot/core/config.py` | 修改 | `ServerEntry` 新增 `vaspkit_command` / `vaspkit_version` / `potcar_paths` |
-| `src/vaspilot/tools/registry.py` | 修改 | 注册第 8 节的五个工具 |
-| `src/vaspilot/ui/server.py` | 修改 | `campaign.*` API |
-| `src/vaspilot/ui/static/index.html` | 修改 | 「作业」标签顶部的「我的计算」列表 |
+| `src/rsci/vaspkit/structure.py` | 新增 | `split_annotation()`、`normalize_poscar()`、`structure_summary()`；纯函数，不联网 |
+| `src/rsci/vaspkit/recipe.py` | 新增 | 配方 schema、`validate_recipe()`、`build_campaign()`（阶段图 + 断言表） |
+| `src/rsci/vaspkit/adapter.py` | 新增 | **唯一**知道 VASPKIT 命令行长什么样的地方；`doctor()` 与各 task 的命令构造（两种调用模式） |
+| `src/rsci/vaspkit/verify.py` | 新增 | INCAR 断言比对与「危险偏离」表 |
+| `src/rsci/workflow/campaign.py` | 新增 | `CampaignStore`（持久化）、`CampaignRunner`（串阶段、判依赖、写日志） |
+| `src/rsci/workflow/plan.py` | 修改 | 新增步骤类型 `generate` / `verify` / `stage_inputs`；允许文件 provenance 为 `vaspkit`（无本地路径，哈希在运行时记录） |
+| `src/rsci/core/config.py` | 修改 | `ServerEntry` 新增 `vaspkit_command` / `vaspkit_version` / `potcar_paths` |
+| `src/rsci/tools/registry.py` | 修改 | 注册第 8 节的五个工具 |
+| `src/rsci/ui/server.py` | 修改 | `campaign.*` API |
+| `src/rsci/ui/static/index.html` | 修改 | 「作业」标签顶部的「我的计算」列表 |
 
 ## 5. 配方（recipe）
 

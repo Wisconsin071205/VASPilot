@@ -2,8 +2,8 @@
 
 import pytest
 
-from vaspilot.core.errors import ValidationError
-from vaspilot.vaspkit.verify import check_incar, compare, normalize_value
+from rsci.core.errors import ValidationError
+from rsci.vaspkit.verify import check_incar, compare, normalize_value
 
 RELAX = """SYSTEM = Fe2O3
 ISIF = 3        # full relaxation
