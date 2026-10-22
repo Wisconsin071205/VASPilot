@@ -32,6 +32,7 @@ artifacts/rsci_manual/render*/
 /artifacts/evidence-*-tmp/
 /artifacts/competition_submission/03-program/
 *.vsix
+!/apps/huwei-agent-vscode-bridge/huwei-agent-vscode-bridge-*.vsix
 *.whl
 *.spec.bak
 

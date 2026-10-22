@@ -10,6 +10,11 @@ import uuid
 from contextlib import nullcontext
 import zipfile
 
+if __package__:
+    from .release_common import archive_name, release_version
+else:
+    from release_common import archive_name, release_version
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'artifacts/competition_submission/03-program'
 
@@ -19,12 +24,13 @@ def run(*args, cwd=None):
 
 
 def main():
+    version = release_version(ROOT)
     OUT.mkdir(parents=True, exist_ok=True)
     # Keep build intermediates under ignored build/ for inspection. On Windows,
     # tempfile's restrictive directory ACLs can prevent child build tools reading it.
     with nullcontext(ROOT / 'build' / ('submission-' + uuid.uuid4().hex[:10])) as temp:
         work = Path(temp)
-        bundle = work / 'rsci-1.5.0'
+        bundle = work / f'rsci-{version}'
         source = bundle / 'source'
         source.mkdir(parents=True)
         # Do not traverse the working tree's private configuration or artifacts.
@@ -36,6 +42,10 @@ def main():
         bridge = ROOT / 'apps/huwei-agent-vscode-bridge'
         shutil.copytree(bridge, source / 'apps/huwei-agent-vscode-bridge',
                         ignore=shutil.ignore_patterns('node_modules', 'out', '*.vsix'))
+        bridge_manifest = json.loads((bridge / 'package.json').read_text(encoding='utf-8'))
+        bridge_package = f"{bridge_manifest['name']}-{bridge_manifest['version']}.vsix"
+        shutil.copy2(bridge / bridge_package,
+                     source / 'apps/huwei-agent-vscode-bridge' / bridge_package)
         # This helper lives outside the Python package in the development tree.
         shutil.copy2(ROOT / 'gateway/huwei-workspace-gateway/huwei_workspace_gateway.py',
                      source / 'src/rsci/gateway/huwei_workspace_gateway.py')
@@ -51,6 +61,8 @@ def main():
             '--distpath', str(bundle / 'windows'), '--workpath', str(work / 'pyinstaller'),
             '--specpath', str(work), str(entry), cwd=work)
         shutil.copy2(ROOT / 'docs/submission-deployment.md', bundle / '使用说明.md')
+        (bundle / 'release.json').write_text(
+            json.dumps({'name': 'rsci', 'version': version}, indent=2), encoding='utf-8')
         (bundle / 'Start-rsci.cmd').write_text(
             '@echo off\ncd /d "%~dp0"\n"windows\\rsci\\rsci.exe" ui %*\n'
             'if errorlevel 1 pause\n', encoding='ascii')
@@ -64,7 +76,7 @@ def main():
         manifest = {p.relative_to(bundle).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
                     for p in sorted(bundle.rglob('*')) if payload(p)}
         (bundle / 'SHA256SUMS.json').write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
-        archive = OUT / 'rsci_1.5.0_智能体可部署程序.zip'
+        archive = OUT / archive_name(version)
         with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
             for p in sorted(bundle.rglob('*')):
                 if payload(p):

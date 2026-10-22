@@ -969,6 +969,56 @@ class TestProjectFlow:
 
 
 class TestSubmitConfirmation:
+    def test_concurrent_approval_submits_only_once(self, ui, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        from rsci.workflow.pending import PendingSubmitStore
+
+        store = PendingSubmitStore(ui["app"].config.pending_submits_path)
+        entry = store.create(server="cl9", directory=f"{ROOT}/runs/concurrent", script="run.job.sh")
+        client = ui["app"].client()
+        original = client.submit
+        entered, release = threading.Event(), threading.Event()
+
+        def delayed(*args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(client, "submit", delayed)
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(call, ui, "submit.confirm", {"id": entry["id"], "approve": True})
+            try:
+                assert entered.wait(timeout=5)
+                assert store.get(entry["id"])["status"] == "submitting"
+                second = call(ui, "submit.confirm", {"id": entry["id"], "approve": True})
+                assert not second["ok"]
+            finally:
+                release.set()
+            assert first.result(timeout=5)["ok"]
+        assert len([c for c in ui["app"].transport().calls if c[0] == "submit"]) == 1
+
+    def test_lost_submit_response_requires_scheduler_review(self, ui, monkeypatch):
+        from rsci.core.errors import RemoteError
+        from rsci.workflow.pending import PendingSubmitStore
+
+        store = PendingSubmitStore(ui["app"].config.pending_submits_path)
+        entry = store.create(server="cl9", directory=f"{ROOT}/runs/uncertain", script="run.job.sh")
+        client = ui["app"].client()
+        original = client.submit
+
+        def response_lost(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RemoteError("connection closed after submission")
+
+        monkeypatch.setattr(client, "submit", response_lost)
+        result = call(ui, "submit.confirm", {"id": entry["id"], "approve": True})
+        assert not result["ok"] and "待核对" in result["error"]["message"]
+        assert store.get(entry["id"])["status"] == "uncertain"
+        assert any(row["id"] == entry["id"] for row in call(ui, "submit.history")["entries"])
+        assert not call(ui, "submit.confirm", {"id": entry["id"], "approve": True})["ok"]
+        assert not call(ui, "submit.regenerate", {"id": entry["id"]})["ok"]
+        assert len([c for c in ui["app"].transport().calls if c[0] == "submit"]) == 1
+
     def test_expired_card_can_be_regenerated(self, ui):
         from rsci.workflow.pending import PendingSubmitStore
 

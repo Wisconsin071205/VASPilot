@@ -1394,6 +1394,7 @@ class UiHandler(BaseHTTPRequestHandler):
         elif action == "campaign.abort":
             record = CampaignRunner(store=store, client=app.client(),
                                     audit=app.audit).abort(campaign_id)
+            self.state.kick_campaigns()
         else:
             self._send_json({"ok": False, "error": {
                 "code": "unknown_action", "message": action}}, status=404)
@@ -1474,9 +1475,8 @@ class UiHandler(BaseHTTPRequestHandler):
                          "annotation": annotation})
 
     def _confirm_submit(self, body: dict) -> None:
-        from ..core.errors import ValidationError
+        from ..core.errors import RemoteError, ValidationError
         from ..core.hashing import text_sha256
-        from ..agents.memory import ConversationStore
         from ..workflow.pending import PendingSubmitStore
         app = self.state.app
         client = app.client()
@@ -1484,6 +1484,9 @@ class UiHandler(BaseHTTPRequestHandler):
         entry_id = str(body.get("id") or "").strip()
         entry = store.get(entry_id)
         if entry.get("status") != "pending":
+            if entry.get("status") in {"submitting", "uncertain"}:
+                raise ValidationError(
+                    "提交正在处理或结果待核对，已阻止重复提交；请先检查服务器队列和计算目录。")
             status = str(entry.get("status") or "已结束")
             raise ValidationError(
                 f"审批卡片 {entry_id} 已{status}；请重新生成审批卡片后再批准")
@@ -1505,9 +1508,18 @@ class UiHandler(BaseHTTPRequestHandler):
                 raise ValidationError(
                     "远端作业脚本在确认卡片生成之后被修改，已中止提交；"
                     "请让智能体重新发起 job_submit")
-        result = client.submit(str(entry["directory"]), str(entry["script"]),
-                               server=entry["server"] or None)
-        settled = store.settle(entry_id, "approved", result)
+        entry = store.claim(entry_id)
+        try:
+            result = client.submit(str(entry["directory"]), str(entry["script"]),
+                                   server=entry["server"] or None)
+            if not isinstance(result, dict) or not result.get("job_id"):
+                raise RemoteError("scheduler did not return a job id")
+        except Exception as exc:
+            store.finish_submission(entry_id, error=f"{type(exc).__name__}: {exc}")
+            raise RemoteError(
+                "提交结果待核对：请求可能已被调度器接收，已阻止重复提交；"
+                "请先检查服务器队列和计算目录。") from exc
+        settled = store.finish_submission(entry_id, result=result)
         job_id = str((result or {}).get("job_id") or "")
         if job_id:
             directory = str(entry.get("directory") or "").rstrip("/")

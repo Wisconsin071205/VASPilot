@@ -1,4 +1,4 @@
-# 远端控制智能体 1.5.0 程序部署说明
+# 远端控制智能体程序部署说明
 
 本压缩包是“一〇七杯”比赛第 3 项“智能体／可部署程序文件”。提供 Windows x64 可执行程序、Python wheel 安装包和源码。请先完整解压，再启动；不要在压缩软件中直接运行 exe，也不要单独移动 exe（需要同目录的 _internal）。
 
@@ -18,7 +18,7 @@
 - 实际计算需要远端 Slurm/PBS 环境以及合法安装的 VASP 和 POTCAR；本包不包含 VASP、赝势、SSH 私钥、密码、TOTP 种子或 API Key。
 - 远端网关要求 Python 3；启用自动部署时由应用部署。源码 `scripts/install_vlab_gateway.py` 提供手动安装方式。
 - 可选 Codex 提供方需要另行安装 Node.js 和相应 Codex 环境。可选材料科学库不包含在免安装版内；需要这些库时使用 Python 安装方式并安装相应 extras。
-- 可选 VS Code Bridge 提供源码，需安装 Node.js 后在 `source/apps/huwei-agent-vscode-bridge` 执行 `npm ci`、`npm run package:dist`，再运行 `install-windows.ps1`。完整工作区还需要 Vlab 的 rclone/FUSE，参见 `source/gateway/huwei-workspace-gateway/README.md`。
+- 可选 VS Code Bridge 提供当前版本的 VSIX 和源码，可直接运行 `source/apps/huwei-agent-vscode-bridge/install-windows.ps1`。重建扩展时需安装 Node.js，在该目录执行 `npm ci`、`npm run package:dist`。完整工作区还需要 Vlab 的 rclone/FUSE，参见 `source/gateway/huwei-workspace-gateway/README.md`。
 
 ## Python 安装方式
 
@@ -26,7 +26,7 @@
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install --no-index --no-deps python-package/rsci-1.5.0-py3-none-any.whl
+.venv\Scripts\python.exe -m pip install --no-index --no-deps (Get-ChildItem python-package/rsci-*.whl).FullName
 .venv\Scripts\rsci.exe --help
 .venv\Scripts\rsci.exe ui
 ```
@@ -37,6 +37,6 @@ wheel 的核心运行时无第三方 Python 依赖。非 Windows 系统可使用
 
 `source/` 保留当前源码、测试和配方，可执行 `python -m pip install -e ./source[dev]` 后在 source 目录运行 `python -m pytest`。重建提交包还需 `build`、`setuptools`、`wheel`、`pyinstaller`，运行 `python scripts/build_submission.py`。
 
-`SHA256SUMS.json` 记录包内各文件 SHA-256（清单自身除外）；外部 `.zip.sha256` 用于核对整个压缩包。测试记录随提交文件提供。离线启动测试不等同于真实模型调用或 HPC 作业运行证明。
+程序包、wheel 和验收脚本的版本均取自 `source/src/rsci/__init__.py`；`release.json` 记录本包版本。`SHA256SUMS.json` 记录包内各文件 SHA-256（清单自身除外）；外部 `.zip.sha256` 用于核对整个压缩包。测试记录随提交文件提供。离线启动测试不等同于真实模型调用或 HPC 作业运行证明。
 
 本包只对应第 3 项。正式提交时，应与设计文档、演示视频、作品简介等材料合并成一个总压缩文件，并按预通知要求使用队长学号、手机号、赛道和队伍类别命名。

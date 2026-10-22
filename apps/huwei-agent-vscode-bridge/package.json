@@ -2,7 +2,7 @@
   "name": "huwei-agent-vscode-bridge",
   "displayName": "远端控制智能体 VS Code Bridge",
   "description": "经本地控制台按需读写远端服务器文件的虚拟工作区（不经 Remote-SSH、不在计算服务器安装任何组件）",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "huwei-team",
   "engines": {
     "vscode": "^1.99.0"

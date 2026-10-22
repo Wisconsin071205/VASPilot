@@ -6,16 +6,37 @@ $ErrorActionPreference = "Stop"
 $extDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $extDir)
 $repoPackage = Join-Path $repoRoot "dist\huwei-agent-vscode-bridge.vsix"
-$vsix = if (Test-Path -LiteralPath $repoPackage) {
-    Get-Item -LiteralPath $repoPackage
-} else {
-    Get-ChildItem -Path (Join-Path $extDir "*.vsix") |
-      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $extDir "package.json") | ConvertFrom-Json
+$versionedPackage = Join-Path $extDir "$($manifest.name)-$($manifest.version).vsix"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function Read-PackageEntry($archive, [string]$name) {
+    $entry = $archive.GetEntry($name)
+    if ($null -eq $entry) { throw "安装包缺少 $name" }
+    $reader = [System.IO.StreamReader]::new($entry.Open())
+    try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+}
+
+$vsix = $null
+foreach ($candidate in @($repoPackage, $versionedPackage)) {
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($candidate)
+    try {
+        $packagedManifest = (Read-PackageEntry $archive "extension/package.json") | ConvertFrom-Json
+        $api = Read-PackageEntry $archive "extension/out/src/api.js"
+        if ($packagedManifest.name -eq $manifest.name -and
+            $packagedManifest.version -eq $manifest.version -and
+            $api.Contains('".rsci"') -and $api.Contains('"X-RSCI-Token"')) {
+            $vsix = Get-Item -LiteralPath $candidate
+            break
+        }
+        Write-Warning "跳过与当前控制台不兼容的扩展包：$candidate"
+    } finally { $archive.Dispose() }
 }
 
 if (-not $vsix) {
-    Write-Host "[错误] 未找到 .vsix 安装包。请先在本目录执行:" -ForegroundColor Red
-    Write-Host "   npm install && npm run compile && npx @vscode/vsce package --allow-missing-repository"
+    Write-Host "[错误] 未找到与当前版本兼容的 .vsix 安装包。请先在本目录执行:" -ForegroundColor Red
+    Write-Host "   npm ci; npm run package:dist"
     exit 1
 }
 

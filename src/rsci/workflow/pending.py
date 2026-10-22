@@ -14,14 +14,26 @@ import os
 import re
 import tempfile
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from ..core.errors import ValidationError
+from ..core.locking import exclusive_file_lock
 
 ID_RE = re.compile(r"^ps-[A-Za-z0-9_-]{4,64}$")
 DEFAULT_TTL_SECONDS = 30 * 60
 MAX_ENTRIES = 50
+OPEN_STATUSES = {"pending", "submitting", "uncertain"}
+
+
+def _locked(method):
+    """Serialize each JSON transaction across both threads and processes."""
+    @wraps(method)
+    def transaction(self, *args, **kwargs):
+        with exclusive_file_lock(self.path.with_suffix(".lock")):
+            return method(self, *args, **kwargs)
+    return transaction
 
 
 def _utcnow() -> datetime:
@@ -59,7 +71,8 @@ class PendingSubmitStore:
 
     def _save(self, entries: dict[str, dict[str, Any]]) -> None:
         if len(entries) > MAX_ENTRIES:  # drop the oldest finalised entries
-            ordered = sorted(entries.values(),
+            ordered = sorted((entry for entry in entries.values()
+                              if entry.get("status") in {"approved", "rejected", "expired"}),
                              key=lambda e: str(e.get("created_at", "")))
             for entry in ordered[:len(entries) - MAX_ENTRIES]:
                 entries.pop(str(entry.get("id")), None)
@@ -81,6 +94,7 @@ class PendingSubmitStore:
         if changed:
             self._save(entries)
 
+    @_locked
     def create(self, *, server: str, directory: str, script: str,
                script_sha256: str = "", script_content: str = "",
                session_id: str = "",
@@ -105,6 +119,7 @@ class PendingSubmitStore:
         self._save(entries)
         return entry
 
+    @_locked
     def regenerate(self, entry_id: str, *,
                    ttl_seconds: int = DEFAULT_TTL_SECONDS) -> dict[str, Any]:
         """Issue a fresh card for an expired, otherwise unchanged submission.
@@ -146,6 +161,7 @@ class PendingSubmitStore:
         self._save(entries)
         return entry
 
+    @_locked
     def get(self, entry_id: str) -> dict[str, Any]:
         if not ID_RE.fullmatch(entry_id or ""):
             raise ValidationError("invalid pending-submit id")
@@ -156,6 +172,45 @@ class PendingSubmitStore:
             raise ValidationError(f"pending submit {entry_id!r} not found")
         return entry
 
+    @_locked
+    def claim(self, entry_id: str) -> dict[str, Any]:
+        """Persist the one permitted submission before contacting a scheduler.
+
+        A crash leaves ``submitting``, never a retryable approval. Both that
+        state and ``uncertain`` require checking the remote scheduler first.
+        """
+        if not ID_RE.fullmatch(entry_id or ""):
+            raise ValidationError("invalid pending-submit id")
+        entries = self._load()
+        self._expire(entries)
+        entry = entries.get(entry_id)
+        if entry is None:
+            raise ValidationError(f"pending submit {entry_id!r} not found")
+        if entry.get("status") != "pending":
+            raise ValidationError(
+                f"pending submit {entry_id} is already {entry.get('status')}; "
+                "check the scheduler before submitting again")
+        entry.update(status="submitting", submission_started_at=_utcnow().isoformat())
+        self._save(entries)
+        return entry
+
+    @_locked
+    def finish_submission(self, entry_id: str, *, result: dict | None = None,
+                          error: str | None = None) -> dict[str, Any]:
+        entries = self._load()
+        entry = entries.get(entry_id)
+        if entry is None or entry.get("status") != "submitting":
+            raise ValidationError("submission is not claimed by an active request")
+        entry["status"] = "uncertain" if error is not None else "approved"
+        entry["settled_at"] = _utcnow().isoformat(timespec="seconds")
+        if error is not None:
+            entry["error"] = str(error)[:2000]
+        if result is not None:
+            entry["result"] = result
+        self._save(entries)
+        return entry
+
+    @_locked
     def settle(self, entry_id: str, status: str,
                result: dict[str, Any] | None = None) -> dict[str, Any]:
         if status not in ("approved", "rejected", "expired"):
@@ -175,21 +230,23 @@ class PendingSubmitStore:
         self._save(entries)
         return entry
 
+    @_locked
     def pending(self, session_id: str = "") -> list[dict[str, Any]]:
         entries = self._load()
         self._expire(entries)
-        out = [e for e in entries.values() if e.get("status") == "pending"]
+        out = [e for e in entries.values() if e.get("status") in OPEN_STATUSES]
         if session_id:
             out = [e for e in out if e.get("session_id") == session_id]
         out.sort(key=lambda e: str(e.get("created_at", "")), reverse=True)
         return out
 
+    @_locked
     def history(self, session_id: str = "", *, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent pending/expired cards so a refreshed UI can recover."""
         entries = self._load()
         self._expire(entries)
         out = [e for e in entries.values()
-               if e.get("status") in {"pending", "expired"}]
+               if e.get("status") in OPEN_STATUSES | {"expired"}]
         if session_id:
             out = [e for e in out if e.get("session_id") == session_id]
         out.sort(key=lambda e: str(e.get("created_at", "")), reverse=True)

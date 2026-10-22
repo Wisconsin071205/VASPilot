@@ -2277,9 +2277,11 @@ const fmt = v => (v === null || v === undefined) ? "—" : Number(v).toFixed(4) 
 
 /* ===================== 我的计算 ===================== */
 const CAMP_STATUS = {awaiting_approval: ["待批准", "warn"], running: ["运行中", "info"],
+  cancelling: ["正在中止", "warn"],
   completed: ["已完成", "ok"], needs_review: ["需复核", "warn"], failed: ["失败", "err"],
   blocked: ["已拦截", "err"], aborted: ["已中止", "info"], rejected: ["已拒绝", "info"]};
 const STAGE_ICON = {converged: ["✓", "ok"], running: ["●", "run"], preparing: ["◐", "run"],
+  cancelling: ["◐", "warn"], cancel_failed: ["!", "bad"],
   waiting: ["○", "idle"], needs_review: ["!", "warn"], failed: ["✗", "bad"],
   blocked: ["⛔", "bad"], aborted: ["–", "idle"]};
 // 手动展开/折叠过的链记住选择；没动过的：结束了的折叠，其余（含需要处理的）展开
@@ -2346,8 +2348,8 @@ function campRow(c) {
   const acts = reviewing
     ? `<div class="acts"><button class="btn" onclick="campAct('approve','${id}')">批准整条链</button>
        <button class="btn ghost" onclick="campAct('reject','${id}')">拒绝</button></div>`
-    : c.status === "running"
-    ? `<div class="acts"><button class="btn danger" onclick="campAct('abort','${id}')">中止</button></div>` : "";
+    : ["running", "cancelling"].includes(c.status)
+    ? `<div class="acts"><button class="btn danger" onclick="campAct('abort','${id}')">${c.status === "cancelling" ? "重试中止" : "中止"}</button></div>` : "";
   const note = c.note ? `<div class="foot" style="color:var(--warn)">${esc(c.note)}</div>` : "";
   return `<div class="camp${open ? "" : " collapsed"}" data-id="${id}">
     <div class="ch" onclick="campToggle('${id}')">
@@ -2373,7 +2375,9 @@ async function campAct(what, id) {
   const r = await api(`campaign.${what}`, {id});
   if (r.ok) {
     if (what === "approve") campOpen.set(id, true);
-    toast({approve: "已批准，第一阶段马上开始", reject: "已拒绝", abort: "已中止"}[what], "ok");
+    toast(what === "abort" && r.status === "cancelling" ? "已请求中止，正在核对远端作业状态"
+      : {approve: "已批准，第一阶段马上开始", reject: "已拒绝", abort: "已中止"}[what],
+      r.status === "cancelling" ? "warn" : "ok");
   }
   loadCampaigns(true);
 }
@@ -3036,30 +3040,37 @@ function pollWorkflowChat(planId) {
   tick();
 }
 function addConfirmCard(log, entry) {
-  if (document.getElementById("cf-" + entry.id)) return;
-  const card = document.createElement("div");
+  const existing = document.getElementById("cf-" + entry.id);
+  if (existing && existing.dataset.status === entry.status) return;
+  const card = existing || document.createElement("div");
+  card.dataset.status = entry.status;
   const expired = entry.status === "expired";
+  const unresolved = ["submitting", "uncertain"].includes(entry.status);
   card.className = "confirmcard" + (expired ? " expired" : "");
   card.id = "cf-" + entry.id;
   card.innerHTML = `
-    <h4>${expired ? "⏱ 审批卡片已过期" : "🚀 作业提交确认（智能体发起）"}</h4>
+    <h4>${unresolved ? "⏳ 提交结果待核对" : expired ? "⏱ 审批卡片已过期" : "🚀 作业提交确认（智能体发起）"}</h4>
     <div class="cmeta">服务器 <b class="mono">${esc(entry.server)}</b> ·
       目录 <span class="mono">${esc(entry.directory)}</span> ·
       脚本 <span class="mono">${esc(entry.script)}</span><br>
       ${entry.expires_at ? `有效期至 ${esc(entry.expires_at)}` : ""}</div>
     <pre>${esc(entry.script_content || "（脚本内容不可用——提交前服务端会再次校验）")}</pre>
     <div class="cbtns">
-      ${expired
+      ${unresolved
+        ? `<span style="color:var(--warn)">请求已发送或结果不确定，已阻止重复提交。请先核对服务器队列和计算目录。</span>`
+        : expired
         ? `<button class="btn" onclick="regenerateSubmit('${esc(entry.id)}')">重新生成审批卡片</button>
            <span style="font-size:11px;color:var(--fg2);align-self:center">生成前会校验远端脚本是否被改动</span>`
         : `<button class="btn" onclick="confirmSubmit('${esc(entry.id)}', true)">批准提交</button>
            <button class="btn danger" onclick="confirmSubmit('${esc(entry.id)}', false)">拒绝</button>
            <span style="font-size:11px;color:var(--fg2);align-self:center">批准后按卡片参数执行，脚本若被改动将自动中止</span>`}
     </div>`;
-  log.appendChild(card);
+  if (!existing) log.appendChild(card);
   log.scrollTop = log.scrollHeight;
 }
 async function confirmSubmit(id, approve) {
+  const current = document.getElementById("cf-" + id);
+  current?.querySelectorAll("button").forEach(button => button.disabled = true);
   const r = await api("submit.confirm", {id, approve}, true);
   if (!r.ok) {
     const message = r.error?.message || "提交确认失败";
@@ -3067,6 +3078,10 @@ async function confirmSubmit(id, approve) {
       return regenerateSubmit(id);
     }
     toast(message, "err");
+    await pollPendingCards();
+    if (current?.dataset.status === "pending") {
+      current.querySelectorAll("button").forEach(button => button.disabled = false);
+    }
     return;
   }
   const card = document.getElementById("cf-" + id);

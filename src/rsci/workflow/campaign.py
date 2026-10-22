@@ -329,7 +329,7 @@ class CampaignRunner:
         advanced = []
         for campaign_id in self.store.ids():
             try:
-                if self.store.load(campaign_id)["state"]["status"] == "running":
+                if self.store.load(campaign_id)["state"]["status"] in {"running", "cancelling"}:
                     self.tick(campaign_id)
                     advanced.append(campaign_id)
             except (rsciError, ValueError, OSError):
@@ -340,6 +340,10 @@ class CampaignRunner:
         with self.store.lock(campaign_id):
             record = self.store.load(campaign_id)
             state = record["state"]
+            if state["status"] == "cancelling":
+                self._poll_cancellation(record)
+                self.store.save(record)
+                return record
             if state["status"] != "running":
                 return record
             approval = state.get("approval") or {}
@@ -385,23 +389,68 @@ class CampaignRunner:
         with self.store.lock(campaign_id):
             record = self.store.load(campaign_id)
             state = record["state"]
-            if state["status"] in CAMPAIGN_FINAL:
+            active = {"running", "cancelling", "cancel_failed"}
+            if state["status"] in CAMPAIGN_FINAL and not any(
+                    row["status"] in active and row.get("job_id")
+                    for row in state["stages"].values()):
                 return record
             server = record["campaign"]["server"]
+            outstanding = False
             for name, row in state["stages"].items():
                 if row["status"] == "converged" or row["status"] in STAGE_STOPPED:
                     continue
-                if row["status"] == "running" and row.get("job_id"):
+                if row["status"] in active and row.get("job_id"):
+                    outstanding = True
                     try:
-                        self.client.cancel(str(row["job_id"]), str(row["job_id"]),
-                                           server=server)
+                        result = self.client.cancel(str(row["job_id"]), str(row["job_id"]),
+                                                    server=server)
+                        if result.get("ok") is False:
+                            raise rsciError("scheduler refused cancellation")
                     except rsciError as exc:
+                        row.update(status="cancel_failed", error=exc.message)
                         log(record, name, "cancel_failed", exc.message)
-                row["status"] = "aborted"
-            state["status"] = "aborted"
-            log(record, "", "aborted", "")
+                    else:
+                        row["status"] = "cancelling"
+                        row.pop("error", None)
+                        log(record, name, "cancel_requested", f"job {row['job_id']}")
+                else:
+                    row["status"] = "aborted"
+            state["status"] = "cancelling" if outstanding else "aborted"
+            state["note"] = ("正在核对远端作业是否已结束；取消失败时可重试中止。"
+                             if outstanding else "")
+            if not outstanding:
+                state["finished_at"] = _now()
+            else:
+                state.pop("finished_at", None)
+            log(record, "", state["status"], "")
             self.store.save(record)
             return record
+
+    def _poll_cancellation(self, record: dict) -> None:
+        """Do not report an abort until every submitted job is terminal."""
+        state = record["state"]
+        outstanding = False
+        for name, row in state["stages"].items():
+            if row["status"] not in {"cancelling", "cancel_failed"}:
+                continue
+            try:
+                scheduler = str(self.client.job_state(
+                    str(row["job_id"]), server=record["campaign"]["server"]
+                ).get("state") or "UNKNOWN")
+                row["scheduler_state"] = scheduler
+            except rsciError as exc:
+                row["error"] = exc.message
+                outstanding = True
+                continue
+            if scheduler in TERMINAL_SCHEDULER_STATES:
+                row["status"] = "aborted"
+                row.pop("error", None)
+                log(record, name, "abort_confirmed", f"job {row['job_id']}: {scheduler}")
+            else:
+                outstanding = True
+        if not outstanding:
+            state.update(status="aborted", note="", finished_at=_now())
+            log(record, "", "aborted", "all submitted jobs are terminal")
 
     # -- stage actions ----------------------------------------------------------
     def _stop(self, record: dict, stage: dict, row: dict, status: str,

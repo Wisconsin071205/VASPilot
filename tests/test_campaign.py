@@ -431,13 +431,37 @@ class TestRunner:
         campaign_id = start()
         runner.tick(campaign_id)
         record = runner.abort(campaign_id)
-        assert record["state"]["status"] == "aborted"
-        assert all(row["status"] == "aborted"
-                   for row in record["state"]["stages"].values())
+        assert record["state"]["status"] == "cancelling"
+        assert record["state"]["stages"]["relax"]["status"] == "cancelling"
         cancels = [call for call in runner.client.transport.calls
                    if call and call[0] == "cancel"]
         assert len(cancels) == 1
+        state.jobs["cl9"][0]["state"] = "CANCELLED"
         assert runner.tick(campaign_id)["state"]["status"] == "aborted"
+
+    def test_failed_cancel_stays_visible_and_can_be_retried(self, chain, monkeypatch):
+        from rsci.core.errors import RemoteError
+
+        store, runner, state, start = chain
+        campaign_id = start()
+        runner.tick(campaign_id)
+        original = runner.client.cancel
+
+        def refused(*args, **kwargs):
+            raise RemoteError("cancel refused")
+
+        monkeypatch.setattr(runner.client, "cancel", refused)
+        record = runner.abort(campaign_id)
+        assert record["state"]["status"] == "cancelling"
+        assert record["state"]["stages"]["relax"]["status"] == "cancel_failed"
+        assert runner.tick(campaign_id)["state"]["status"] == "cancelling"
+        assert len(state.jobs["cl9"]) == 1  # no dependent stages start
+        monkeypatch.setattr(runner.client, "cancel", original)
+        assert runner.abort(campaign_id)["state"]["stages"]["relax"]["status"] == "cancelling"
+        state.jobs["cl9"][0]["state"] = "CANCELLED"
+        restarted = CampaignRunner(store=CampaignStore(store.directory), client=runner.client)
+        restarted.tick_all()
+        assert store.load(campaign_id)["state"]["status"] == "aborted"
 
     def test_an_approval_for_another_campaign_blocks_it(self, chain):
         store, runner, state, start = chain

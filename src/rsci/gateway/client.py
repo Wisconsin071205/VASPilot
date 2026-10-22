@@ -8,7 +8,9 @@ CLI, the agent tool registry and the MCP server use to touch remote systems.
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 
@@ -893,28 +895,49 @@ class GatewayClient:
         name = self._require(server)
         source = self._resolve(name, path)
         local = Path(local_path)
-        if local.exists():
+        if local.exists() or local.is_symlink():
             raise ValidationError(
                 f"local target {local} already exists; downloads never overwrite")
         local.parent.mkdir(parents=True, exist_ok=True)
         transport = self._transport_for(name)
         stage = transport.stage_path()
+        fd, temporary = tempfile.mkstemp(prefix=f".{local.name}.", suffix=".part",
+                                         dir=str(local.parent))
+        os.close(fd)
+        partial = Path(temporary)
         try:
             result = self._call("remote.download", [
                 "download", "--server", name, source, stage],
                 path=source, timeout=timeout)
             remote_sha = str(result.get("sha256", ""))
-            transport.scp_from_stage(stage, str(local), timeout=timeout)
+            transport.scp_from_stage(stage, str(partial), timeout=timeout)
+            if not partial.is_file():
+                raise RemoteError("download did not produce a local file")
+            local_sha = file_sha256(partial)
+            if remote_sha and remote_sha != local_sha:
+                raise RemoteError(
+                    "downloaded file SHA-256 does not match the remote source",
+                    detail={"remote": remote_sha, "local": local_sha})
+            try:
+                # A hard link publishes the verified file atomically and
+                # refuses any target that appeared during the transfer.
+                os.link(partial, local)
+            except FileExistsError as exc:
+                raise ValidationError(
+                    f"local target {local} already exists; downloads never overwrite") from exc
+            except OSError:
+                if os.name != "nt":
+                    raise
+                # Windows rename also refuses replacement, including on
+                # filesystems without hard-link support.
+                try:
+                    os.rename(partial, local)
+                except FileExistsError as exc:
+                    raise ValidationError(
+                        f"local target {local} already exists; downloads never overwrite") from exc
         finally:
+            partial.unlink(missing_ok=True)
             transport.rm_stage(stage)
-        if not local.is_file():
-            raise RemoteError("download did not produce a local file")
-        local_sha = file_sha256(local)
-        if remote_sha and remote_sha != local_sha:
-            local.unlink(missing_ok=True)
-            raise RemoteError(
-                "downloaded file SHA-256 does not match the remote source",
-                detail={"remote": remote_sha, "local": local_sha})
         return {"path": source, "local_path": str(local),
                 "sha256": local_sha, "size": local.stat().st_size}
 
