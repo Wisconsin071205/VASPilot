@@ -79,7 +79,7 @@ async function openRemote(
     );
   }
   setStatus(
-    `$(remote) Huwei Bridge: ${server}`,
+    `$(remote) 远端控制智能体: ${server}`,
     `虚拟工作区已连接 ${server}（按需读写，经本地控制台中转）`
   );
   log(`已打开: kind=${kind} server=${server}`);
@@ -100,7 +100,7 @@ async function findInCurrentRemoteFolder(): Promise<void> {
     return;
   }
   const pattern = await vscode.window.showInputBox({
-    title: "晶织：VASP 服务端计算控制智能体：在远端路径中搜索",
+    title: "远端控制智能体：在远端路径中搜索",
     prompt: `仅搜索当前目录 ${folder.uri.path}（最多两层、200 个结果）`,
     value: "*",
     validateInput: (value) =>
@@ -163,7 +163,7 @@ function workspaceLabel(status: WorkspaceStatus): {
   text: string; tooltip: string; tone: StatusTone;
 } {
   const leaf = status.remote_path.split("/").filter(Boolean).pop() ?? status.server;
-  const base = `晶织：VASP 服务端计算控制智能体: ${status.server} · ${leaf}`;
+  const base = `远端控制智能体: ${status.server} · ${leaf}`;
   const detail = `Vlab 缓存 ${prettyBytes(status.cache_bytes)} · ` +
     `待同步 ${status.pending_sync_files} · 可用 ${prettyBytes(status.vlab_space?.free_bytes)}`;
   if (status.mode === "read-only") {
@@ -213,7 +213,7 @@ async function refreshWorkspaceStatus(showDetails = false): Promise<void> {
   } catch (err) {
     // 只有完整工作区已声明时才显示故障，避免安全编辑模式在控制台
     // 未启动时产生误导性的启动错误。
-    setStatus("$(error) 晶织：VASP 服务端计算控制智能体: 工作区不可用", describe(err), "error");
+    setStatus("$(error) 远端控制智能体: 工作区不可用", describe(err), "error");
     if (showDetails) vscode.window.showErrorMessage(`工作区状态读取失败：${describe(err)}`);
   }
 }
@@ -256,7 +256,7 @@ async function protectFullWorkspaceEditor(editor: vscode.TextEditor | undefined)
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  out = vscode.window.createOutputChannel("Huwei Bridge");
+  out = vscode.window.createOutputChannel("远端控制智能体 Bridge");
   context.subscriptions.push(out);
   statusItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
@@ -292,12 +292,12 @@ export function activate(context: vscode.ExtensionContext): void {
         }
         const { server, path: remotePath, kind } = request;
         log(`唤起: server=${server} path=${remotePath} kind=${kind}`);
-        setStatus("$(sync~spin) Huwei Bridge: 连接中…");
+        setStatus("$(sync~spin) 远端控制智能体: 连接中…");
         openRemote(server, remotePath, kind).catch((err) => {
           log(`打开失败: ${describe(err)}`);
-          setStatus(`$(error) Huwei Bridge: 连接失败`, describe(err), "error");
+          setStatus(`$(error) 远端控制智能体: 连接失败`, describe(err), "error");
           vscode.window.showErrorMessage(
-            `Huwei Bridge 打开失败：${describe(err)}`
+            `远端控制智能体打开失败：${describe(err)}`
           );
         });
       },
@@ -309,12 +309,12 @@ export function activate(context: vscode.ExtensionContext): void {
       client = null;
       try {
         await getClient().servers();
-        setStatus("$(check) Huwei Bridge: 控制台已就绪");
+        setStatus("$(check) 远端控制智能体: 控制台已就绪");
         vscode.window.showInformationMessage(
           "已重新检测到本地控制台，可再次从控制台右键唤起远端文件。"
         );
       } catch (err) {
-        setStatus("$(error) Huwei Bridge: 控制台不可用", describe(err), "error");
+        setStatus("$(error) 远端控制智能体: 控制台不可用", describe(err), "error");
         vscode.window.showErrorMessage(describe(err));
       }
     })
@@ -351,7 +351,7 @@ export function activate(context: vscode.ExtensionContext): void {
     void refreshWorkspaceStatus(false);
     void protectFullWorkspaceEditor(vscode.window.activeTextEditor);
   } else {
-    setStatus("$(plug) Huwei Bridge: 待唤起");
+    setStatus("$(plug) 远端控制智能体: 待唤起");
   }
 }
 

@@ -1,4 +1,4 @@
-# 晶织：VASP 服务端计算控制智能体 Workspace Gateway
+# 远端控制智能体 Workspace Gateway
 
 此单文件组件运行在 Vlab，管理“完整工作区模式”的 rclone SFTP 挂载。它不在
 `cl12`、`minus` 等目标服务器部署程序；VS Code Remote-SSH 只进入 Vlab。

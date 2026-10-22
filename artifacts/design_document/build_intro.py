@@ -6,7 +6,7 @@ from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 ROOT=Path(__file__).resolve().parent
-OUT=ROOT.parent/'competition_submission'/'修订版'/'晶织_作品简介.docx'
+OUT=ROOT.parent/'competition_submission'/'修订版'/'远端控制智能体_作品简介.docx'
 doc=Document()
 s=doc.sections[0]
 s.page_width=Cm(21);s.page_height=Cm(29.7)
@@ -19,7 +19,7 @@ for name,size in [('Normal',11),('Title',24),('Subtitle',11),('Heading 1',15),('
  st.paragraph_format.space_after=Pt(8);st.paragraph_format.line_spacing=1.2
 for st in doc.styles:
  for b in list(st.element.iter(qn('w:pBdr'))):b.getparent().remove(b)
-doc.core_properties.title='晶织 多服务器连接与计算控制智能体作品简介'
+doc.core_properties.title='远端控制智能体作品简介'
 doc.core_properties.subject='一〇七杯算力与智能体开发大赛'
 doc.core_properties.author=''
 ft=s.footer.paragraphs[0];ft.alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -29,13 +29,13 @@ def h(t):doc.add_heading(t,1)
 def feature(title,body):
  pp=doc.add_paragraph();pp.add_run(title+'  ').bold=True;pp.add_run(body)
 
-doc.add_paragraph('晶织 多服务器连接与计算控制智能体',style='Title')
+doc.add_paragraph('远端控制智能体',style='Title')
 doc.add_paragraph('作品简介',style='Subtitle')
 p('一〇七杯算力与智能体开发大赛  |  技术名称 rsci')
-p('晶织面向无法直接访问外部模型服务、且需要同时管理多台科研服务器的使用场景。智能体运行在可访问模型服务的本机，通过 SSH 直连或 Vlab 中转连接服务器，在一个工作台中完成连接诊断、文件管理、作业查询与结果解释。计算服务器无需直接访问模型 API；VASP 是当前已实现专用工作流的应用场景。')
+p('远端控制智能体面向无法直接访问外部模型服务、且需要同时管理多台科研服务器的使用场景。智能体运行在可访问模型服务的本机，通过 SSH 直连或 Vlab 中转连接服务器，在一个工作台中完成连接诊断、文件管理、作业查询与结果解释。计算服务器无需直接访问模型 API；VASP 是当前已实现专用工作流的应用场景。')
 h('1  作品背景与解决的问题')
 p('科研服务器常受外网访问、软件安装和运行环境限制，无法像个人电脑一样直接接入在线智能体。用户只能在本机询问模型，再把命令和文件搬到服务器执行，反复复制日志反馈，智能建议与真实环境之间容易脱节。')
-p('当任务分布在多台服务器时，地址、认证方式、工作目录和调度器各不相同，用户还需反复切换终端，核对文件版本和作业位置。晶织把模型调用留在本机，将已授权的远端操作交给连接层执行，让用户围绕明确的服务器、目录和任务持续工作。')
+p('当任务分布在多台服务器时，地址、认证方式、工作目录和调度器各不相同，用户还需反复切换终端，核对文件版本和作业位置。远端控制智能体把模型调用留在本机，将已授权的远端操作交给连接层执行，让用户围绕明确的服务器、目录和任务持续工作。')
 h('2  核心功能')
 feature('本机智能体与远端协作','模型在本机侧接收任务和必要上下文，工具读取实际文件与状态，再把结果反馈给用户；支持流式对话、会话分支与上下文压缩。')
 feature('多服务器统一连接','登记多台服务器，分别配置认证、根目录和连接路由；支持 Vlab 中转或直接 SSH，集中查看连接状态、远端文件、Slurm/PBS 作业及资源快照。')

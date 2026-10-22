@@ -1,7 +1,7 @@
-# rsci 晶织：VASP 服务端计算控制智能体
+# 远端控制智能体
 
-> 英文项目名、Python 包名和主命令统一为 `rsci`；中文产品名为
-> 「晶织：VASP 服务端计算控制智能体」。`huwei` 保留为兼容命令。
+> 产品名称与远端项目统一为「远端控制智能体」；英文技术名、Python 包名和
+> 主命令保留为 `rsci`。`huwei` 保留为兼容命令。
 
 CLI-first, multi-model VASP/HPC agent: after the user completes SSH
 authentication by hand, it performs **auditable** file transfer, job
@@ -174,8 +174,8 @@ TOTP 种子不离开本机。未保存凭据时，交互式登录通过「连接
 
 | 平台 | 渲染器 | 安装脚本 | 入口 |
 | --- | --- | --- | --- |
-| Windows | WebView2（`edgechromium`，经 pythonnet/.NET Framework） | `scripts\install-desktop.ps1` | 桌面与开始菜单的 `晶织：RSCI` 快捷方式 |
-| macOS | WKWebView（`cocoa`，经 pyobjc） | `scripts/install-desktop.sh` | `~/Applications/晶织-RSCI.app` |
+| Windows | WebView2（`edgechromium`，经 pythonnet/.NET Framework） | `scripts\install-desktop.ps1` | 桌面与开始菜单的 `远端控制智能体` 快捷方式 |
+| macOS | WKWebView（`cocoa`，经 pyobjc） | `scripts/install-desktop.sh` | `~/Applications/远端控制智能体.app` |
 
 Windows：
 
@@ -206,12 +206,12 @@ TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
 中转只经已验证的 SSH 通道临时发送密码和当期六位码，TOTP 种子不会离开本机，
 Vlab 不会落盘保存凭据。密码和种子绝不进入审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
 自动连接会暂停；未保存凭据时仍通过「连接」按钮在**独立可见系统终端**中手工输入。
-审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「晶织 RSCI 控制台」
+审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「远端控制智能体」
 或 `%USERPROFILE%\bin\rsci-ui.cmd` 一键启动。
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 
-仓库附带“晶织 RSCI VS Code Bridge”扩展。它经本地控制台按需访问
+仓库附带“远端控制智能体 VS Code Bridge”扩展。它经本地控制台按需访问
 `Windows → Vlab → HPC`，不通过 Remote-SSH 直接连接计算服务器，因此不会在
 CentOS 7 等老集群安装 VS Code Server。先运行
 `apps\huwei-agent-vscode-bridge\install-windows.ps1` 安装仓库内的 VSIX，随后在

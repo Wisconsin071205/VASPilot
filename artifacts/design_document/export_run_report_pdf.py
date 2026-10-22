@@ -12,8 +12,8 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 ROOT = Path(__file__).resolve().parents[1] / 'competition_submission' / 'ok'
-source = ROOT / '晶织_算力集群运行数据说明_50785.docx'
-output = ROOT / '晶织_算力集群运行数据说明_50785.pdf'
+source = ROOT / '远端控制智能体_算力集群运行数据说明_50785.docx'
+output = ROOT / '远端控制智能体_算力集群运行数据说明_50785.pdf'
 pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
 styles = getSampleStyleSheet()
 body = ParagraphStyle('body', parent=styles['BodyText'], fontName='STSong-Light', fontSize=10.3, leading=16, spaceAfter=6, wordWrap='CJK')
@@ -26,7 +26,7 @@ cell = ParagraphStyle('cell', parent=body, fontSize=8.6, leading=12, spaceAfter=
 
 def footer(canvas, doc):
     canvas.saveState(); canvas.setFont('STSong-Light', 8); canvas.setFillColor(colors.HexColor('#666666'))
-    canvas.drawCentredString(A4[0] / 2, 10 * mm, f'晶织算力集群运行数据说明 · 第 {doc.page} 页'); canvas.restoreState()
+    canvas.drawCentredString(A4[0] / 2, 10 * mm, f'远端控制智能体算力集群运行数据说明 · 第 {doc.page} 页'); canvas.restoreState()
 
 def para(text, style=body):
     return Paragraph(escape(text).replace('\n', '<br/>'), style)
@@ -53,5 +53,5 @@ for child in doc.element.body.iterchildren():
         table.setStyle(TableStyle([('GRID',(0,0),(-1,-1),0.35,colors.HexColor('#D9D9D9')), ('BACKGROUND',(0,0),(-1,0),colors.HexColor('#EEF1F4')), ('VALIGN',(0,0),(-1,-1),'MIDDLE'), ('LEFTPADDING',(0,0),(-1,-1),5), ('RIGHTPADDING',(0,0),(-1,-1),5), ('TOPPADDING',(0,0),(-1,-1),4), ('BOTTOMPADDING',(0,0),(-1,-1),4)]))
         story.extend([Spacer(1,3), table, Spacer(1,8)])
 
-SimpleDocTemplate(str(output), pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=17*mm, bottomMargin=17*mm, title='晶织算力集群运行数据说明 作业50785').build(story, onFirstPage=footer, onLaterPages=footer)
+SimpleDocTemplate(str(output), pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=17*mm, bottomMargin=17*mm, title='远端控制智能体算力集群运行数据说明 作业50785').build(story, onFirstPage=footer, onLaterPages=footer)
 print(output)

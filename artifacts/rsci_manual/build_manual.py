@@ -14,7 +14,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "artifacts" / "rsci_manual" / "rsci_详细使用手册.docx"
+OUT = ROOT / "artifacts" / "rsci_manual" / "远端控制智能体_详细使用手册.docx"
 UI = ROOT / "artifacts" / "rsci_manual" / "ui"
 VLAB = ROOT / "artifacts" / "rsci_manual" / "vlab"
 COVER_SCREENSHOT = UI / "ui-03-jobs.png"
@@ -479,7 +479,7 @@ def build() -> None:
     header = section.header
     hp = header.paragraphs[0]
     hp.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    hr = hp.add_run("rsci 使用手册")
+    hr = hp.add_run("远端控制智能体使用手册")
     set_run_font(hr, size=9, color=MUTED, bold=True)
     hr = hp.add_run("    |    Codex · Web UI · CLI")
     set_run_font(hr, size=9, color=MUTED)
@@ -493,7 +493,7 @@ def build() -> None:
     kicker.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r = kicker.add_run("HPC / VASP 智能计算平台")
     set_run_font(r, size=11, color=BLUE, bold=True)
-    title = doc.add_paragraph("rsci 详细使用手册", style="Title")
+    title = doc.add_paragraph("远端控制智能体详细使用手册", style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     subtitle = doc.add_paragraph(
         "Codex 插件、本地 Web 控制台与命令行操作指南", style="Subtitle")
@@ -521,7 +521,7 @@ def build() -> None:
 
     add_h1(doc, "阅读说明", page_break=True)
     add_section_overview(doc, [
-        ("适用对象", "第一次接触 rsci 的研究人员、日常使用人员，以及负责服务器与模型配置的维护人员"),
+        ("适用对象", "第一次接触远端控制智能体的研究人员、日常使用人员，以及负责服务器与模型配置的维护人员"),
         ("覆盖入口", "Codex 内嵌集群面板、本地 Web 控制台、Windows 命令行"),
         ("使用目标", "完成服务器连接、文件查看、作业监测、VASP 科学进度判断、工作流计划与模型对话"),
         ("界面版本", "截图取自本地源码 UI 1.3.5；Codex 插件当前优先加载的 Client 后端为 1.3.0，个别按钮或修复可能略有差异"),
@@ -541,7 +541,7 @@ def build() -> None:
     ])
 
     add_h1(doc, "1. 系统全貌")
-    add_body(doc, "rsci 的核心不是让模型直接登录服务器，而是把本地界面、模型调用、Vlab 跳板机和多台 HPC 服务器串成一条可审计的数据通路。日常用户主要面对 Codex、Web UI 或 CLI；SSH 复用、调度器差异和 VASP 输出解析由后端处理。")
+    add_body(doc, "远端控制智能体把本地界面、模型调用、Vlab 跳板机和多台 HPC 服务器串成一条可审计的数据通路。英文技术名、Python 包名与主命令为 rsci。日常用户主要面对 Codex、Web UI 或 CLI；SSH 复用、调度器差异和 VASP 输出解析由后端处理。")
     add_code(doc, "Codex / Web UI / CLI\n"
                   "        ↓ 共享工具注册表\n"
                   "本机 GatewayClient 与审计日志\n"
@@ -593,7 +593,7 @@ def build() -> None:
                "图 1  Codex 内嵌远程集群作业面板",
                "Codex embedded dashboard with server cards, active jobs and progress inputs")
     add_h2(doc, "3.1 在 Codex 中打开面板")
-    add_code(doc, "显示 rsci 集群作业面板，并每 30 秒刷新一次。\n"
+    add_code(doc, "显示远端控制智能体集群作业面板，并每 30 秒刷新一次。\n"
                   "只显示 cl9 和 minus 的集群面板。\n"
                   "查询 cl9 上 /public/home/.../runs/case-1 的 VASP 科学进度。")
     add_h2(doc, "3.2 界面区域")
@@ -642,7 +642,7 @@ def build() -> None:
 
     add_h1(doc, "5. 服务器连接与认证")
     add_h2(doc, "5.1 首次配置 Vlab 中转密钥")
-    add_body(doc, "首次使用时，先在 Vlab 网站创建一对 SSH 密钥并把私钥文件保存到本机。这个私钥用于“本机 → Vlab 网关”的连接；完成一次配置后，rsci 才能通过 Vlab 再访问已登记的远端服务器。")
+    add_body(doc, "首次使用时，先在 Vlab 网站创建一对 SSH 密钥并把私钥文件保存到本机。这个私钥用于“本机 → Vlab 网关”的连接；完成一次配置后，远端控制智能体才能通过 Vlab 再访问已登记的远端服务器。")
     add_h3(doc, "步骤 1：进入 Vlab 的 SSH 密钥管理")
     add_body(doc, "登录 https://vlab.ustc.edu.cn/vm/，在顶部点击“虚拟机管理”，再点击“SSH 密钥管理”。")
     add_figure(doc, VLAB / "vlab-01-home.png",
@@ -656,9 +656,9 @@ def build() -> None:
     add_figure(doc, VLAB / "vlab-03-create-download.png",
                "步骤图 C  生成新的 SSH 密钥对，并下载私钥文件",
                "Vlab page showing Generate new SSH key pair and Download private key", width=2.75)
-    add_h3(doc, "步骤 3：在 rsci 中填写连接设置")
+    add_h3(doc, "步骤 3：在远端控制智能体中填写连接设置")
     add_numbers(doc, [
-        "在 rsci Web UI 顶部进入“配置”，选择“连接设置”。",
+        "在远端控制智能体 Web UI 顶部进入“配置”，选择“连接设置”。",
         "在“Vlab 主机”填入 vlab.ustc.edu.cn；如果 Vlab 或管理员另行提供 SSH 主机名、端口，以提供的信息为准。",
         "填写你的 Vlab 用户名和 SSH 端口；未另行说明时端口通常为 22。",
         "在“身份文件路径”选择刚才下载的私钥文件，例如 C:\\Users\\<用户名>\\.ssh\\rsci_vlab_key。",
@@ -1009,10 +1009,10 @@ def build() -> None:
     set_run_font(r, size=9, color=MUTED, italic=True)
 
     patch_numbering(doc)
-    doc.core_properties.title = "rsci 详细使用手册"
+    doc.core_properties.title = "远端控制智能体详细使用手册"
     doc.core_properties.subject = "Codex 插件、本地 Web 控制台与 CLI 使用指南"
-    doc.core_properties.author = "rsci 项目组"
-    doc.core_properties.keywords = "rsci, VASP, HPC, Codex, Slurm, PBS, Vlab"
+    doc.core_properties.author = "远端控制智能体项目组"
+    doc.core_properties.keywords = "远端控制智能体, rsci, VASP, HPC, Codex, Slurm, PBS, Vlab"
     doc.core_properties.comments = "基于 rsci 1.3.5 源码界面编制"
     doc.save(OUT)
     print(OUT)

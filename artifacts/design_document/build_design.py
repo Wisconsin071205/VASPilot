@@ -7,7 +7,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT=Path(__file__).resolve().parent
-OUT=ROOT.parent/'competition_submission'/'修订版'/'晶织_作品设计文档.docx'
+OUT=ROOT.parent/'competition_submission'/'修订版'/'远端控制智能体_作品设计文档.docx'
 doc=Document()
 sec=doc.sections[0]
 sec.page_width=Cm(21); sec.page_height=Cm(29.7)
@@ -23,7 +23,7 @@ doc.styles['Normal'].paragraph_format.widow_control=True
 for style in doc.styles:
  for border in list(style.element.iter(qn('w:pBdr'))): border.getparent().remove(border)
 doc.styles['Subtitle'].font.italic=False
-doc.core_properties.title='晶织 多服务器连接与计算控制智能体作品设计文档'
+doc.core_properties.title='远端控制智能体作品设计文档'
 doc.core_properties.subject='一〇七杯算力与智能体开发大赛'
 doc.core_properties.author=''
 foot=sec.footer.paragraphs[0]; foot.alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -82,12 +82,12 @@ d.text((90,955),'计算服务器无需访问模型 API；模型调用与结果�
 d.text((70,982),'边界：大模型负责规划与解释；VASP 计算在集群资源上执行。',font=small,fill='#263747')
 im.save(ROOT/'architecture.png')
 
-doc.add_paragraph('晶织 多服务器连接与计算控制智能体',style='Title')
+doc.add_paragraph('远端控制智能体',style='Title')
 doc.add_paragraph('作品设计文档',style='Title')
 doc.add_paragraph('一〇七杯算力与智能体开发大赛',style='Subtitle')
 p('实现标识  rsci    文档版本  1.1    修订日期  2026年9月6日')
 h('作品概述')
-p('晶织面向科研服务器无法直接访问外部模型服务、且用户需要管理多台服务器的场景，提供本地智能体驱动的统一连接与计算控制工作台。模型调用在可联网的本机完成，服务器通过 SSH 直连或 Vlab 中转接收已授权操作，无需直接调用模型 API。用户可集中诊断连接、管理文件、查询作业并解释日志。')
+p('远端控制智能体面向科研服务器无法直接访问外部模型服务、且用户需要管理多台服务器的场景，提供本地智能体驱动的统一连接与计算控制工作台。模型调用在可联网的本机完成，服务器通过 SSH 直连或 Vlab 中转接收已授权操作，无需直接调用模型 API。用户可集中诊断连接、管理文件、查询作业并解释日志。')
 p('设计主线是把本机的智能交互与多台远端服务器的真实执行环境连接起来，减少切换终端、搬运命令与日志以及混淆目标目录的操作。VASP 是当前专业适配场景，已有输入校验、计划审批、单阶段提交、监测与结果回收；通用连接层与科学软件专用逻辑分开组织。')
 h('阅读导航')
 table(['章节','内容'],[

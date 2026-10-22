@@ -1,6 +1,6 @@
 {
   "name": "huwei-agent-vscode-bridge",
-  "displayName": "晶织：VASP 服务端计算控制智能体 VS Code Bridge",
+  "displayName": "远端控制智能体 VS Code Bridge",
   "description": "经本地控制台按需读写远端服务器文件的虚拟工作区（不经 Remote-SSH、不在计算服务器安装任何组件）",
   "version": "1.0.0",
   "publisher": "huwei-team",
@@ -26,20 +26,20 @@
     "commands": [
       {
         "command": "huwei-bridge.reconnect",
-        "title": "Huwei Bridge：重新检测本地控制台"
+        "title": "远端控制智能体：重新检测本地控制台"
       },
       {
         "command": "huwei-bridge.refresh",
-        "title": "Huwei Bridge：刷新远端文件",
+        "title": "远端控制智能体：刷新远端文件",
         "icon": "$(refresh)"
       },
       {
         "command": "huwei-bridge.find",
-        "title": "晶织：VASP 服务端计算控制智能体：在远端路径中搜索"
+        "title": "远端控制智能体：在远端路径中搜索"
       },
       {
         "command": "huwei-bridge.workspaceStatus",
-        "title": "晶织：VASP 服务端计算控制智能体：查看 Vlab 工作区状态"
+        "title": "远端控制智能体：查看 Vlab 工作区状态"
       }
     ],
     "menus": {
@@ -51,7 +51,7 @@
       ]
     },
     "configuration": {
-      "title": "晶织：VASP 服务端计算控制智能体 Bridge",
+      "title": "远端控制智能体 Bridge",
       "properties": {
         "huwei-bridge.consoleUrl": {
           "type": [

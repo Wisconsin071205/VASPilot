@@ -96,7 +96,7 @@ class App:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rsci",
-        description="CLI-first, multi-model VASP/HPC agent")
+        description="远端控制智能体 (rsci): CLI-first, multi-model VASP/HPC agent")
     parser.add_argument("--version", action="version",
                         version=f"rsci {__version__}")
     parser.add_argument("--config-dir", default=None,

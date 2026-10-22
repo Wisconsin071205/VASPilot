@@ -1,4 +1,4 @@
-"""rsci: CLI-first, multi-model VASP/HPC agent.
+"""远端控制智能体 (rsci): CLI-first, multi-model VASP/HPC agent.
 
 Three-layer boundary:
   1. local CLI/agent layer  - model calls, planning, approval, audit, monitoring
