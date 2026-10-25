@@ -91,6 +91,8 @@ class OpenAIChatCompatibleProvider(BaseProvider):
                        state: dict | None = None):
         response = self._request(payload, stream=True, timeout=timeout)
         with self.track_response(response) as response:
+            if state is not None:
+                state["is_sse"] = "text/event-stream" in response.headers.get("Content-Type", "")
             try:
                 for raw_line in response:
                     self.raise_if_cancelled()
@@ -104,8 +106,8 @@ class OpenAIChatCompatibleProvider(BaseProvider):
                         break
                     try:
                         event = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
+                    except json.JSONDecodeError as exc:
+                        raise ProviderError("模型流包含无法解析的数据，本轮未执行工具") from exc
                     if isinstance(event, dict):
                         yield event
             except (TimeoutError, socket.timeout) as exc:
@@ -132,9 +134,12 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         usage: dict = {}
         events = 0
         stream_state: dict = {}
+        finished = False
         for event in self._stream_events({**payload, "stream": True},
                                          state=stream_state):
             events += 1
+            if event.get("error"):
+                raise ProviderError("模型服务返回错误：" + str(event["error"])[:400])
             usage = event.get("usage") or usage
             choices = event.get("choices") or []
             if not choices:
@@ -159,17 +164,17 @@ class OpenAIChatCompatibleProvider(BaseProvider):
                 if function.get("arguments"):
                     slot["args"].append(str(function["arguments"]))
             if choices[0].get("finish_reason"):
+                finished = True
                 reply.finish = str(choices[0]["finish_reason"])
         if not events:
+            if stream_state.get("is_sse"):
+                raise ProviderError("模型流未返回有效回答，请检查模型服务后再发送")
             # stream unsupported or failed: single-shot fallback
             return self._chat_blocking(payload)
-        if not stream_state.get("done") and text_parts:
-            # 上游连接在生成中途断开：明示回答可能不完整，而不是
-            # 把半截话当作完整回答收尾
-            note = "\n\n⚠️ 上游流式连接中断，本回答可能不完整。"
-            text_parts.append(note)
-            if stream_cb:
-                stream_cb(note)
+        if not stream_state.get("done") and not finished:
+            raise ProviderError("模型流在完成前断开，本轮工具未执行；请核对已有结果后继续")
+        if reply.finish in ("length", "content_filter", "error"):
+            raise ProviderError("模型回答未完整结束（" + reply.finish + "），本轮工具未执行")
         merged: list[ToolCall] = []
         for index in sorted(acc):
             slot = acc[index]
@@ -202,6 +207,8 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(
                 "provider response was missing choices[0].message") from exc
+        if choice.get("finish_reason") in ("length", "content_filter", "error"):
+            raise ProviderError("模型回答未完整结束，本轮工具未执行")
         reply = ProviderReply(text=str(message.get("content") or ""))
         calls: list[ToolCall] = []
         for call in message.get("tool_calls") or []:

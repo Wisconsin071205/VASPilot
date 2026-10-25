@@ -19,7 +19,15 @@ def emit(payload: dict, *, stream=None) -> None:
     document["ok"] = bool(document.get("ok", False))
     text = json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2)
     out = stream if stream is not None else sys.stdout
-    out.write(text + "\n")
+    # Frozen Windows executables can ignore PYTHONIOENCODING and use the
+    # locale code page for pipes. JSON consumers still require UTF-8 bytes.
+    binary = getattr(out, "buffer", None)
+    if binary is not None and not out.isatty():
+        out.flush()
+        binary.write((text + "\n").encode("utf-8"))
+        binary.flush()
+    else:
+        out.write(text + "\n")
     out.flush()
 
 

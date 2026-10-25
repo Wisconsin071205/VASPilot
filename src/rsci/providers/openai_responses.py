@@ -97,8 +97,8 @@ class OpenAIResponsesProvider(BaseProvider):
                         break
                     try:
                         event = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
+                    except json.JSONDecodeError as exc:
+                        raise ProviderError("模型流包含无法解析的数据，本轮未执行工具") from exc
                     if isinstance(event, dict):
                         yield event
             except (TimeoutError, socket.timeout) as exc:
@@ -126,9 +126,12 @@ class OpenAIResponsesProvider(BaseProvider):
         # argument deltas; accumulate per call_id
         arg_fragments: dict[str, list[str]] = {}
         pending: dict[str, dict] = {}
+        completed = False
         for event in self._sse_events(payload):
             events += 1
             kind = event.get("type", "")
+            if kind in ("error", "response.failed", "response.incomplete"):
+                raise ProviderError("模型回答未完整结束（" + str(kind) + "），本轮工具未执行")
             if kind == "response.output_text.delta":
                 fragment = str(event.get("delta") or "")
                 if fragment:
@@ -152,6 +155,7 @@ class OpenAIResponsesProvider(BaseProvider):
                         "call_id": call_id, "name": name,
                         "arguments": parse_tool_arguments(raw_args or "{}")}
             elif kind == "response.completed":
+                completed = True
                 response = event.get("response") or {}
                 usage = response.get("usage") or usage
                 for item in (response.get("output") or []):
@@ -163,6 +167,8 @@ class OpenAIResponsesProvider(BaseProvider):
                                 "name": str(item.get("name") or ""),
                                 "arguments": parse_tool_arguments(
                                     item.get("arguments") or "{}")}
+        if events and not completed:
+            raise ProviderError("模型流在完成前断开，本轮工具未执行；请核对已有结果后继续")
         calls = [ToolCall(**slot) for slot in pending.values() if slot["name"]]
         reply = ProviderReply(text="".join(text_parts))
         if calls:
@@ -185,6 +191,8 @@ class OpenAIResponsesProvider(BaseProvider):
                 raise ProviderError(
                     "读取模型服务响应超时：请检查网络/VPN、服务端负载后重试") from exc
         reply = ProviderReply()
+        if document.get("error") or document.get("status") in ("failed", "incomplete", "in_progress", "cancelled"):
+            raise ProviderError("模型服务未返回完整回答，本轮工具未执行")
         calls: list[ToolCall] = []
         for item in document.get("output") or []:
             if item.get("type") == "message":
