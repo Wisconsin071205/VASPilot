@@ -20,7 +20,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $Repo = Split-Path -Parent $PSScriptRoot
 $Venv = Join-Path $Repo '.venv'
-$ShortcutName = '远端控制智能体.lnk'
+$ShortcutName = 'RSCI 科研助手.lnk'
 $Icon = Join-Path $Repo 'src\rsci\desktop\assets\icon.ico'
 
 function Test-StablePython([string]$Exe) {

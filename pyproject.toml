@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "rsci"
 # The release version is defined once in the Python package.
 dynamic = ["version"]
-description = "远端控制智能体：多模型 VASP/HPC 连接、作业和工作流控制"
+description = "RSCI 科研助手：数据、脚本、可审批分析与远端任务；VASP 专业模块可选"
 requires-python = ">=3.11"
 license = { text = "Proprietary (research prototype)" }
 dependencies = []

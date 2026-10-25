@@ -1,6 +1,6 @@
 {
   "name": "huwei-agent-vscode-bridge",
-  "displayName": "远端控制智能体 VS Code Bridge",
+  "displayName": "RSCI 科研助手 VS Code Bridge",
   "description": "经本地控制台按需读写远端服务器文件的虚拟工作区（不经 Remote-SSH、不在计算服务器安装任何组件）",
   "version": "1.0.1",
   "publisher": "huwei-team",
@@ -26,20 +26,20 @@
     "commands": [
       {
         "command": "huwei-bridge.reconnect",
-        "title": "远端控制智能体：重新检测本地控制台"
+        "title": "RSCI 科研助手：重新检测本地控制台"
       },
       {
         "command": "huwei-bridge.refresh",
-        "title": "远端控制智能体：刷新远端文件",
+        "title": "RSCI 科研助手：刷新远端文件",
         "icon": "$(refresh)"
       },
       {
         "command": "huwei-bridge.find",
-        "title": "远端控制智能体：在远端路径中搜索"
+        "title": "RSCI 科研助手：在远端路径中搜索"
       },
       {
         "command": "huwei-bridge.workspaceStatus",
-        "title": "远端控制智能体：查看 Vlab 工作区状态"
+        "title": "RSCI 科研助手：查看 Vlab 工作区状态"
       }
     ],
     "menus": {
@@ -51,7 +51,7 @@
       ]
     },
     "configuration": {
-      "title": "远端控制智能体 Bridge",
+      "title": "RSCI 科研助手 Bridge",
       "properties": {
         "huwei-bridge.consoleUrl": {
           "type": [

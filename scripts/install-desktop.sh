@@ -11,7 +11,7 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 venv="$repo/.venv"
-app_name="远端控制智能体"
+app_name="RSCI 科研助手"
 bundle="$HOME/Applications/$app_name.app"
 icon_src="$repo/src/rsci/desktop/assets/icon.icns"
 

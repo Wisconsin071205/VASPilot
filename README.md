@@ -1,9 +1,53 @@
-# 远端控制智能体
+# RSCI 科研助手
 
-> 产品名称与远端项目统一为「远端控制智能体」；英文技术名、Python 包名和
-> 主命令保留为 `rsci`。`huwei` 保留为兼容命令。
+通用科研底座＋按项目启用的专业模块。默认支持数据、脚本、笔记、文献与结果管理，
+通过可审阅计划、人工审批、独立后台进程和哈希校验执行 Python 分析。
+VASP/HPC 能力保留在专用模块中，不再定义默认助手身份。
+英文名、Python 包名和主命令为 `rsci`；`huwei` 保留为兼容命令。
 
-CLI-first, multi-model VASP/HPC agent: after the user completes SSH
+## 通用科研入门
+
+运行 `rsci ui`，在「项目」中新建“通用科研”项目，再打开「项目文件」：
+
+1. 导入 CSV；生成描述性统计脚本，或自行编辑 `scripts/` 中的 Python。
+2. 审阅输入文件、完整脚本、解释器、参数、超时及输出声明，生成分析计划。
+3. 在任务中心输入审批短语，再启动执行。保存脚本或生成计划都不会自动执行。
+4. 关闭窗口不停止后台任务；重新打开后查看状态、读取或下载结果。
+
+标准项目目录为 `data/`、`scripts/`、`notes/`、`results/`、`references/`。
+CSV 示例仅做描述性统计，输出 JSON、Markdown 报告及 SVG 图表；不声称统计显著性或因果关系。
+执行状态、回收状态与科学结论独立保存。文件冲突不覆盖，执行结果不确定时不自动重跑。
+
+**安全边界：Python 使用当前用户的系统权限，不是操作系统沙箱。** 执行前必须审查代码；
+托管文件接口的路径限制和哈希检查不能阻止已批准脚本自行访问文件或网络。
+Windows EXE 需要在分析表单中指定本机 Python 解释器；源码运行默认使用当前 Python。
+分析依赖安装在所选解释器环境中，程序不会静默安装依赖。
+
+CLI 同样支持这些功能：
+
+```powershell
+rsci project create experiment
+rsci project import experiment data/measurements.csv --source C:\data\measurements.csv
+rsci project csv-template experiment data/measurements.csv
+rsci workflow analyze experiment --script scripts/analyze.py --input data/measurements.csv --output results/summary.json --output results/report.md --output results/means.svg
+# 查看生成的计划后，按 workflow approve/run 的提示人工审批与执行；run 默认同步，--background 为后台模式。
+```
+
+「项目文件 → 文献与实验记录」支持 Crossref 公开元数据检索、保存文献、核对 DOI/标题，
+以及分栏保存方法、观察、解释和局限。核对保留每次证据与时间；元数据匹配**不代表**
+已核验全文、引用是否支持论点或研究质量。查询词与 DOI 会发送到 Crossref；
+不要用未公开的敏感研究内容作查询。实验记录可关联本项目计划及输入/结果哈希。
+
+侧栏外观选择提供深色、浅色、暖砂、松林与跟随系统，自动记住选择；状态同时使用文字标识。
+旧项目按 VASP 项目迁移，原文件不改写。VaspLoom/VASPilot 凭据迁移前缀、`huwei` 命令及
+扩展标识保留用于兼容，不能简单全局替换。
+
+## VASP/HPC 专业模块
+
+选择并进入 VASP 项目后，才向对话加载材料计算规则、VASP/VASPKIT/POTCAR 与 Campaign 工具。
+任务执行、恢复与回收共用任务中心，VASP 输入校验、进度与收敛判断由专业模块负责。
+
+The CLI-first, multi-model VASP/HPC module remains available: after the user completes SSH
 authentication by hand, it performs **auditable** file transfer, job
 submission, status monitoring and VASP workflows across
 `Windows → USTC Vlab → multiple remote HPC servers` by default; each server
@@ -147,6 +191,11 @@ re-authenticate visibly via `server connect`.
 
 本地零依赖 Web UI（默认 `http://127.0.0.1:8930`，浏览器自动打开）：
 
+左侧「外观主题」可切换深色、浅色、暖砂、松林或跟随系统。主题在首次绘制前
+恢复，覆盖对话、代码、表单、审批及任务状态；只影响外观，不改变模型、审批或
+执行配置。偏好保存在当前浏览器/桌面 WebView 的当前站点，刷新后保留，同源窗口
+自动同步；换浏览器或端口需重新选择。存储不可用时仍可切换，并提示无法保存。
+
 - **对话** — 多 Provider 智能体聊天，流式输出、持久记忆、会话分支、上下文压缩、
   安全 Markdown 渲染和工具调用卡片（可展开参数/结果），与 CLI/MCP 共用同一注册表
   和权限语义；
@@ -174,8 +223,8 @@ TOTP 种子不离开本机。未保存凭据时，交互式登录通过「连接
 
 | 平台 | 渲染器 | 安装脚本 | 入口 |
 | --- | --- | --- | --- |
-| Windows | WebView2（`edgechromium`，经 pythonnet/.NET Framework） | `scripts\install-desktop.ps1` | 桌面与开始菜单的 `远端控制智能体` 快捷方式 |
-| macOS | WKWebView（`cocoa`，经 pyobjc） | `scripts/install-desktop.sh` | `~/Applications/远端控制智能体.app` |
+| Windows | WebView2（`edgechromium`，经 pythonnet/.NET Framework） | `scripts\install-desktop.ps1` | 桌面与开始菜单的 `RSCI 科研助手` 快捷方式 |
+| macOS | WKWebView（`cocoa`，经 pyobjc） | `scripts/install-desktop.sh` | `~/Applications/RSCI 科研助手.app` |
 
 Windows：
 
@@ -206,12 +255,12 @@ TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
 中转只经已验证的 SSH 通道临时发送密码和当期六位码，TOTP 种子不会离开本机，
 Vlab 不会落盘保存凭据。密码和种子绝不进入审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
 自动连接会暂停；未保存凭据时仍通过「连接」按钮在**独立可见系统终端**中手工输入。
-审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「远端控制智能体」
+审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「RSCI 科研助手」
 或 `%USERPROFILE%\bin\rsci-ui.cmd` 一键启动。
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 
-仓库附带“远端控制智能体 VS Code Bridge”扩展。它经本地控制台按需访问
+仓库附带“RSCI 科研助手 VS Code Bridge”扩展。它经本地控制台按需访问
 `Windows → Vlab → HPC`，不通过 Remote-SSH 直接连接计算服务器，因此不会在
 CentOS 7 等老集群安装 VS Code Server。先运行
 `apps\huwei-agent-vscode-bridge\install-windows.ps1` 安装仓库内的 VSIX，随后在
