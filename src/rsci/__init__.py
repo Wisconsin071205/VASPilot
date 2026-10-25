@@ -1,4 +1,4 @@
-"""远端控制智能体 (rsci): CLI-first, multi-model VASP/HPC agent.
+"""RSCI 科研助手: general research workspace with opt-in domain modules.
 
 Three-layer boundary:
   1. local CLI/agent layer  - model calls, planning, approval, audit, monitoring

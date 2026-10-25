@@ -63,10 +63,11 @@ class TestMcpProtocol:
         server, app, registry = mcp_session
         reply = server._handle(app, registry, rpc("tools/list"))
         names = {t["name"] for t in reply["result"]["tools"]}
-        assert {"server_list", "remote_list", "remote_read", "vasp_progress",
+        assert {"server_list", "remote_list", "remote_read", "research_prepare",
                 "job_state", "open_remote_login", "open_approval_terminal",
                 "rsci_self_check", "fleet_snapshot",
                 "render_fleet_dashboard"} <= names
+        assert "vasp_progress" not in names  # specialist module is opt-in
         # operator policy (since 1.1): audit-only shell tools are exposed,
         # alongside the project/skill/web/metrics surfaces
         assert {"shell_run", "remote_run", "server_metrics",

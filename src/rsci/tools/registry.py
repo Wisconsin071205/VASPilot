@@ -80,6 +80,14 @@ class ToolContext:
         self.audit = audit
         self.session_id = str(session_id or "")
 
+    @property
+    def project_kind(self) -> str:
+        if self.project_root is not None:
+            root = self.config.projects_dir.resolve()
+            if self.project_root.parent == root and self.project_root.is_dir():
+                return self.project_store.kind(self.project_root.name)
+        return "general"
+
     # -- lazily built stores (imported here to avoid cycles) -------------------
     @property
     def project_store(self) -> Any:
@@ -116,16 +124,20 @@ class ToolRegistry:
 
     # -- registry api ----------------------------------------------------------
     def get(self, name: str) -> ToolDef:
-        if name not in self._tools:
+        if name not in self._tools or not self._enabled(name):
             raise ValidationError(f"unknown tool {name!r}")
         return self._tools[name]
 
     def names(self) -> list[str]:
-        return sorted(self._tools)
+        return sorted(n for n in self._tools if self._enabled(n))
+
+    def _enabled(self, name: str) -> bool:
+        specialist = name.startswith(("vasp_", "vaspkit_", "campaign_", "potcar_")) or name == "workflow_prepare"
+        return not specialist or self.context.project_kind == "vasp"
 
     def list_tools(self, *, kinds: tuple[str, ...] = ("read", "write")) -> list[ToolDef]:
         return [self._tools[n] for n in sorted(self._tools)
-                if self._tools[n].kind in kinds]
+                if self._tools[n].kind in kinds and self._enabled(n)]
 
     def dispatch(self, name: str, arguments: dict[str, Any] | None,
                  *, provider_mode: str = "full") -> dict[str, Any]:
@@ -365,11 +377,11 @@ class ToolRegistry:
         # ---- local projects ----------------------------------------------------------
         self._add(
             "project_create",
-            "Create a local calculation project under ~/.rsci/projects "
-            "with INCAR/KPOINTS/POSCAR text (blank strings are skipped). "
-            "POTCAR cannot be written as text — ask the user for a local "
-            "POTCAR path instead.", "write",
+            "Create a research project in the actual configured projects directory. "
+            "Defaults to general (data/scripts/notes/results/references). "
+            "Choose kind=vasp only when explicitly requested; this does not change the active conversation project.", "write",
             {"name": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"},
+             "kind": {"type": "string", "enum": ["general", "vasp"], "default": "general"},
              "incar": {"type": "string", "maxLength": 65536},
              "kpoints": {"type": "string", "maxLength": 65536},
              "poscar": {"type": "string", "maxLength": 262144},
@@ -378,13 +390,12 @@ class ToolRegistry:
                                "library path recorded for later assembly"}},
             lambda a: {**self.context.project_store.create(
                 str(a["name"]),
-                {"INCAR": str(a.get("incar") or ""),
-                 "KPOINTS": str(a.get("kpoints") or ""),
-                 "POSCAR": str(a.get("poscar") or "")},
+                {k.upper(): str(a[k]) for k in ("incar", "kpoints", "poscar") if a.get(k)},
+                kind=str(a["kind"]) if a.get("kind") else None,
                 potcar_remote=str(a.get("potcar_remote") or "")), "ok": True})
         self._add(
             "project_list",
-            "List local calculation projects with input-file completeness.",
+            "List local research projects with explicit domain and file inventory.",
             "read", {}, lambda a: {"ok": True,
                                    "projects": self.context.project_store.list()})
         self._add(
@@ -393,31 +404,54 @@ class ToolRegistry:
             "only (TITEL/ENMAX/size/sha256). Empty project = the session's "
             "active project.", "read",
             {"project": {"type": "string", "maxLength": 64},
-             "file": {"type": "string", "enum": ["INCAR", "KPOINTS", "POSCAR",
-                                                 "POTCAR", "run.job.sh"]}},
+             "file": {"type": "string", "maxLength": 240}},
             lambda a: {"ok": True,
                        **self.context.project_store.read_file(
                            self._project_name(a), str(a["file"]))})
         self._add(
             "project_write",
-            "Write one file of a local project (INCAR/KPOINTS/POSCAR/"
-            "run.job.sh). POTCAR is refused — copy it via a user-supplied "
-            "path instead. Empty project = the session's active project.",
+            "Write a confined research text file (data/, scripts/, notes/, results/, references/). "
+            "Pass the hash from project_read when modifying an existing file. "
+            "Saving code does not execute it. VASP projects retain their input whitelist; POTCAR text is refused.",
             "write",
             {"project": {"type": "string", "maxLength": 64},
-             "file": {"type": "string", "enum": ["INCAR", "KPOINTS", "POSCAR",
-                                                 "run.job.sh"]},
+             "file": {"type": "string", "maxLength": 240},
+             "expected_sha256": {"type": "string", "pattern": "^(?:[0-9a-f]{64}|missing)$"},
              "content": {"type": "string", "maxLength": 262144}},
             lambda a: {"ok": True,
                        **self.context.project_store.write_file(
                            self._project_name(a), str(a["file"]),
-                           str(a["content"]))})
+                           str(a["content"]), expected_sha256=a.get("expected_sha256"))})
         self._add(
             "project_validate",
-            "Preflight-check a local project's VASP inputs (empty project = "
-            "the session's active project).", "read",
+            "Validate a project's managed paths and domain-specific requirements. "
+            "General projects do not require specialist inputs.", "read",
             {"project": {"type": "string", "maxLength": 64}},
             lambda a: self.context.project_store.validate(self._project_name(a)))
+        self._add("project_files", "List confined project files with size and SHA-256.", "read",
+                  {"project": {"type": "string", "maxLength": 64}},
+                  lambda a: {"files": self.context.project_store.files(self._project_name(a))})
+        from ..workflow.research import csv_preview, prepare_csv_template
+        self._add("research_csv_preview", "Preview only the first five CSV/TSV rows and column names; no analysis execution.", "read",
+                  {"project": {"type": "string"}, "file": {"type": "string"}},
+                  lambda a: csv_preview(self.context.project_store, self._project_name(a), str(a["file"])))
+        self._add("research_csv_template", "Save an editable, dependency-free descriptive CSV script. Does not execute or approve it. Never overwrites an existing script.", "write",
+                  {"project": {"type": "string"}, "file": {"type": "string"}, "script": {"type": "string"}},
+                  lambda a: prepare_csv_template(self.context.config, self._project_name(a), str(a["file"]),
+                      script=str(a.get("script") or "scripts/analyze.py"), audit=self.context.audit))
+        from ..workflow import knowledge
+        self._add("literature_search", "Search public Crossref bibliographic metadata (top 5). Sends only the query. Results are not verified citations or full text.", "read",
+                  {"query": {"type": "string", "maxLength": 400}}, lambda a: knowledge.literature_search(str(a["query"])))
+        self._add("reference_add", "Save a DOI and expected title in a general project's reference library as UNVERIFIED; never overwrites an existing DOI.", "write",
+                  {"project": {"type": "string"}, "doi": {"type": "string"}, "title": {"type": "string"}},
+                  lambda a: knowledge.add_reference(self.context.config, self._project_name(a), str(a["doi"]), str(a["title"]), audit=self.context.audit))
+        self._add("reference_check", "Retrieve Crossref metadata for an existing reference DOI and append a DOI/title comparison. Never verifies whether the paper supports a claim. Unavailable/mismatch means not verified.", "write",
+                  {"project": {"type": "string"}, "reference_id": {"type": "string"}},
+                  lambda a: knowledge.check_reference(self.context.config, self._project_name(a), str(a["reference_id"]), audit=self.context.audit))
+        self._add("experiment_record", "Save a general-project experiment record with method, observations, interpretation and limitations in SEPARATE fields. All entered prose remains unverified; optional plan_id binds recorded input/output hashes.", "write",
+                  {key: {"type": "string"} for key in ("project", "title", "method", "observations", "interpretation", "limitations", "plan_id")},
+                  lambda a: knowledge.record_experiment(self.context.config, self._project_name(a),
+                    **{k: str(a.get(k) or "") for k in ("title", "method", "observations", "interpretation", "limitations", "plan_id")}, audit=self.context.audit))
 
         # ---- skills (self-evolution) ----------------------------------------------------
         self._add(
@@ -460,6 +494,12 @@ class ToolRegistry:
         # ---- workflow (the chat handoff is local-only; execution stays behind UI approval) ----
         if self.context.workflow_engine is not None:
             engine = self.context.workflow_engine
+            self._add("research_prepare",
+                "Prepare a general-project local Python analysis for human review. "
+                "Spec requires script, input and output paths; project defaults to the active project. "
+                "Binds code, hashes, interpreter and timeout. Does not execute. Stop and wait for approval.",
+                "write", {"spec": {"type": "object"}},
+                lambda a: self._research_prepare(a, engine))
             self._add(
                 "workflow_prepare",
                 "Prepare and persist the authoritative single-stage VASP job "
@@ -538,15 +578,25 @@ class ToolRegistry:
             lambda a: self._campaign_abort(a))
 
     # -- handlers needing context ------------------------------------------------
+    def _research_prepare(self, args, engine):
+        spec = dict(args.get("spec") or {})
+        spec["project"] = self._project_name({"project": spec.get("project")})
+        spec["domain"] = "general"
+        return self._workflow_prepare({"spec": spec}, engine)
+
     def _workflow_prepare(self, args: dict[str, Any], engine: Any) -> dict[str, Any]:
         """Bind a chat request to its active project before preparing a plan."""
         spec = dict(args.get("spec") or {})
         if not spec.get("from_dir") and self.context.project_root is not None:
             spec["from_dir"] = str(self.context.project_root)
-        if not spec.get("from_dir"):
+        if not spec.get("from_dir") and not spec.get("project"):
             raise ValidationError(
                 "workflow_prepare needs an active local project or spec.from_dir")
         result = engine.prepare(spec)
+        if self.context.session_id:
+            from ..agents.memory import ConversationStore
+            ConversationStore(self.context.config.chat_dir).bind_workflow_plan(
+                self.context.session_id, result["plan_id"])
         result.update({
             "status": "pending_approval",
             "requires_user_action": True,
@@ -561,6 +611,11 @@ class ToolRegistry:
             "files_hash": result["files_hash"],
             "server": plan.get("server", ""),
             "remote_dir": plan.get("remote_dir", ""),
+            "domain": plan.get("domain", "vasp"),
+            "project": plan.get("project", ""),
+            "execution": plan.get("execution", {}),
+            "outputs": plan.get("outputs", []),
+            "job_script_content": plan.get("job_script_content", ""),
             "files": [{key: entry.get(key) for key in ("name", "size", "sha256")}
                       for entry in plan.get("files", [])],
             "steps": [{key: step.get(key) for key in

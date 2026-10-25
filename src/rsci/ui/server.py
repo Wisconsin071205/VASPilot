@@ -52,7 +52,7 @@ class RequestTooLargeError(ValueError):
     """Raised before parsing a localhost request that exceeds its cap."""
 
 _EXPIRED_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>会话已过期 — 远端控制智能体</title><style>
+<title>会话已过期 — RSCI 科研助手</title><style>
 body{background:#0d1117;color:#e6edf3;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{max-width:520px;background:#161b22;border:1px solid #2d3644;border-radius:12px;padding:28px 32px}
@@ -61,20 +61,20 @@ code{background:#1c2330;border-radius:5px;padding:2px 7px;font-size:13px;color:#
 </style></head><body><div class="card">
 <h1>⏱ 会话已过期</h1>
 <p>每次启动 <code>rsci ui</code> 都会生成新的会话令牌，旧标签页的链接随之失效。</p>
-<p>请重新打开：<b>桌面「远端控制智能体」</b>快捷方式，或在终端运行
+<p>请重新打开：<b>桌面「RSCI 科研助手」</b>快捷方式，或在终端运行
 <code>rsci ui</code> —— 浏览器会自动打开新会话。</p>
 <p style="font-size:12px">若提示端口被占用，服务会自动改用相邻端口并打印实际地址。</p>
 </div></body></html>"""
 
 _LANDING_PAGE = """<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
-<title>远端控制智能体</title><style>
+<title>RSCI 科研助手</title><style>
 body{background:#0d1117;color:#e6edf3;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
 .card{max-width:520px;background:#161b22;border:1px solid #2d3644;border-radius:12px;padding:28px 32px}
 h1{font-size:18px;margin:0 0 10px}p{color:#9aa7b8;margin:8px 0}
 code{background:#1c2330;border-radius:5px;padding:2px 7px;font-size:13px;color:#4f9cf7}
 </style></head><body><div class="card">
-<h1>远端控制智能体</h1>
+<h1>RSCI 科研助手</h1>
 <p>控制台通过带会话令牌的地址访问，请从快捷方式或命令启动（浏览器会自动打开）：</p>
 <p><code>rsci ui</code></p>
 <p style="font-size:12px">这是设计如此：令牌防止本机其他页面盗用控制台 API。</p>
@@ -88,7 +88,6 @@ class UiState:
         self.app = app
         self.token = secrets.token_urlsafe(24)
         self.lock = threading.Lock()
-        self.runs: dict[str, dict[str, Any]] = {}  # plan_id -> thread info
         self._campaign_wake: threading.Event | None = None
         # run_id -> stop flag of each chat turn in flight
         self.chat_runs: dict[str, dict[str, Any]] = {}
@@ -352,6 +351,23 @@ class UiHandler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain; charset=utf-8")
             return
         if not self._authorized():
+            # An unread POST body can turn a clean 403 into a TCP reset on
+            # Windows. Drain only small, bounded requests, without parsing or
+            # executing them. Large/slow unauthorized requests are closed.
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = -1
+            timeout = self.connection.gettimeout()
+            try:
+                if 0 < length <= 65536:
+                    self.connection.settimeout(2)
+                    self.rfile.read(length)
+            except OSError:
+                pass
+            finally:
+                self.connection.settimeout(timeout)
+            self.close_connection = True
             self._send_json({"ok": False, "error": {
                 "code": "unauthorized", "message": "missing or wrong token"}},
                 status=403)
@@ -555,7 +571,7 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": True, "plan_id": plan_id,
                                  "plan": plan,
                                  "files_hash": plan_files_hash(plan),
-                                 "run": engine._load_run(plan_id)})
+                                 "run": engine.status(plan_id) if engine._load_run(plan_id) else None})
             elif action == "workflow.prepare":
                 spec = body.get("spec") or {}
                 self._send_json(engine.prepare(spec))
@@ -578,13 +594,18 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._start_run(str(body.get("plan_id") or ""),
                                 str(body.get("approval_ref") or ""),
                                 poll_seconds=body.get("poll_seconds"),
-                                resume=True)
+                                resume=True,
+                                extend_monitor=bool(body.get("extend_monitor")))
+            elif action == "workflow.reconcile":
+                self._send_json(engine.tasks.reconcile(str(body.get("plan_id") or "")))
+            elif action == "workflow.bind_job":
+                from ..workflow.worker import launch
+                plan_id = str(body.get("plan_id") or "")
+                engine.tasks.bind_job(plan_id, str(body.get("job_id") or ""),
+                                      str(body.get("phrase") or ""))
+                self._send_json(launch(engine, plan_id))
             elif action == "workflow.status":
                 result = engine.status(str(body.get("plan_id") or ""))
-                with state.lock:
-                    info = state.runs.get(str(body.get("plan_id") or ""))
-                if info and info.get("error"):
-                    result["worker_error"] = info["error"]
                 self._send_json(result)
             elif action == "provider.probe":
                 from ..providers import provider_by_id
@@ -1130,7 +1151,8 @@ class UiHandler(BaseHTTPRequestHandler):
                        if isinstance(v, str)},
                 potcar_path=str(body.get("potcar_path") or "").strip()
                 or None,
-                potcar_remote=str(body.get("potcar_remote") or "")))
+                potcar_remote=str(body.get("potcar_remote") or ""),
+                kind=body.get("kind")))
         elif action == "project.update":
             files = body.get("files") or {}
             new_name = str(body.get("new_name") or name).strip()
@@ -1153,13 +1175,59 @@ class UiHandler(BaseHTTPRequestHandler):
                 name, str(body.get("path") or "")))
         elif action == "project.list":
             self._send_json({"projects": store.list()})
+        elif action == "project.files":
+            self._send_json({"name": name, "kind": store.kind(name), "files": store.files(name)})
+        elif action == "project.literature_search":
+            from ..workflow.knowledge import literature_search
+            self._send_json(literature_search(str(body.get("query") or "")))
+        elif action == "project.reference_add":
+            from ..workflow.knowledge import add_reference
+            self._send_json(add_reference(app.config, name, str(body.get("doi") or ""),
+                                          str(body.get("title") or ""), audit=app.audit))
+        elif action == "project.reference_check":
+            from ..workflow.knowledge import check_reference
+            self._send_json(check_reference(app.config, name, str(body.get("reference_id") or ""), audit=app.audit))
+        elif action == "project.experiment_record":
+            from ..workflow.knowledge import record_experiment
+            self._send_json(record_experiment(app.config, name,
+                **{k: str(body.get(k) or "") for k in ("title", "method", "observations", "interpretation", "limitations", "plan_id")}, audit=app.audit))
+        elif action == "project.import":
+            import base64
+            from ..core.project_paths import MAX_IMPORT_BYTES
+            from ..core.errors import ValidationError
+            content = body.get("content_base64") or ""
+            if not isinstance(content, str) or len(content) > (MAX_IMPORT_BYTES + 2) // 3 * 4:
+                raise ValidationError("import exceeds 16 MiB")
+            try:
+                data = base64.b64decode(content, validate=True)
+            except ValueError as exc:
+                raise ValidationError("invalid file encoding") from exc
+            self._send_json(store.import_file(name, str(body.get("file") or ""), data,
+                                             expected_sha256=body.get("expected_sha256")))
+        elif action == "project.download":
+            from ..core.errors import ValidationError
+            from ..core.project_paths import MAX_IMPORT_BYTES
+            file = str(body.get("file") or "")
+            if store.kind(name) != "general":
+                raise ValidationError("research download requires a general project")
+            path = store._file(name, file)
+            if not path.is_file() or path.stat().st_size > MAX_IMPORT_BYTES:
+                raise ValidationError("file missing or exceeds 16 MiB")
+            self._send_file(path, path.name)
+        elif action in {"project.csv_preview", "project.csv_template"}:
+            from ..workflow.research import csv_preview, prepare_csv_template
+            if action == "project.csv_preview":
+                self._send_json(csv_preview(store, name, str(body.get("file") or "")))
+            else:
+                self._send_json(prepare_csv_template(app.config, name, str(body.get("file") or ""),
+                    script=str(body.get("script") or "scripts/analyze.py"), audit=app.audit))
         elif action == "project.read":
             self._send_json(store.read_file(
                 name, str(body.get("file") or "")))
         elif action == "project.write":
             self._send_json(store.write_file(
                 name, str(body.get("file") or ""),
-                str(body.get("content") or "")))
+                str(body.get("content") or ""), expected_sha256=body.get("expected_sha256")))
         elif action == "project.potcar":
             self._send_json(store.copy_potcar(
                 name, str(body.get("potcar_path") or "")))
@@ -1175,13 +1243,26 @@ class UiHandler(BaseHTTPRequestHandler):
 
     def _chat_action(self, action: str, body: dict) -> None:
         from ..agents.memory import ConversationStore
+        from ..core.errors import ValidationError
+        from ..core.locking import try_file_lock
+        if action in {"chat.clear", "chat.delete", "chat.compact", "chat.setproject", "chat.fork"}:
+            memory = ConversationStore(self.state.app.config.chat_dir)
+            with try_file_lock(memory.execution_path(str(body.get("session_id") or ""))) as owned:
+                if not owned:
+                    raise ValidationError("该对话正在生成回答，请等待结束或先停止回答")
+                self._chat_action_owned(action, body)
+        else:
+            self._chat_action_owned(action, body)
+
+    def _chat_action_owned(self, action: str, body: dict) -> None:
+        from ..agents.memory import ConversationStore
         from ..workflow.pending import PendingSubmitStore
         app = self.state.app
         memory = ConversationStore(app.config.chat_dir)
         pending = PendingSubmitStore(app.config.pending_submits_path)
         session_id = str(body.get("session_id") or "").strip()
         if action == "chat.sessions":
-            sessions = memory.list_sessions()
+            sessions = memory.list_sessions(query=str(body.get("query") or "")[:200])
             pending_rows = pending.pending()
             for row in sessions:
                 row["pending"] = sum(
@@ -1193,12 +1274,24 @@ class UiHandler(BaseHTTPRequestHandler):
             self._send_json(memory.create_session(
                 project=str(body.get("project") or ""),
                 title=str(body.get("title") or "")))
-        elif action == "chat.load":
-            payload = memory.load(session_id)
-            if payload is None:
-                from ..core.errors import ValidationError
-                raise ValidationError(f"session {session_id!r} not found")
-            self._send_json(payload)
+        elif action in ("chat.load", "chat.status"):
+            snapshot = memory.snapshot(session_id)
+            if action == "chat.status":
+                turn = snapshot.get("turn", {})
+                wanted = str(body.get("request_id") or turn.get("request_id") or "")
+                answer = next((row for row in reversed(snapshot["archived_messages"] + snapshot["messages"])
+                               if row.get("role") == "assistant" and
+                               row.get("request_id") == wanted), {})
+                if answer and wanted != turn.get("request_id"):
+                    turn = {"request_id": wanted, "status": answer.get("status", "completed"),
+                            "active": False, "error": answer.get("error", "")}
+                self._send_json({"session_id": session_id, "turn": turn,
+                                 "workflow_plans": snapshot.get("workflow_plans", []),
+                                 "answer": answer.get("content", "")})
+            else:
+                self._send_json(snapshot)
+        elif action == "chat.export":
+            self._send_json(memory.export_markdown(session_id))
         elif action == "chat.rename":
             self._send_json(memory.rename(
                 session_id, str(body.get("title") or "")))
@@ -1223,9 +1316,7 @@ class UiHandler(BaseHTTPRequestHandler):
                 pending_text = str(body.get("pending_text") or "")[:2 * 1024 * 1024]
             self._send_json(memory.context_stats(
                 session_id, pending_text=pending_text))
-        elif action == "chat.clear":
-            self._send_json(memory.clear(session_id))
-        elif action == "chat.delete":
+        elif action in ("chat.clear", "chat.delete"):
             if not session_id:
                 from ..core.errors import ValidationError
                 raise ValidationError("session_id is required")
@@ -1241,7 +1332,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 from ..core.errors import ValidationError
                 raise ValidationError(
                     "该对话还有待确认的作业提交，请先批准或拒绝后再删除")
-            self._send_json(memory.delete(session_id))
+            self._send_json(memory.clear(session_id) if action == "chat.clear"
+                            else memory.delete(session_id))
         else:
             self._send_json({"ok": False, "error": {
                 "code": "unknown_action", "message": action}}, status=404)
@@ -1253,6 +1345,16 @@ class UiHandler(BaseHTTPRequestHandler):
             entry = (self.state.chat_runs.get(request_id)
                      or self.state.chat_runs.get(run_id))
         if entry is None:
+            session_id = str(body.get("session_id") or "")
+            if session_id and request_id:
+                from ..agents.memory import ConversationStore
+                memory = ConversationStore(self.state.app.config.chat_dir)
+                snapshot = memory.snapshot(session_id)
+                turn = snapshot.get("turn", {})
+                if turn.get("active") and turn.get("request_id") == request_id:
+                    memory.update_turn(session_id, request_id, cancel_requested=True)
+                    self._send_json({"ok": True, "stopped": True, "request_id": request_id})
+                    return
             self._send_json({"ok": True, "stopped": False})
             return
         cancel = entry.get("cancel")
@@ -1260,10 +1362,13 @@ class UiHandler(BaseHTTPRequestHandler):
             cancel.set()
         provider = entry.get("provider")
         if provider is not None and hasattr(provider, "cancel"):
-            try:
-                provider.cancel()
-            except Exception:
-                pass
+            def close_response():
+                try:
+                    provider.cancel()
+                except Exception:
+                    pass
+            threading.Thread(target=close_response, daemon=True,
+                             name="rsci-chat-cancel").start()
         self._send_json({"ok": True, "stopped": True, "request_id": request_id,
                          "message": "已发送中止信号；正在执行的单个远端操作可能会先完成"})
 
@@ -1705,70 +1810,80 @@ class UiHandler(BaseHTTPRequestHandler):
 
     # ----------------------------------------------------- background runs
     def _start_run(self, plan_id: str, approval_ref: str,
-                   poll_seconds=None, *, resume: bool = False) -> None:
-        state = self.state
-        app = state.app
-        with state.lock:
-            info = state.runs.get(plan_id)
-            thread = (info or {}).get("thread")
-            if (info or {}).get("alive") or (thread is not None
-                                               and thread.is_alive()):
-                self._send_json({"ok": False, "error": {
-                    "code": "already_running",
-                    "message": f"plan {plan_id} is already executing"}})
-                return
-            state.runs[plan_id] = {"alive": True}
-
-        interval = int(poll_seconds) if poll_seconds is not None else 30
-
-        def worker() -> None:
-            try:
-                if resume:
-                    app.engine().resume(plan_id, approval_ref,
-                                        poll_seconds=interval)
-                else:
-                    app.engine().run(plan_id, approval_ref,
-                                     poll_seconds=interval)
-            except rsciError as exc:
-                try:
-                    app.engine().mark_worker_failed(plan_id, exc.message)
-                except Exception:
-                    pass
-                with state.lock:
-                    state.runs[plan_id] = {"alive": False,
-                                           "error": exc.to_dict()}
-            except Exception as exc:  # keep the worker observable
-                try:
-                    app.engine().mark_worker_failed(
-                        plan_id, f"{type(exc).__name__}: {exc}")
-                except Exception:
-                    pass
-                with state.lock:
-                    state.runs[plan_id] = {
-                        "alive": False,
-                        "error": {"code": "worker_error",
-                                  "message": f"{type(exc).__name__}: {exc}"}}
-            else:
-                with state.lock:
-                    state.runs[plan_id] = {"alive": False}
-
-        thread = threading.Thread(target=worker, daemon=True,
-                                  name=f"workflow-run-{plan_id}")
-        with state.lock:
-            state.runs[plan_id] = {"alive": True, "thread": thread}
-        thread.start()
-        self._send_json({"ok": True, "started": plan_id})
+                   poll_seconds=None, *, resume: bool = False,
+                   extend_monitor: bool = False) -> None:
+        result = self.state.app.engine().background(
+            plan_id, approval_ref, poll_seconds=poll_seconds, resume=resume,
+            extend_monitor=extend_monitor)
+        self._send_json(result)
 
     # ----------------------------------------------------------- chat SSE
     def _chat_stream(self, body: dict) -> None:
-        state = self.state
-        app = state.app
+        """Own admission resources before setup; release them on every exit."""
+        from contextlib import ExitStack
+        from ..agents.memory import ConversationStore
+        from ..core.locking import try_file_lock
+        memory = ConversationStore(self.state.app.config.chat_dir)
         request_id = str(body.get("request_id") or "").strip()
         if not request_id or len(request_id) > 96 or not all(
                 ch.isalnum() or ch in "-_" for ch in request_id):
             request_id = secrets.token_urlsafe(18)
-        cancel_event = threading.Event()
-        slot_acquired = False
+        session_id = str(body.get("session_id") or "").strip()
+        self._chat_sse_started = False
+        try:
+            with ExitStack() as stack:
+                if not self.state.chat_slots.acquire(blocking=False):
+                    self._send_json({"ok": False, "error": {
+                        "code": "chat_rate_limited",
+                        "message": "同时运行的模型请求已达 4 个，请稍后重试"}}, status=429)
+                    return
+                stack.callback(self.state.chat_slots.release)
+                if not session_id:
+                    session_id = memory.create_session()["session_id"]
+                owned = stack.enter_context(try_file_lock(memory.execution_path(session_id)))
+                session = memory.load(session_id)
+                if session is None:
+                    raise ValueError("会话不存在或记录损坏，请新建会话；原文件已保留")
+                duplicate = any(row.get("request_id") == request_id for row in
+                                session["archived_messages"] + session["messages"])
+                if not owned or duplicate:
+                    self._send_json({"ok": False, "session_id": session_id,
+                        "request_id": request_id, "error": {
+                            "code": "chat_duplicate" if duplicate else "chat_busy",
+                            "message": "此会话已有请求，请查看原回答，等待结束后再发送"}}, status=409)
+                    return
+                cancel = threading.Event()
+                run = {"cancel": cancel, "provider": None,
+                       "session_id": session_id, "request_id": request_id}
+                with self.state.lock:
+                    if request_id in self.state.chat_runs:
+                        raise ValueError("请求标识正在使用，请查看原回答")
+                    self.state.chat_runs[request_id] = run
+                    alias = str(body.get("run_id") or "")
+                    if 8 <= len(alias) <= 64 and all(ch.isalnum() or ch in "-_" for ch in alias) and alias not in self.state.chat_runs:
+                        self.state.chat_runs[alias] = run
+                def release_run():
+                    with self.state.lock:
+                        for key, value in list(self.state.chat_runs.items()):
+                            if value is run:
+                                self.state.chat_runs.pop(key, None)
+                stack.callback(release_run)
+                self._chat_stream_owned({**body, "session_id": session_id}, request_id, cancel)
+        except Exception as exc:
+            error = _ui_exception(exc)
+            payload = {"ok": False, "session_id": session_id,
+                       "request_id": request_id, "error": error}
+            if not self._chat_sse_started:
+                self._send_json(payload)
+            else:
+                try:
+                    self._sse_frame({"type": "error", **payload})
+                except (OSError, ValueError):
+                    pass
+
+    def _chat_stream_owned(self, body: dict, request_id: str, cancel_event) -> None:
+        state = self.state
+        app = state.app
         message = str(body.get("message") or "").strip()
         raw_attachments = body.get("attachments") or []
         if not isinstance(raw_attachments, list):
@@ -1813,16 +1928,6 @@ class UiHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": {
                 "code": "empty_message", "message": "message is required"}})
             return
-        if not state.chat_slots.acquire(blocking=False):
-            self._send_json({"ok": False, "error": {
-                "code": "chat_rate_limited",
-                "message": "同时运行的模型请求已达 4 个，请稍后重试"}}, status=429)
-            return
-        slot_acquired = True
-        with state.lock:
-            state.chat_runs[request_id] = {
-                "cancel": cancel_event, "provider": None,
-                "session_id": str(body.get("session_id") or "")}
         display_message = message or "请阅读附件。"
         model_message = display_message
         if attachments:
@@ -1878,6 +1983,9 @@ class UiHandler(BaseHTTPRequestHandler):
                         "compacted_messages": int(
                             compacted.get("compacted_now") or 0),
                     }
+        memory.begin_turn(session_id, request_id, display_message,
+                          provider=str(body.get("provider") or ""))
+        self._chat_sse_started = True
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -1887,19 +1995,15 @@ class UiHandler(BaseHTTPRequestHandler):
         self.close_connection = True
         self.end_headers()
         guards = {"sentinel": False}
-        import re as _re
-        run_id = str(body.get("run_id") or "")
-        with state.lock:
-            run_entry = state.chat_runs.get(request_id)
-            if run_entry is not None and _re.fullmatch(
-                    r"[A-Za-z0-9_-]{8,64}", run_id):
-                state.chat_runs[run_id] = run_entry
+        frame_lock = threading.Lock()
+        heartbeat_done = threading.Event()
 
         def frame(payload: dict) -> None:
             if guards["sentinel"]:
                 return
             try:
-                self._sse_frame(payload)
+                with frame_lock:
+                    self._sse_frame(payload)
             except (OSError, ValueError):
                 # the client refreshed/walked away: stop writing, but keep
                 # the agent loop running so the turn still completes and
@@ -1907,18 +2011,56 @@ class UiHandler(BaseHTTPRequestHandler):
                 guards["sentinel"] = True
 
         acc_parts: list[str] = []
-        memory_saved = False
+        finalized = False
+        tool_names: list[str] = []
+
+        def finish(result: dict) -> None:
+            nonlocal finalized
+            if finalized:
+                return
+            stopped = bool(result.get("cancelled") or result.get("stopped"))
+            error = result.get("error") or ""
+            if isinstance(error, dict):
+                error = error.get("message") or str(error)
+            answer = str(result.get("answer") or "".join(acc_parts))
+            memory.update_turn(session_id, request_id, answer=answer,
+                status="stopped" if stopped else "completed" if result.get("ok") else "failed",
+                stage="finished", error=str(error), tools=tool_names[-50:])
+            finalized = True
+            frame({"type": "final", "result": {**result, "answer": answer}})
+
+        def heartbeat() -> None:
+            while not heartbeat_done.wait(5):
+                try:
+                    saved = memory.load(session_id) or {}
+                    if saved.get("turn", {}).get("cancel_requested"):
+                        cancel_event.set()
+                        with state.lock:
+                            active_provider = state.chat_runs.get(request_id, {}).get("provider")
+                        if active_provider is not None and hasattr(active_provider, "cancel"):
+                            active_provider.cancel()
+                    frame({"type": "heartbeat", "request_id": request_id})
+                except Exception:
+                    # A transient status read must not end a model call.
+                    pass
+        heartbeat_thread = threading.Thread(target=heartbeat, daemon=True,
+                                            name="rsci-chat-heartbeat")
+        heartbeat_thread.start()
         try:
             from ..agents.runtime import AgentRuntime
             from ..agents.skills import SkillStore
             from ..cli.agent import _resolve_mode
-            entry, provider, mode = _resolve_mode(app, body.get("provider"))
-            if hasattr(provider, "bind_cancel_event"):
-                provider.bind_cancel_event(cancel_event)
-            with state.lock:
-                active = state.chat_runs.get(request_id)
-                if active is not None:
-                    active["provider"] = provider
+            def register_provider(candidate):
+                if hasattr(candidate, "bind_cancel_event"):
+                    candidate.bind_cancel_event(cancel_event)
+                with state.lock:
+                    active = state.chat_runs.get(request_id)
+                    if active is not None:
+                        active["provider"] = candidate
+                if cancel_event.is_set():
+                    raise InterruptedError("answer cancelled before capability probe")
+            entry, provider, mode = _resolve_mode(app, body.get("provider"),
+                                                  on_provider=register_provider)
             if cancel_event.is_set():
                 raise InterruptedError("answer cancelled before model call")
             frame({"type": "meta", "provider": entry.id, "mode": mode,
@@ -1978,8 +2120,15 @@ class UiHandler(BaseHTTPRequestHandler):
                 # runtime result under ``result``.  AgentRuntime is the sole
                 # source of the final event, so it cannot be duplicated.
                 if kind == "final":
-                    frame({"type": "final", "result": payload})
+                    finish(payload)
                 else:
+                    if kind == "tool":
+                        tool_names.append(str(payload.get("tool") or ""))
+                        memory.update_turn(session_id, request_id, tools=tool_names[-50:])
+                    elif kind == "activity":
+                        memory.update_turn(session_id, request_id,
+                                           stage=payload.get("stage", "thinking"),
+                                           current_tool=payload.get("tool", ""))
                     frame({"type": kind, **payload})
 
             runtime = AgentRuntime(
@@ -1992,15 +2141,7 @@ class UiHandler(BaseHTTPRequestHandler):
                 cancel_event=cancel_event,
                 stream_cb=lambda fragment: on_delta(fragment),
                 event_cb=emit_agent_event)
-            # durability: the question is on disk before any model call, and
-            # the growing answer is flushed every ~1.5 s so a refresh
-            # mid-stream only ever loses the last second of text
-            if memory is not None and session_id:
-                try:
-                    memory.append(session_id, "user", display_message)
-                    memory_saved = True
-                except Exception:
-                    pass
+            # Admission already saved the question and its exact answer slot.
             import time as _time
             last_flush = {"t": 0.0}
 
@@ -2016,21 +2157,12 @@ class UiHandler(BaseHTTPRequestHandler):
                         (last_flush["t"] == 0.0 or
                          now - last_flush["t"] > 1.5):
                     last_flush["t"] = now
-                    try:
-                        memory.patch_last_assistant(
-                            session_id, "".join(acc_parts))
-                    except Exception:
-                        pass
+                    memory.update_turn(session_id, request_id, answer="".join(acc_parts))
             # AgentRuntime emits exactly one final event on every normal
             # return path.  Do not send a second copy here: duplicate final
             # frames make the UI refresh/settle the same turn twice.
             result = runtime.run(model_message, history=history)
-            if memory is not None and session_id and result.get("ok"):
-                try:
-                    memory.patch_last_assistant(
-                        session_id, str(result.get("answer", "")))
-                except Exception:
-                    pass
+            finish(result)
             if session_id:
                 try:
                     from ..workflow.pending import PendingSubmitStore
@@ -2045,40 +2177,24 @@ class UiHandler(BaseHTTPRequestHandler):
         except InterruptedError:
             partial = "".join(acc_parts).strip()
             answer = partial + ("\n\n" if partial else "") + "（回答已由用户中止）"
-            frame({"type": "final", "result": {
+            finish({
                 "ok": False, "cancelled": True, "answer": answer,
-                "error": "回答已由用户中止"}})
-            if memory is not None and session_id and memory_saved:
-                try:
-                    memory.patch_last_assistant(session_id, answer)
-                except Exception:
-                    pass
+                "error": "回答已由用户中止"})
         except rsciError as exc:
-            frame({"type": "error", "error": exc.to_dict()})
+            finish({"ok": False, "error": exc.to_dict()})
         except Exception as exc:
             if cancel_event.is_set():
                 partial = "".join(acc_parts).strip()
                 answer = partial + ("\n\n" if partial else "") + "（回答已由用户中止）"
-                frame({"type": "final", "result": {
+                finish({
                     "ok": False, "cancelled": True, "answer": answer,
-                    "error": "回答已由用户中止"}})
-                if memory is not None and session_id and memory_saved:
-                    try:
-                        memory.patch_last_assistant(session_id, answer)
-                    except Exception:
-                        pass
+                    "error": "回答已由用户中止"})
             else:
-                frame({"type": "error", "error": _ui_exception(exc)})
+                finish({"ok": False, "error": _ui_exception(exc)})
         finally:
-            with state.lock:
-                active = state.chat_runs.get(request_id)
-                if active is not None and active.get("cancel") is cancel_event:
-                    state.chat_runs.pop(request_id, None)
-            if slot_acquired:
-                state.chat_slots.release()
+            heartbeat_done.set()
+            heartbeat_thread.join(timeout=0.1)
             guards["sentinel"] = True
-            if state.chat_runs.get(run_id) is run_entry:
-                state.chat_runs.pop(run_id, None)
             try:
                 self.wfile.flush()
             except (OSError, ValueError):
@@ -2111,6 +2227,8 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
 
     BoundHandler.state = state
     httpd = _bind_with_fallback(BoundHandler, host, port)
+    from ..workflow.worker import recover
+    state.workflow_recovery = recover(app.engine())
     state.start_campaign_ticker()
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
@@ -2124,8 +2242,7 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
         # url is the BASE address (no /t/token) — the extension appends
         # /api/<action> and authenticates with the separate token field.
         import json as _json
-        home = Path(os.environ.get("RSCI_HOME")
-                    or (Path.home() / ".rsci"))
+        home = app.config.home
         home.mkdir(parents=True, exist_ok=True)
         (home / "ui.json").write_text(_json.dumps(
             {"url": f"http://{host}:{bound_port}", "token": state.token,

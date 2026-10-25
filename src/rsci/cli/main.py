@@ -96,13 +96,16 @@ class App:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rsci",
-        description="远端控制智能体 (rsci): CLI-first, multi-model VASP/HPC agent")
+        description="RSCI 科研助手：通用科研项目、审批式分析与专业计算模块")
     parser.add_argument("--version", action="version",
                         version=f"rsci {__version__}")
     parser.add_argument("--config-dir", default=None,
                         help="override the configuration directory "
                              "(default: ~/.rsci, env RSCI_HOME)")
     sub = parser.add_subparsers(dest="group", required=True)
+
+    from .project import register as register_project
+    register_project(sub)
 
     from .server import register as register_server
     from .remote import register as register_remote

@@ -126,6 +126,16 @@ class TestPlatformGuard:
 
 
 class TestSelfStart:
+    def test_explicit_config_home_is_used_instead_of_environment(
+            self, config_home, fake_webview, fake_serve, tmp_path):
+        from rsci.cli.main import App
+        from rsci.core.config import Config
+        from rsci.desktop import main
+        explicit = tmp_path / "explicit-home"
+        assert main(App(Config(explicit)), platform="win32") == 0
+        assert (explicit / "desktop.log").is_file()
+        assert not (config_home / "desktop.log").exists()
+
     def test_starts_server_opens_window_and_stops_on_close(
             self, config_home, fake_webview, fake_serve):
         from rsci.desktop import main, WINDOW_TITLE

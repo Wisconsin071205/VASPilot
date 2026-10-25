@@ -3,18 +3,102 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>远端控制智能体</title>
+<title>RSCI 科研助手</title>
+<script id="theme-init">
+// Apply before the first paint; appearance never changes execution settings.
+(() => {
+  const key = "rsci.ui.theme";
+  const choices = new Set(["dark", "light", "sand", "forest", "system"]);
+  const names = {dark:"深色", light:"浅色", sand:"暖砂", forest:"松林"};
+  const valid = value => choices.has(value) ? value : "dark";
+  let preference = "dark", saved = true, media = null;
+  try { preference = valid(localStorage.getItem(key)); } catch (_) { saved = false; }
+  try { media = window.matchMedia("(prefers-color-scheme: dark)"); } catch (_) {}
+  function syncControls() {
+    const select = document.getElementById("themeselect");
+    if (select) select.value = preference;
+    const status = document.getElementById("themestatus");
+    if (status) status.textContent = !saved
+      ? "本次已应用；浏览器无法保存偏好"
+      : preference === "system"
+        ? `跟随系统 · 当前${names[document.documentElement.dataset.theme]}`
+        : "仅改变外观 · 自动记住选择";
+  }
+  function apply() {
+    const resolved = preference === "system" ? (media && !media.matches ? "light" : "dark") : preference;
+    document.documentElement.dataset.theme = resolved;
+    document.documentElement.dataset.themePreference = preference;
+    document.documentElement.style.colorScheme = resolved === "light" || resolved === "sand" ? "light" : "dark";
+    syncControls();
+  }
+  window.RsciTheme = {
+    setPreference(value) {
+      preference = valid(value);
+      try { localStorage.setItem(key, preference); saved = true; } catch (_) { saved = false; }
+      apply();
+    }
+  };
+  apply();
+  document.addEventListener("DOMContentLoaded", syncControls, {once:true});
+  const systemChanged = () => { if (preference === "system") apply(); };
+  if (media && media.addEventListener) media.addEventListener("change", systemChanged);
+  else if (media && media.addListener) media.addListener(systemChanged);
+  window.addEventListener("storage", event => {
+    if (event.key !== key && event.key !== null) return;
+    preference = valid(event.newValue);
+    saved = true;
+    apply();
+  });
+})();
+</script>
 <style>
 :root{
   --bg:#0d1117; --bg2:#161b22; --bg3:#1c2330; --line:#2d3644;
-  --fg:#e6edf3; --fg2:#9aa7b8; --acc:#4f9cf7; --ok:#3fb950; --warn:#d29922;
-  --err:#f85149; --mono:'Cascadia Code',Consolas,'Courier New',monospace;
+  --fg:#e6edf3; --fg2:#a4afbf; --acc:#6cafff; --ok:#65ce78; --warn:#e6b84c;
+  --err:#ff8a82; --control-line:#68788e; --action-bg:#2563b8; --action-fg:#ffffff; --danger-bg:#b42328;
+  --ok-bg:#12351f; --err-bg:#3d1a1a; --warn-bg:#3a2d10; --info-bg:#12283f;
+  --confirm-bg:#16202c; --user-bg:#1a2436; --avatar-bg:#2b3a55; --avatar-fg:#b5d3ff;
+  --code:#9acfff; --memory:#bc8cff; --overlay:rgba(0,0,0,.55); --shadow:rgba(0,0,0,.45);
+  --brand-start:#4f9cf7; --brand-end:#7ee787; --brand-ink:#0d1117;
+  --mono:'Cascadia Code',Consolas,'Courier New',monospace;
+  color-scheme:dark;
+}
+:root[data-theme="light"]{
+  --bg:#f3f6fa; --bg2:#ffffff; --bg3:#e9eef5; --line:#ccd5e1;
+  --fg:#172334; --fg2:#4d5e73; --acc:#165bb6; --ok:#17683c; --warn:#815400; --err:#b42328;
+  --control-line:#78879b; --action-bg:#165bb6; --danger-bg:#b42328;
+  --ok-bg:#e1f2e7; --err-bg:#ffe9e9; --warn-bg:#fff1d1; --info-bg:#e4eefc;
+  --confirm-bg:#f5f8ff; --user-bg:#e4eefc; --avatar-bg:#d5e5fa; --avatar-fg:#194b89;
+  --code:#17599b; --memory:#8050be; --overlay:rgba(21,35,52,.38); --shadow:rgba(21,35,52,.18);
+  color-scheme:light;
+}
+:root[data-theme="sand"]{
+  --bg:#f4f0e7; --bg2:#fffdf7; --bg3:#eae3d7; --line:#d3c7b5;
+  --fg:#302a20; --fg2:#635747; --acc:#855329; --ok:#2d683f; --warn:#7b5004; --err:#a72929;
+  --control-line:#8a7963; --action-bg:#855329; --danger-bg:#a72929;
+  --ok-bg:#e2eedf; --err-bg:#f9e3de; --warn-bg:#f8ebce; --info-bg:#f2e6d5;
+  --confirm-bg:#faf2e4; --user-bg:#eee2ce; --avatar-bg:#e4d4b9; --avatar-fg:#64401f;
+  --code:#765027; --memory:#805186; --overlay:rgba(48,42,32,.38); --shadow:rgba(48,42,32,.18);
+  --brand-start:#d9b17c; --brand-end:#b8c69a;
+  color-scheme:light;
+}
+:root[data-theme="forest"]{
+  --bg:#0d1917; --bg2:#13241f; --bg3:#1c3029; --line:#314d40;
+  --fg:#e4efe9; --fg2:#afc3b7; --acc:#83d0ad; --ok:#8dd29d; --warn:#eac07b; --err:#ffaaa1;
+  --control-line:#6a8c7b; --action-bg:#216747; --danger-bg:#ad3333;
+  --ok-bg:#1e3b29; --err-bg:#432524; --warn-bg:#3e331c; --info-bg:#17382c;
+  --confirm-bg:#1c3026; --user-bg:#183c31; --avatar-bg:#25533e; --avatar-fg:#c2edd5;
+  --code:#b0dfce; --memory:#acb9f6; --brand-start:#6aaf90; --brand-end:#c5d69a;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--fg);font:14px/1.55 "Segoe UI","Microsoft YaHei",sans-serif;height:100vh;display:flex;overflow:hidden}
-a{color:var(--acc)}
+a{color:var(--acc);text-underline-offset:3px}
+::selection{background:var(--action-bg);color:var(--action-fg)}
+input,textarea{caret-color:var(--acc)}
+input::placeholder,textarea::placeholder{color:var(--fg2);opacity:1}
+:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
 ::-webkit-scrollbar{width:9px;height:9px}
-::-webkit-scrollbar-thumb{background:#2d3644;border-radius:5px}
+::-webkit-scrollbar-thumb{background:var(--control-line);border-radius:5px}
 
 /* ---------- layout ---------- */
 #side{width:248px;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;flex-shrink:0}
@@ -22,7 +106,7 @@ a{color:var(--acc)}
 #brand{padding:16px 16px 12px;border-bottom:1px solid var(--line)}
 #brand h1{font-size:14.5px;letter-spacing:.5px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;line-height:1.3}
 #brand .v{font-size:11px;color:var(--fg2);font-family:var(--mono)}
-.logo{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#4f9cf7,#7ee787);display:inline-block;flex-shrink:0}
+.logo{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,var(--brand-start),var(--brand-end));display:inline-block;flex-shrink:0}
 .side-h{padding:12px 16px 6px;font-size:11px;color:var(--fg2);letter-spacing:1px;display:flex;justify-content:space-between;align-items:center}
 .side-h button{background:none;border:none;color:var(--acc);cursor:pointer;font-size:11px}
 #servers{flex:1;overflow-y:auto;padding:0 8px 8px}
@@ -35,14 +119,18 @@ a{color:var(--acc)}
 .srv button{background:var(--bg3);border:1px solid var(--line);color:var(--fg2);border-radius:6px;padding:2px 7px;font-size:11px;cursor:pointer}
 .srv button:hover{color:var(--fg);border-color:var(--acc)}
 #prov{padding:8px 16px 14px;border-top:1px solid var(--line)}
-#prov select{width:100%;background:var(--bg3);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-top:6px}
+#prov select{width:100%;background:var(--bg3);color:var(--fg);border:1px solid var(--control-line);border-radius:6px;padding:6px 8px;margin-top:6px}
 #prov .mode{font-size:11px;margin-top:5px;color:var(--fg2)}
 #prov .mode.full{color:var(--ok)} #prov .mode.degraded{color:var(--warn)}
 #prov .probe{margin-top:6px;font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:0}
+#appearance{padding:10px 16px;border-top:1px solid var(--line);flex-shrink:0}
+#appearance label{display:block;font-size:11px;color:var(--fg2);margin-bottom:5px}
+#appearance select{width:100%;padding:5px 8px}
+#themestatus{font-size:11px;color:var(--fg2);margin-top:5px;min-height:17px}
 
 /* ---------- header tabs ---------- */
-#tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--bg2)}
-.tab{padding:11px 16px;cursor:pointer;color:var(--fg2);border-bottom:2px solid transparent;font-size:14px}
+#tabs{display:flex;gap:2px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--bg2);overflow-x:auto;flex-shrink:0}
+.tab{padding:11px 16px;cursor:pointer;color:var(--fg2);border-bottom:2px solid transparent;font-size:14px;white-space:nowrap;flex-shrink:0}
 .tab.on{color:var(--fg);border-bottom-color:var(--acc)}
 .view{display:none;flex:1;overflow-y:auto;padding:18px 22px}
 .view.on{display:block}
@@ -52,19 +140,19 @@ a{color:var(--acc)}
 /* ---------- generic ---------- */
 h2{font-size:15px;margin-bottom:12px;color:var(--fg)}
 h3{font-size:13px;margin:14px 0 8px;color:var(--fg2)}
-button.btn{background:var(--acc);border:none;color:#fff;border-radius:7px;padding:7px 16px;cursor:pointer;font-size:13px}
-button.btn:disabled{background:#2d3644;color:var(--fg2);cursor:not-allowed}
-button.btn.ghost{background:var(--bg3);border:1px solid var(--line);color:var(--fg)}
-button.btn.danger{background:var(--err)}
-input,select{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:7px 10px;font-size:13px}
+button.btn{background:var(--action-bg);border:none;color:var(--action-fg);border-radius:7px;padding:7px 16px;cursor:pointer;font-size:13px}
+button.btn:disabled{background:var(--bg3);color:var(--fg2);cursor:not-allowed}
+button.btn.ghost{background:var(--bg3);border:1px solid var(--control-line);color:var(--fg)}
+button.btn.danger{background:var(--danger-bg)}
+input,select{background:var(--bg3);border:1px solid var(--control-line);color:var(--fg);border-radius:7px;padding:7px 10px;font-size:13px}
 input:focus,select:focus{outline:none;border-color:var(--acc)}
 table{border-collapse:collapse;width:100%;font-size:13px}
 th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--fg2);font-weight:500;font-size:12px}
 td.wrap{white-space:normal}
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;font-family:var(--mono)}
-.b-ok{background:#12351f;color:var(--ok)} .b-err{background:#3d1a1a;color:var(--err)}
-.b-warn{background:#3a2d10;color:var(--warn)} .b-info{background:#12283f;color:var(--acc)}
+.b-ok{background:var(--ok-bg);color:var(--ok)} .b-err{background:var(--err-bg);color:var(--err)}
+.b-warn{background:var(--warn-bg);color:var(--warn)} .b-info{background:var(--info-bg);color:var(--acc)}
 .mono{font-family:var(--mono);font-size:12px}
 .card{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
@@ -78,7 +166,7 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 #toasts{position:fixed;right:18px;bottom:18px;z-index:99;display:flex;flex-direction:column;gap:8px}
 
 /* ---------- server add/edit modal ---------- */
-#modalback{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:none;
+#modalback{position:fixed;inset:0;background:var(--overlay);z-index:90;display:none;
   align-items:center;justify-content:center}
 #modalback.on{display:flex}
 .modal{width:min(560px,92vw);background:var(--bg2);border:1px solid var(--line);
@@ -117,15 +205,15 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 .sess:hover{background:var(--bg3)}
 .sess.on{background:var(--bg3);color:var(--fg)}
 .sess .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sess .wait{background:#12351f;color:var(--ok);border-radius:9px;font-size:10px;padding:0 7px;flex-shrink:0}
+.sess .wait{background:var(--ok-bg);color:var(--ok);border-radius:9px;font-size:10px;padding:0 7px;flex-shrink:0}
 .sess .sess-del{background:none;border:0;color:var(--fg2);cursor:pointer;font-size:16px;
   line-height:1;padding:0 2px;opacity:0;flex-shrink:0}
 .sess:hover .sess-del,.sess.on .sess-del{opacity:1}
 .sess .sess-del:hover{color:var(--err)}
-textarea{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--mono);width:100%}
+textarea{background:var(--bg3);border:1px solid var(--control-line);color:var(--fg);border-radius:7px;padding:8px 10px;font-size:13px;font-family:var(--mono);width:100%}
 textarea:focus{outline:none;border-color:var(--acc)}
 .modal textarea{min-height:110px}
-.modalwrap{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;display:none;
+.modalwrap{position:fixed;inset:0;background:var(--overlay);z-index:90;display:none;
   align-items:center;justify-content:center}
 .modalwrap.on{display:flex}
 .modalwrap .modal{width:min(640px,92vw);background:var(--bg2);border:1px solid var(--line);
@@ -151,11 +239,29 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .pathpick-empty{padding:24px 12px;text-align:center;color:var(--fg2);font-size:12px}
 
 /* ---------- chat session bar & confirm cards ---------- */
-#sessbar{display:flex;gap:8px;align-items:center;padding:8px 22px;border-bottom:1px solid var(--line);background:var(--bg2)}
+#sessbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 22px;border-bottom:1px solid var(--line);background:var(--bg2)}
 #sessbar select{flex:1;min-width:0}
+#sessbar #sesssel{min-width:180px}
+#sessionsearch{width:160px;min-width:110px;font-size:12px;padding:6px 9px}
+#sessbar details{position:relative}
+#sessbar summary{cursor:pointer;font-size:12px;padding:6px 10px;border:1px solid var(--line);border-radius:7px}
+#sessbar .session-menu{position:absolute;z-index:8;right:0;top:34px;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px;display:grid;gap:6px;min-width:148px}
+#chatstatus{padding:7px 22px;background:var(--bg2);color:var(--fg2);font-size:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;overflow-wrap:anywhere}
+#chatstatus:empty{display:none}
+#sessionrename{padding:8px 22px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:var(--bg2);font-size:12px}
+#sessionrename[hidden]{display:none}
+#sessionname{flex:1;min-width:180px;max-width:500px;padding:6px 10px}
+#chatstatus button,.msg-action{background:transparent;border:1px solid var(--line);border-radius:5px;color:var(--fg);cursor:pointer;padding:3px 8px;font-size:12px}
+.msg-action{margin-inline-start:10px}
+.message-error{margin-top:8px;color:var(--err);font-size:12px;overflow-wrap:anywhere}
+#draftstatus{max-width:860px;margin:5px auto 0;min-height:16px;font-size:11px;color:var(--fg2)}
+#chatinput{max-height:160px;min-height:44px;overflow-y:auto}
+#chatbox{flex-wrap:wrap}
+#chatinput{min-width:180px}
+#sessbar button:focus-visible,#sessbar summary:focus-visible,.msg-action:focus-visible,#chatstatus button:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 #sessbar button{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
 #sessbar button:hover{border-color:var(--acc)}
-.confirmcard{background:#16202c;border:1px solid var(--warn);border-radius:10px;margin:10px auto;max-width:860px;padding:12px 14px}
+.confirmcard{background:var(--confirm-bg);border:1px solid var(--warn);border-radius:10px;margin:10px auto;max-width:860px;padding:12px 14px}
 .confirmcard h4{font-size:13px;color:var(--warn);margin-bottom:8px}
 .confirmcard .cmeta{font-size:12px;color:var(--fg2);margin-bottom:6px}
 .confirmcard pre{max-height:200px;font-size:11px}
@@ -182,12 +288,12 @@ textarea:focus{outline:none;border-color:var(--acc)}
 #chatlog{flex:1;overflow-y:auto;padding:18px 22px}
 .msg{max-width:860px;margin:0 auto 14px;display:flex;gap:10px}
 .msg .av{width:30px;height:30px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
-.msg.user .av{background:#2b3a55;color:#9cc3ff}
-.msg.bot .av{background:linear-gradient(135deg,#4f9cf7,#7ee787);color:#0d1117}
+.msg.user .av{background:var(--avatar-bg);color:var(--avatar-fg)}
+.msg.bot .av{background:linear-gradient(135deg,var(--brand-start),var(--brand-end));color:var(--brand-ink)}
 .msg .bd{min-width:0;flex:1}
 .msg .who{font-size:11px;color:var(--fg2);margin-bottom:3px}
 .bubble{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;white-space:pre-wrap;word-break:break-word}
-.msg.user .bubble{background:#1a2436}
+.msg.user .bubble{background:var(--user-bg)}
 /* 过程流 = 一条活动行：此刻在做什么，细节点开才有（不堆命令行） */
 .turntools{margin:0 0 9px;border:1px solid var(--line);border-radius:10px;
   background:var(--bg2);overflow:hidden}
@@ -231,7 +337,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 #chatbox{display:flex;gap:10px;max-width:860px;margin:0 auto}
 #chatinput{flex:1;resize:none;height:44px;padding:11px 14px;font-size:14px}
 #chatattachbtn{flex:0 0 auto;align-self:stretch;min-width:72px}
-#sendbtn.danger{background:var(--err);min-width:92px}
+#sendbtn.danger{background:var(--danger-bg);min-width:92px}
 #chatattachments{display:flex;flex-wrap:wrap;gap:6px;max-width:860px;margin:0 auto 8px}
 .chatfile{display:flex;align-items:center;gap:7px;max-width:100%;padding:4px 8px;
   border:1px solid var(--line);border-radius:7px;background:var(--bg3);font-size:11px;color:var(--fg2)}
@@ -363,7 +469,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .pcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:12px}
 .pcard .pc-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .pcard .pc-h b{font-size:15px}
-.pcard .tag{background:#12351f;color:var(--ok);border-radius:10px;padding:1px 9px;font-size:11px;font-family:var(--mono)}
+.pcard .tag{background:var(--ok-bg);color:var(--ok);border-radius:10px;padding:1px 9px;font-size:11px;font-family:var(--mono)}
 .pcard .x{margin-left:auto;background:none;border:none;color:var(--fg2);cursor:pointer;font-size:16px}
 .pcard .x:hover{color:var(--err)}
 .pgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
@@ -406,7 +512,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 #hmcols span{display:inline-block;width:132px;text-align:center}
 #rowmenu{position:fixed;display:none;z-index:99;background:var(--bg2);
   border:1px solid var(--line);border-radius:8px;padding:4px;
-  box-shadow:0 6px 18px rgba(0,0,0,.45)}
+  box-shadow:0 6px 18px var(--shadow)}
 #rowmenu div{padding:6px 14px;font-size:12.5px;cursor:pointer;
   border-radius:6px;white-space:nowrap}
 #rowmenu div:hover{background:var(--bg3)}
@@ -427,22 +533,37 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .bubble pre.mdcode{background:var(--bg);border:1px solid var(--line);
   border-radius:8px;padding:9px 11px;overflow-x:auto;margin:8px 0}
 .bubble code.ic{background:var(--bg3);border-radius:4px;padding:1px 5px;
-  font-family:var(--mono);font-size:12px;color:#79c0ff}
+  font-family:var(--mono);font-size:12px;color:var(--code)}
 .bubble .mp{margin:4px 0}
 .bubble blockquote{margin:8px 0;padding:7px 10px;background:var(--bg3);border-radius:6px;color:var(--fg2)}
-.bubble a{color:#79c0ff;text-decoration:none}.bubble a:hover{text-decoration:underline}
+.bubble a{color:var(--acc);text-decoration:underline}.bubble a:hover{text-decoration-thickness:2px}
 .bubble .codewrap{position:relative}.bubble .copycode{position:absolute;right:7px;top:6px;
   border:1px solid var(--line);background:var(--bg3);color:var(--fg2);border-radius:5px;
   padding:2px 7px;font-size:10px;cursor:pointer}
 .turnmeta{font-size:11px;color:var(--fg2);margin-top:8px}
 .tc-sum{font-family:var(--mono);font-size:11.5px;color:var(--fg2);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+[data-domain-only="vasp"]{display:none!important}
+:root[data-project-kind="vasp"] [data-domain-only="vasp"]{display:revert!important}
+.research-layout{display:grid;grid-template-columns:minmax(170px,1fr) minmax(0,3fr);gap:20px;margin-top:18px}
+.research-files{border-right:1px solid var(--line);padding-right:16px;min-width:0}
+.research-files button{display:block;width:100%;text-align:left;background:none;border:0;border-radius:6px;color:var(--fg);padding:9px;cursor:pointer;overflow-wrap:anywhere}
+.research-files button:hover,.research-files button[aria-current="true"]{background:var(--bg3);color:var(--acc)}
+.research-files small{display:block;color:var(--fg2);font-size:11px}
+.research-editor{min-width:0}.research-editor textarea{width:100%;min-height:300px;font:12px/1.7 var(--mono);tab-size:4}
+.research-editor pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.research-form{border-top:1px solid var(--line);margin-top:24px;padding-top:18px}
+.research-form label{display:block;margin-top:10px;color:var(--fg2)}
+.research-form input,.research-form textarea{width:100%}
+.research-form textarea{min-height:64px}
+.research-note{color:var(--fg2);font-size:12px;margin:8px 0;overflow-wrap:anywhere}
+@media(max-width:900px){.research-layout{grid-template-columns:1fr}.research-files{border-right:0;border-bottom:1px solid var(--line);padding:0 0 12px;max-height:210px;overflow:auto}}
 </style>
 </head>
 <body>
 
 <aside id="side">
-  <div id="brand"><h1><span class="logo"></span>远端控制智能体 <span class="v" id="ver"></span></h1></div>
+  <div id="brand"><h1><span class="logo"></span>RSCI 科研助手 <span class="v" id="ver"></span></h1></div>
   <div class="side-h">项目
     <button title="新建项目" onclick="openProjectModal()">＋ 新建</button></div>
   <div id="projects"><div class="empty" style="padding:10px">暂无项目</div></div>
@@ -452,6 +573,17 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <button onclick="refreshServers()">刷新</button>
     </span></div>
   <div id="servers" style="flex:1"><div class="empty">加载中…</div></div>
+  <div id="appearance">
+    <label for="themeselect">外观主题</label>
+    <select id="themeselect" aria-describedby="themestatus" onchange="RsciTheme.setPreference(this.value)">
+      <option value="dark">深色 · 经典</option>
+      <option value="light">浅色 · 清晰</option>
+      <option value="sand">暖砂 · 阅读</option>
+      <option value="forest">松林 · 静谧</option>
+      <option value="system">跟随系统</option>
+    </select>
+    <div id="themestatus" role="status" aria-live="polite">仅改变外观 · 自动记住选择</div>
+  </div>
   <div id="prov">
     <div class="side-h" style="padding:0 0 4px">模型服务</div>
     <select id="provsel"></select>
@@ -463,9 +595,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
 <main id="main">
   <nav id="tabs">
     <div class="tab on" data-v="chat">对话</div>
-    <div class="tab" data-v="files">文件</div>
+    <div class="tab" data-v="research">项目文件</div>
+    <div class="tab" data-v="files">远端文件</div>
     <div class="tab" data-v="jobs">作业</div>
-    <div class="tab" data-v="flow">计划中心</div>
+    <div class="tab" data-v="flow">任务中心</div>
     <div class="tab" data-v="monitor">监测</div>
     <div class="tab" data-v="cfg">⚙ 配置</div>
   </nav>
@@ -473,19 +606,31 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <!-- ============ 对话 ============ -->
   <section class="view noscroll on" id="v-chat">
     <div id="sessbar">
-      <select id="sesssel" title="会话（记忆按会话保存）"></select>
+      <input id="sessionsearch" type="search" placeholder="搜索会话或正文" aria-label="搜索会话或正文" oninput="queueSessionSearch()">
+      <select id="sesssel" title="会话（记忆按会话保存）" aria-label="当前会话"></select>
       <button onclick="newSession()">＋ 新会话</button>
-      <button onclick="forkSession()" title="复制当前上下文并从新会话继续">创建分支</button>
-      <button onclick="compactSession()" title="保留完整可见记录，仅压缩发送给模型的旧上下文">压缩上下文</button>
-      <button onclick="clearSession()">清空记忆</button>
-      <button onclick="deleteSession()" title="永久删除当前对话及其记忆">删除对话</button>
+      <details><summary>会话操作</summary><div class="session-menu">
+        <button onclick="renameSession()">重命名</button>
+        <button onclick="exportSession()">导出 Markdown</button>
+        <button onclick="forkSession()" title="复制当前上下文并从新会话继续">创建分支</button>
+        <button onclick="compactSession()" title="保留完整可见记录，仅压缩发送给模型的旧上下文">压缩上下文</button>
+        <button onclick="clearSession()">清空记忆</button>
+        <button onclick="deleteSession()" title="永久删除当前对话及其记忆">删除对话</button>
+      </div></details>
       <button onclick="loadSessions()" title="刷新会话列表">⟳</button>
       <span id="sesshint" style="font-size:11px;color:var(--fg2)"></span>
     </div>
+    <form id="sessionrename" hidden onsubmit="event.preventDefault();saveSessionName()">
+      <label for="sessionname">会话名称</label><input id="sessionname" maxlength="120" required autocomplete="off"
+        onkeydown="if(event.key==='Escape')closeSessionRename()">
+      <button type="submit" class="btn ghost" id="sessionnamesave">保存名称</button>
+      <button type="button" class="btn ghost" onclick="closeSessionRename()">取消</button>
+    </form>
+    <div id="chatstatus" role="status" aria-live="polite"></div>
     <div id="chatlog">
-      <div class="msg bot"><div class="av">V</div><div class="bd"><div class="who">远端控制智能体</div>
-        <div class="bubble">你好。我可以管理本地项目（写 INCAR/KPOINTS/POSCAR）、上传到服务器、跟踪 VASP 计算的科学收敛，也能执行本地/远端命令（全程审计）。
-提交作业默认需要你在聊天里点「批准」确认。试试：「新建项目 Fe-relax 并帮我写好参数」「查看 cl9 的作业」「cl9 服务器现在负载怎么样」。</div></div></div>
+      <div class="msg bot"><div class="av">R</div><div class="bd"><div class="who">RSCI 科研助手</div>
+        <div class="bubble">你好，我是 RSCI 科研助手。可以帮你整理研究数据、编写分析脚本、记录方法与结果，也能管理远端计算任务。
+从「新建项目」开始，导入 CSV 后生成可编辑的分析脚本。执行前由你审阅代码和输入文件、明确批准；运行成功不等于科学结论已验证。</div></div></div>
     </div>
     <div id="chatbar">
       <div id="chatattachments" aria-live="polite"></div>
@@ -493,17 +638,79 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <input id="chatfileinput" type="file" multiple hidden onchange="addChatFiles(this.files)">
         <button class="btn ghost" id="chatattachbtn" onclick="document.getElementById('chatfileinput').click()"
           title="最多 5 个文本文件；单个不超过 512 KiB">上传文本</button>
-        <button class="btn ghost" id="attachbtn" title="附加 VESTA 导出的 .vasp 文件（在文件末尾写明要算什么），也可以直接拖进来"
+        <button class="btn ghost" id="attachbtn" data-domain-only="vasp" title="附加 VESTA 导出的 .vasp 文件（在文件末尾写明要算什么），也可以直接拖进来"
           onclick="document.getElementById('vaspfile').click()">📎 .vasp</button>
         <input type="file" id="vaspfile" style="display:none" accept=".vasp,.txt"
           onchange="attachFile(this.files[0]); this.value=''">
-        <textarea id="chatinput" placeholder="向远端控制智能体提问（Enter 发送，Shift+Enter 换行）"></textarea>
+        <textarea id="chatinput" aria-label="消息输入" placeholder="描述研究问题、数据或分析目标（Enter 发送，Shift+Enter 换行）"></textarea>
         <button class="btn" id="sendbtn" onclick="chatButtonAction()">发送</button>
       </div>
-      <div id="chathint">可附加文本文件（最多 5 个，单个 512 KiB） · 对话有记忆 · 提交作业默认需确认 · 调度器完成 ≠ 科学收敛</div>
+      <div id="chathint">可附加文本参考；执行用数据请导入项目 · 分析需审批 · 执行成功 ≠ 科学结论已验证</div>
+      <div id="draftstatus" role="status"></div>
       <div id="contextmeter" aria-live="polite" title="按字符数估算，实际 token 数取决于模型">
         <span>上下文</span><span class="cm-track"><i class="cm-fill"></i></span>
         <span id="contextlabel">未选择会话</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" id="v-research">
+    <!-- Existing Operate surface extension: inherit the four token palettes and compact controls.
+         Files lead to editable code, immutable approval, then separately reported execution and results. -->
+    <h2>项目文件</h2>
+    <p class="research-note">数据、脚本、笔记、结果与参考文献保存在同一项目。写入文件不会自动执行代码。</p>
+    <div class="row">
+      <div class="fg"><label for="researchproject">通用科研项目</label><select id="researchproject" onchange="selectResearchProject()"></select></div>
+      <button class="btn ghost" onclick="openProjectModal()">新建项目</button>
+      <button class="btn ghost" onclick="loadResearchFiles()">刷新文件</button>
+      <button class="btn" onclick="document.getElementById('researchimport').click()">导入数据</button>
+      <input id="researchimport" type="file" hidden onchange="importResearchFile(this)">
+    </div>
+    <p id="researchstatus" class="research-note" role="status" aria-live="polite">选择项目后导入 CSV，或创建脚本和研究笔记。</p>
+    <div class="research-layout">
+      <div class="research-files" id="researchfiles" aria-label="项目文件列表"></div>
+      <div class="research-editor">
+        <div class="row"><label for="researchfilename">文件路径</label><input id="researchfilename" placeholder="notes/method.md" style="flex:1;min-width:160px">
+          <button class="btn ghost" onclick="newResearchFile()">新文件</button></div>
+        <p id="researchfilemeta" class="research-note">使用 data/、scripts/、notes/、results/ 或 references/ 目录。</p>
+        <textarea id="researchcontent" aria-label="项目文件内容" spellcheck="false" oninput="RESEARCH_DIRTY=true"></textarea>
+        <div class="row" style="margin-top:10px">
+          <button class="btn" id="researchsave" onclick="saveResearchFile()">保存文件</button>
+          <button class="btn ghost" id="researchdownload" onclick="downloadResearchFile()">下载原文件</button>
+          <button class="btn ghost" id="researchtemplate" onclick="createCsvAnalysis()">从 CSV 生成分析脚本</button>
+        </div>
+        <div class="research-form">
+          <h3>准备 Python 分析</h3>
+          <p class="research-note">先保存并审阅脚本，再生成计划。Python 使用当前用户权限，不是安全沙箱；执行前还需明确审批。</p>
+          <label for="researchscript">脚本</label><input id="researchscript" value="scripts/analyze.py">
+          <label for="researchinputs">输入文件（每行一个项目内路径）</label><textarea id="researchinputs" placeholder="data/measurements.csv"></textarea>
+          <label for="researchoutputs">预期结果（每行一个 results/ 路径）</label><textarea id="researchoutputs">results/summary.json
+results/report.md
+results/means.svg</textarea>
+          <details><summary>解释器与时限</summary>
+            <label for="researchpython">Python 解释器路径（源码运行可留空；EXE 需要本机安装 Python）</label><input id="researchpython" placeholder="使用已配置的 Python">
+            <label for="researchtimeout">执行时限（秒，1–3600）</label><input id="researchtimeout" type="number" min="1" max="3600" value="600">
+          </details>
+          <button class="btn" id="researchprepare" onclick="prepareResearchPlan()" style="margin-top:14px">生成待审批计划</button>
+        </div>
+        <details class="research-form"><summary>文献与实验记录</summary>
+          <p class="research-note">文献检索使用 Crossref 公开元数据。核对仅比较 DOI 与标题，不代表全文或引用论点已验证。</p>
+          <label for="literaturequery">文献关键词或标题（仅查询词发送至 Crossref）</label><input id="literaturequery" maxlength="400">
+          <button class="btn ghost" onclick="searchLiterature()">检索文献</button><div id="literatureresults" class="research-note" role="status"></div>
+          <label for="referencetitle">预期文献标题</label><input id="referencetitle" maxlength="1000">
+          <label for="referencedoi">DOI</label><input id="referencedoi" maxlength="256" placeholder="10.xxxx/xxxx">
+          <button class="btn ghost" onclick="saveReference()">保存待核对文献</button>
+          <button class="btn ghost" onclick="checkSelectedReference()">核对当前文献文件</button>
+          <p class="research-note">保存后选择 references/ 中的条目，再点核对。每次核对保留时间、来源、比对结果与元数据哈希。</p>
+          <h3>记录实验</h3>
+          <label for="experimenttitle">实验记录标题</label><input id="experimenttitle" maxlength="200">
+          <label for="experimentmethod">方法</label><textarea id="experimentmethod" maxlength="8000"></textarea>
+          <label for="experimentobservations">实际观察（不要填模型推测）</label><textarea id="experimentobservations" maxlength="8000"></textarea>
+          <label for="experimentinterpretation">解释与假设</label><textarea id="experimentinterpretation" maxlength="8000"></textarea>
+          <label for="experimentlimitations">局限与待核实事项</label><textarea id="experimentlimitations" maxlength="8000"></textarea>
+          <label for="experimentplan">关联计划 ID（可空）</label><input id="experimentplan" maxlength="16">
+          <button class="btn ghost" onclick="saveExperiment()">保存实验记录</button>
+        </details>
       </div>
     </div>
   </section>
@@ -679,7 +886,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
 
   <!-- ============ 作业 ============ -->
   <section class="view" id="v-jobs">
-    <div class="card"><div class="row" style="justify-content:space-between">
+    <div class="card" data-domain-only="vasp"><div class="row" style="justify-content:space-between">
       <h2 style="margin:0">我的计算 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（VASPKIT 计算链：一次批准，每个阶段自检通过才提交）</span></h2>
       <button class="btn ghost" onclick="loadCampaigns()">刷新</button></div>
       <div id="camplist"></div></div>
@@ -690,13 +897,13 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div class="card"><h2>活动作业</h2><table id="jobtable">
       <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称 / 目录</th><th>诊断</th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（只显示已结束作业；本机台账会保留集群已清除的记录；详情提供时间口径、VASP 进度和运行证明）</span></h2>
+    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（只显示已结束作业；本机台账会保留集群已清除的记录；自动分析提供调度记录和运行证明）</span></h2>
       <div id="rechidden" style="font-size:11px;color:var(--fg2)"></div>
       <div id="jobhistorynote" style="font-size:12px;color:var(--fg2);margin-bottom:8px"></div>
       <table id="rectable">
       <thead><tr><th>Job ID</th><th>状态</th><th>开始</th><th>耗时</th><th>完成时间</th><th>名称 / 目录</th><th>诊断</th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card" id="progcard">
+    <div class="card" id="progcard" data-domain-only="vasp">
       <h2>VASP 计算进度 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（活动作业点「进度」、历史作业点「详情」，或选一个计算目录；运行中的每分钟自动刷新）</span></h2>
       <div class="row">
         <div class="fg path-field" style="flex:1"><label>计算目录</label>
@@ -713,18 +920,21 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <section class="view" id="v-flow">
     <div class="card flow-center-head">
       <div>
-        <h2>计划中心</h2>
+        <h2>任务中心</h2>
         <p class="desc">计算任务从对话发起。这里集中查看计划、审批状态、执行尝试和失败恢复；
           计划一旦生成，服务器、输入文件和执行步骤都会被固定并校验。</p>
+        <p class="desc">单阶段任务由独立后台进程执行。关闭窗口不会取消远端任务；电脑重启后，再次打开应用会恢复未完成任务。</p>
       </div>
       <div class="row flow-head-actions">
-        <button class="btn ghost" onclick="refreshWorkflowCenter()">刷新计划</button>
-        <button class="btn ghost" onclick="toggleManualWorkflow()">手动创建高级计划</button>
+        <button class="btn ghost" onclick="refreshWorkflowCenter()">刷新任务</button>
+        <button class="btn ghost" data-domain-only="vasp" onclick="toggleManualWorkflow()">手动创建 VASP 计划</button>
+        <button class="btn ghost" onclick="openResearchProject()">准备 Python 分析</button>
       </div>
     </div>
     <div id="workflowplans" class="workflow-plans"></div>
+    <div id="workflowrefreshstatus" role="status" aria-live="polite"></div>
     <div id="manualflow" style="display:none">
-    <div class="card">
+    <div class="card" data-domain-only="vasp">
       <h2>手动创建高级计划</h2>
       <p class="desc">普通任务请回到「对话」中描述目标。此入口用于已有输入目录、批量试验或需要逐项审阅参数的场景。</p>
       <div class="row">
@@ -759,18 +969,20 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <div id="wprojinfo" style="font-size:12px;color:var(--fg2);margin-top:6px"></div>
     </div>
     <div class="card" id="plancard" style="display:none">
-      <h2>2 · 计划预览 <span class="mono" id="planid" style="color:var(--acc)"></span></h2>
+      <h2>计划预览 <span class="mono" id="planid" style="color:var(--acc)"></span></h2>
       <div id="plansummary"></div>
       <h3>文件（SHA-256 绑定审批）</h3>
       <table class="planfiles"><thead><tr><th>文件</th><th>大小</th><th>SHA-256</th></tr></thead>
         <tbody id="planfiles"></tbody></table>
       <h3>执行步骤（单阶段）</h3><div id="plansteps"></div>
       <h3>风险摘要</h3><pre id="planrisk"></pre>
+      <h3>完整执行脚本</h3><pre id="planfullscript" style="max-height:420px;overflow:auto"></pre>
+      <div id="planexecution" class="research-note"></div>
     </div>
     <div class="card" id="approvecard" style="display:none">
-      <h2>3 · 本地审批（人工输入确认短语）</h2>
+      <h2>本地审批（人工输入确认短语）</h2>
       <div class="row">
-        <input id="phrase" style="flex:1" placeholder="">
+        <input id="phrase" aria-label="计划审批确认短语" style="flex:1" placeholder="">
         <button class="btn" onclick="approvePlan()">批准</button>
       </div>
       <div style="font-size:12px;color:var(--fg2);margin-top:8px">
@@ -778,7 +990,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <div id="approval_ref" class="mono" style="margin-top:8px;color:var(--ok)"></div>
       <div class="row" style="margin-top:10px">
         <button class="btn" id="runbtn" onclick="runPlan()">执行已批准计划</button>
-        <span style="font-size:12px;color:var(--fg2)">执行无人值守：mkdir→上传(校验哈希)→验证→提交→监控→下载→解析</span>
+        <span style="font-size:12px;color:var(--fg2)">仅按已审批的计划执行；关闭窗口不会取消后台任务。</span>
       </div>
     </div>
     <div class="card" id="runcard" style="display:none">
@@ -795,7 +1007,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <div class="cfgitem" data-c="conn">连接设置</div>
       <div class="cfgitem" data-c="agent">智能体</div>
       <div class="cfgitem" data-c="web">联网搜索</div>
-      <div class="cfgitem" data-c="vaspkit">VASPKIT</div>
+      <div class="cfgitem" data-c="vaspkit" data-domain-only="vasp">VASPKIT</div>
       <div class="cfgitem" data-c="skills">技能</div>
       <div class="cfgitem" data-c="monitor">监测</div>
       <div class="cfgitem" data-c="about">关于</div>
@@ -952,10 +1164,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
 
       <!-- ---- 关于 ---- -->
       <div class="cfghan" id="c-about" style="display:none">
-        <h2>关于 远端控制智能体</h2>
+        <h2>关于 RSCI 科研助手</h2>
         <div class="card">
           <div class="row" style="gap:20px;margin-bottom:10px">
-            <span class="logo"></span><b>远端控制智能体 <span class="mono" id="aboutver"></span></b>
+            <span class="logo"></span><b>RSCI 科研助手 <span class="mono" id="aboutver"></span></b>
           </div>
           <table><tbody>
             <tr><th>工具面</th><td>命名工具注册表 + 本地/远端 shell（仅全量审计，无拦截）</td></tr>
@@ -1027,9 +1239,10 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <h2 id="pmtitle">新建本地项目</h2>
     <div class="mrow">
       <div><label>项目名称</label><input id="pmname" maxlength="64"
-        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" placeholder="如 Fe-relax"></div>
+        pattern="[A-Za-z0-9][A-Za-z0-9._-]{0,63}" placeholder="如 experiment-01"></div>
+      <div><label for="pmkind">项目类型</label><select id="pmkind"><option value="general">通用科研 · 数据与分析</option><option value="vasp">VASP · 材料计算</option></select></div>
     </div>
-    <div id="pmcreatenote" class="note">先创建项目，再从项目旁的「计算配置」补充输入文件，也可以让智能体根据计算需求准备。</div>
+    <div id="pmcreatenote" class="note">通用科研项目包含数据、脚本、笔记、结果和参考文献目录。选择 VASP 才启用材料计算规则；旧项目保留原类型，不自动转换。</div>
     <div id="pmsessionwrap"><label for="pmsession">同时创建会话（在项目下开始对话）</label>
       <select id="pmsession"><option value="yes">是</option><option value="no">否</option></select></div>
     <div id="pmconfig" hidden>
@@ -1161,12 +1374,22 @@ async function api(action, body = {}, silent = false) {
   const route = action === "workflow.status"
     ? "/api/workflow/status?plan_id=" + encodeURIComponent(body.plan_id || "")
     : "/api/" + action;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  let data;
+  try {
   const res = await fetch(route, {
     method: action === "workflow.status" ? "GET" : "POST",
     headers: {"Content-Type": "application/json", "X-RSCI-Token": TOKEN},
     body: action === "workflow.status" ? undefined : JSON.stringify(body),
+    signal: controller.signal,
   });
-  const data = await res.json().catch(() => ({ok:false, error:{message:"响应解析失败"}}));
+  data = await res.json().catch(() => ({ok:false, error:{message:"响应解析失败，请刷新状态后再操作"}}));
+  } catch (error) {
+    data = {ok:false, error:{code:"connection_error", message: error.name === "AbortError"
+      ? "等待响应超时，操作结果尚未确认，请刷新状态后再操作"
+      : "无法连接本机服务，请确认应用仍在运行后刷新状态"}};
+  } finally { clearTimeout(timeout); }
   if (!data.ok && data.error && !silent) toast(data.error.message, "err");
   return data;
 }
@@ -1205,12 +1428,13 @@ function renderContextUsage(stats) {
 }
 async function refreshContextUsage() {
   if (!CURRENT_SESSION) return renderContextUsage(null);
+  const sessionId = CURRENT_SESSION;
   const input = document.getElementById("chatinput");
   const r = await api("chat.context", {
     session_id: CURRENT_SESSION,
     pending_chars: input ? input.value.length : 0,
   }, true);
-  if (r.ok) renderContextUsage(r);
+  if (r.ok && CURRENT_SESSION === sessionId) renderContextUsage(r);
 }
 function queueContextUsage() {
   if (contextUsageTimer) clearTimeout(contextUsageTimer);
@@ -1442,7 +1666,8 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (t.dataset.v === "chat") loadSessions();
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
-  if (t.dataset.v === "jobs") { loadCampaigns(true); loadJobs(true); }
+  if (t.dataset.v === "jobs") { if (activeProjectKind() === "vasp") loadCampaigns(true); loadJobs(true); }
+  if (t.dataset.v === "research" && !RESEARCH_PROJECT) refreshProjects();
   if (t.dataset.v === "flow") {
     refreshProjects();
     refreshWorkflowCenter();
@@ -1454,9 +1679,9 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
 });
 document.getElementById("ver").textContent = "v" + (location.search.includes("debug") ? "?" : "");
 document.getElementById("chatinput").addEventListener("keydown", e => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); sendChat(); }
 });
-document.getElementById("chatinput").addEventListener("input", queueContextUsage);
+document.getElementById("chatinput").addEventListener("input", () => { saveChatDraft(true); queueContextUsage(); });
 
 async function refreshServers() {
   const st = await api("state");
@@ -1769,8 +1994,8 @@ async function refreshWorkspacePanel() {
   }
   const space = r.space || {};
   const rows = r.workspaces || [];
-  const level = Number(space.used_percent || 0) >= 90 ? "#f08b7d" :
-    Number(space.used_percent || 0) >= 80 ? "#e8bf65" : "var(--ok)";
+  const level = Number(space.used_percent || 0) >= 90 ? "var(--err)" :
+    Number(space.used_percent || 0) >= 80 ? "var(--warn)" : "var(--ok)";
   out.innerHTML = `<div class="row" style="gap:20px;align-items:baseline">
     <span>已用：<b style="color:${level}">${esc(space.used_percent ?? "—")}%</b></span>
     <span>可用：<b>${fmtBytes(Number(space.free_bytes))}</b></span>
@@ -1899,7 +2124,7 @@ function jobAnalysisRows(rows, history = false) {
       <td class="mono">${jobDuration(j)}</td><td class="mono">${jobEnd(j)}</td>`
       : `<td class="mono">${esc(j.elapsed || "—")}</td><td>${esc(j.partition || "")}</td>`}
     <td>${esc(j.name || "")}${directory ? `<div class="jobdir" title="${esc(directory)}">${esc(directory)}</div>` : ""}</td>
-    <td><button class="btn ghost" style="padding:2px 8px" onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state || "UNKNOWN")}','${esc(j.assumed_end ? "" : j.completed_at || "")}',${j.assumed_end || terminal ? "true" : "false"})">${history ? "详情" : "进度"}</button>
+    <td><button data-domain-only="vasp" class="btn ghost" style="padding:2px 8px" onclick="jobProgress('${esc(server)}','${esc(j.job_id)}','${esc(j.state || "UNKNOWN")}','${esc(j.assumed_end ? "" : j.completed_at || "")}',${j.assumed_end || terminal ? "true" : "false"})">${history ? "详情" : "进度"}</button>
       <button class="btn ghost" style="padding:2px 8px" data-job-id="${esc(j.job_id)}"
         data-state="${esc(j.state || "UNKNOWN")}" data-directory="${esc(directory)}"
         onclick="${directory ? "analyzeJob(this)" : "bindJobDirectory(this)"}">${directory ? "运行证明" : "绑定目录"}</button></td></tr>
@@ -2069,6 +2294,7 @@ function jobEnd(j) {
 let PROG_JOB = null;  // {server, job_id, state, done, completed_at}：从作业表点进来时才有
 const DONE_STATES = ["COMPLETED", "FAILED", "TIMEOUT", "CANCELLED", "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"];
 async function jobProgress(server, jobId, state, completedAt = "", finished = false) {
+  if (activeProjectKind() !== "vasp") return toast("VASP 进度仅在 VASP 项目的会话中启用。通用任务请查看调度器状态与结果文件。", "info");
   const out = document.getElementById("progout");
   out.innerHTML = `<div class="empty">正在向调度器查询作业 ${esc(jobId)} 的工作目录…</div>`;
   document.getElementById("progcard").scrollIntoView({behavior: "smooth", block: "start"});
@@ -2361,6 +2587,7 @@ function campRow(c) {
         · 赝势库 ${c.potcar_library ? esc(c.potcar_library) : "服务器 ~/.vaspkit"}</div>${acts}</div></div>`;
 }
 async function loadCampaigns(silent = false) {
+  if (activeProjectKind() !== "vasp") return;
   const r = await api("campaign.list", {}, silent);
   if (!r.ok) return;
   document.getElementById("camplist").innerHTML = (r.campaigns || []).map(campRow).join("")
@@ -2440,6 +2667,7 @@ async function vkProbe(server, btn) {
 
 /* 附件：文件原样存到本机，消息里只放路径——坐标不经模型转抄 */
 async function attachFile(file) {
+  if (activeProjectKind() !== "vasp") return toast("请先在 VASP 项目下创建或打开会话。通用数据请使用「项目文件」。", "info");
   if (!file) return;
   if (file.size > 2 * 1024 * 1024) return toast("文件超过 2 MiB", "err");
   const r = await api("vasp.attach", {name: file.name, text: await file.text()});
@@ -2464,16 +2692,19 @@ async function attachFile(file) {
 /* ===================== 工作流 ===================== */
 function showPlanResult(r, run = null) {
   CURRENT_PLAN = r;
+  CURRENT_PLAN.run = run;
   CURRENT_APPROVAL = null;
   document.getElementById("plancard").style.display = "";
   document.getElementById("approvecard").style.display =
-    run?.status === "running" ? "none" : "";
+    run && (run.task?.worker_alive || run.task?.phase === "finished" ||
+      (run.task?.blocked_reason && run.task.blocked_reason !== "approval_required")) ? "none" : "";
   document.getElementById("runplanid").textContent = "";
   document.getElementById("planid").textContent = r.plan_id;
   const p = r.plan;
+  const local = p.domain === "general";
   document.getElementById("plansummary").innerHTML = `
     <div class="row" style="gap:18px">
-      <span>服务器 <b>${esc(p.server)}</b></span><span>远端 <span class="mono">${esc(p.remote_dir)}</span></span>
+      <span>${local ? "执行位置" : "服务器"} <b>${local ? "本机 Python" : esc(p.server)}</b></span><span>${local ? "项目" : "远端"} <span class="mono">${esc(p.project || p.remote_dir)}</span></span>
       <span>plan_hash <span class="mono">${esc(p.plan_hash.slice(0, 16))}…</span></span>
       <span>文件哈希 <span class="mono">${esc(r.files_hash.slice(0, 16))}…</span></span></div>`;
   document.getElementById("planfiles").innerHTML = p.files.map(f => `
@@ -2484,6 +2715,9 @@ function showPlanResult(r, run = null) {
      <span class="mono" style="color:var(--acc);min-width:88px">${esc(s.type)}</span>
      <span>${esc(s.id === s.type ? "" : s.id)} ${esc(s.path || s.file || s.script || "")}</span></div>`).join("");
   document.getElementById("planrisk").textContent = JSON.stringify(p.risk_summary, null, 2);
+  document.getElementById("planfullscript").textContent = p.job_script_content || "脚本内容不可用，请勿批准";
+  document.getElementById("planexecution").textContent = local ?
+    `解释器：${p.execution?.python}；参数：${JSON.stringify(p.execution?.args || [])}；时限：${p.execution?.timeout_seconds} 秒；输出：${(p.outputs || []).join("、")}` : "";
   document.getElementById("phrasehint").textContent = `approve ${r.plan_id}`;
   document.getElementById("phrase").value = "";
   document.getElementById("approval_ref").textContent = "";
@@ -2523,17 +2757,24 @@ async function approvePlan() {
   if (!r.ok) return;
   CURRENT_APPROVAL = r;
   document.getElementById("approval_ref").textContent =
-    "approval_ref（复制备用，仅显示一次）：\n" + r.approval_ref;
+    "已审批，有效期至 " + r.expires_at + "。确认后点击「执行已批准计划」。";
   toast("审批通过，有效期至 " + r.expires_at, "ok");
   refreshWorkflowCenter();
 }
 async function runPlan() {
   if (!CURRENT_PLAN) return toast("请先生成计划预览", "err");
   if (!CURRENT_APPROVAL) return toast("请先完成本地审批（输入确认短语）", "err");
-  const r = await api("workflow.run", {plan_id: CURRENT_PLAN.plan_id,
-                                       approval_ref: CURRENT_APPROVAL.approval_ref});
+  const button = document.getElementById("runbtn");
+  button.disabled = true;
+  let r;
+  try {
+    r = await api(CURRENT_PLAN.run ? "workflow.resume" : "workflow.run", {
+      plan_id: CURRENT_PLAN.plan_id, approval_ref: CURRENT_APPROVAL.approval_ref});
+  } catch (_) {
+    return toast("暂时无法确认启动结果。请刷新任务状态，不要重新创建计算。", "err");
+  } finally { button.disabled = false; }
   if (!r.ok) return;
-  toast("计划已开始执行", "ok");
+  toast("任务已入队，由独立后台进程接续执行", "ok");
   document.getElementById("runcard").style.display = "";
   document.getElementById("runplanid").textContent = CURRENT_PLAN.plan_id;
   pollRun(CURRENT_PLAN.plan_id, true);
@@ -2543,22 +2784,38 @@ let runTimer = null;
 function pollRun(planId, start = false) {
   if (runTimer) clearInterval(runTimer);
   const tick = async () => {
-    const r = await api("workflow.status", {plan_id: planId});
-    if (!r.ok) { clearInterval(runTimer); return; }
-    renderRun(r);
-    if (r.status !== "running") clearInterval(runTimer);
+    try {
+      const r = await api("workflow.status", {plan_id: planId}, true);
+      if (!r.ok) return;
+      renderRun(r);
+      if (r.status !== "running") clearInterval(runTimer);
+    } catch (_) { /* Keep the last known status while the UI connection retries. */ }
   };
   if (start) tick();
   runTimer = setInterval(tick, 5000);
 }
 function renderRun(r) {
+  const task = r.task || {};
   const lines = [`<div class="row" style="gap:14px;margin-bottom:10px">
     <span>状态 ${badge(statusLabel(r.status), statusClass(r.status))}</span>
-    <span>调度器 ${badge(r.scheduler_state || "—", "info")}</span>
-    <span>科学收敛 ${badge(r.scientific_converged ? "是" : (r.status === "completed" ? "否" : "—"),
+    <span>阶段 ${esc(taskPhase(task.phase))}</span>
+    <span>后台 ${task.worker_alive ? "运行中" : task.phase === "finished" ? "已结束" : "未运行"}</span>
+    <span>作业号 <span class="mono">${esc(r.job_id || "—")}</span></span>
+    <span>${r.domain === "general" ? "Python " + badge(r.execution_state || "尚未执行", "info") : "调度器 " + badge(r.scheduler_state || "—", "info")}</span>
+    ${r.scheduler_state === "UNKNOWN" && task.last_known_scheduler_state ? `<span>上次已知 ${esc(task.last_known_scheduler_state)}</span>` : ""}
+    <span>${r.domain === "general" ? "科学结论：尚未验证" : "科学收敛 " + badge(r.scientific_converged ? "是" : (r.scientific_converged === false ? "否" : "—"),
       r.scientific_converged ? "ok" : "warn")}</span></div>`];
+  lines.push(`<div class="wr-meta"><span>最后核对 ${esc(displayTaskTime(task.last_checked_at))}</span>
+    <span>回收状态 ${esc(r.collection_status === "completed" ? "已回收" : task.phase === "collecting" ? "回收中" : "尚未完成")}</span>
+    <span class="wr-path">结果目录 ${esc(task.download_root || "—")}</span></div>`);
+  if (task.last_error && !r.failure) lines.push(`<p role="status">${esc(task.last_error)}</p>`);
   if (r.failure) lines.push(`<div style="color:var(--err);margin-bottom:8px">失败步骤：
     <span class="mono">${esc(r.failure.step)}</span> — ${esc(r.failure.detail)}</div>`);
+  if (r.execution_error) lines.push(`<p role="status">${esc(r.execution_error)}</p>`);
+  if (r.missing_outputs?.length) lines.push(`<p role="status">未回收到：${r.missing_outputs.map(esc).join("、")}</p>`);
+  if (r.domain === "general" && r.project) {
+    lines.push(`<div class="row" id="research-results-actions"></div>`);
+  }
   for (const a of (r.attempts || []).slice().reverse()) {
     lines.push(`<div class="attempt"><h4>第 ${a.attempt} 次尝试 · ${esc(a.status)} · ${esc(a.started_at)}</h4>
       <div class="timeline">${(a.steps || []).map(s => `
@@ -2569,24 +2826,70 @@ function renderRun(r) {
         || '<div class="step-row" style="color:var(--fg2)">（无步骤）</div>'}</div></div>`);
   }
   document.getElementById("runstate").innerHTML = lines.join("");
+  const results = document.getElementById("research-results-actions");
+  if (results) for (const artifact of task.artifacts || []) {
+    const button = document.createElement("button"); button.className = "btn ghost";
+    button.textContent = "查看结果 · " + artifact.name;
+    button.onclick = () => openResearchProject(r.project, artifact.project_file);
+    results.appendChild(button);
+  }
 }
-const statusLabel = s => ({"running":"执行中","completed":"完成（科学收敛）","needs_review":"需人工判读","failed":"失败"}[s] || s);
-const statusClass = s => ({"running":"info","completed":"ok","needs_review":"warn","failed":"err"}[s] || "info");
+const statusLabel = s => ({"running":"执行中","paused":"等待处理","completed":"已完成","needs_review":"需人工判读或核对","failed":"失败"}[s] || s);
+const statusClass = s => ({"running":"info","paused":"warn","completed":"ok","needs_review":"warn","failed":"err"}[s] || "info");
 const workflowCenterLabel = s => ({prepared:"待审批", running:"执行中",
-  completed:"完成（科学收敛）", needs_review:"需人工判读", failed:"执行失败",
+  paused:"等待处理", completed:"已完成", needs_review:"需人工判读或核对", failed:"执行失败",
   invalid:"计划损坏"}[s] || s || "未知");
-const workflowCenterClass = s => ({prepared:"warn", running:"info",
+const workflowCenterClass = s => ({prepared:"warn", running:"info", paused:"warn",
   completed:"ok", needs_review:"warn", failed:"err", invalid:"err"}[s] || "info");
 function toggleManualWorkflow() {
   const el = document.getElementById("manualflow");
   el.style.display = el.style.display === "none" ? "" : "none";
   if (el.style.display !== "none") el.scrollIntoView({behavior:"smooth"});
 }
-async function refreshWorkflowCenter() {
+const taskPhase = phase => ({admitting:"审批交接中", queued:"等待后台接续", preparing:"准备输入",
+  submitting:"正在提交", executing:"执行分析", monitoring:"监控执行", collecting:"回收结果", retrying:"连接重试中",
+  blocked:"等待处理", finished:"任务结束"}[phase] || "—");
+const taskReason = reason => ({submit_uncertain:"提交结果待核对", approval_required:"需要重新审批",
+  auth_required:"需要登录服务器", inputs_changed:"输入文件已变化", server_changed:"服务器配置已变化",
+  invalid_plan:"计划或状态无效", invalid_receipt:"执行凭据无法核实", legacy_confirmation_required:"旧任务需要人工核对",
+  monitor_timeout:"需要延长监控", launch_failed:"后台启动失败", worker_error:"后台执行中断",
+  transport_error:"连接失败，可恢复", step_failed:"步骤失败，请核对后恢复",
+  execution_uncertain:"本地执行结果待核对，禁止自动重跑", result_conflict:"结果文件冲突，请保留文件并核对"}[reason] || "等待处理");
+function displayTaskTime(value) {
+  if (!value) return "尚未核对";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+const WORKFLOW_BUSY = new Set(), WORKFLOW_EVIDENCE = {};
+function canResumeTask(p) {
+  const task = p.task || {};
+  return !task.worker_alive && task.phase !== "finished" && !["prepared", "invalid", "completed"].includes(p.status) &&
+    !["submit_uncertain", "approval_required", "inputs_changed", "invalid_plan", "invalid_receipt",
+      "legacy_confirmation_required", "execution_uncertain"].includes(task.blocked_reason);
+}
+function taskEvidence(planId) {
+  const report = WORKFLOW_EVIDENCE[planId];
+  if (!report) return "";
+  if (report.execution === "local_python") return `<div role="status">本地只读核对：${report.supervisor_alive ? "执行进程仍在运行" : "执行进程已退出"} · ${esc(report.report?.state || "没有可信完成记录")}<br>${esc(report.directory)}<br>${(report.warnings || []).map(esc).join("；")}</div>`;
+  return `<div role="status" style="margin-top:8px">只读核对结果：${(report.candidates || []).length ?
+    (report.candidates || []).map(c => `<div>作业 <span class="mono">${esc(c.job_id)}</span> · ${esc(c.state)} · ${esc(c.directory)}</div>`).join("") :
+    "未找到目录匹配、可确认的作业；不要重新提交，请先到调度器核对。"}
+    ${(report.warnings || []).map(w => `<div>${esc(w)}</div>`).join("")}</div>`;
+}
+async function refreshWorkflowCenter(quiet = false) {
   const box = document.getElementById("workflowplans");
   if (!box) return;
-  const r = await api("workflow.list", {}, true);
-  if (!r.ok) return;
+  if (WORKFLOW_BUSY.size || quiet && box.contains(document.activeElement) && document.activeElement?.tagName === "INPUT") return;
+  const notice = document.getElementById("workflowrefreshstatus");
+  let r;
+  try { r = await api("workflow.list", {}, true); }
+  catch (_) { notice.textContent = "连接暂时不可用，保留上次状态，稍后自动重试。"; return; }
+  if (!r.ok) { notice.textContent = r.error?.message || "状态更新失败，保留上次记录。"; return; }
+  notice.textContent = "";
+  // Refreshing status must not discard a partially typed human confirmation,
+  // including after focus moves from the input to a button or the evidence.
+  const drafts = Object.fromEntries([...box.querySelectorAll(".wr-actions input")]
+    .map(input => [input.id, input.value]));
   const plans = r.plans || [];
   if (!plans.length) {
     box.innerHTML = `<div class="empty workflow-record">还没有执行计划。请在「对话」中描述计算目标，
@@ -2595,44 +2898,78 @@ async function refreshWorkflowCenter() {
   }
   box.innerHTML = plans.map(p => {
     const state = String(p.status || "prepared");
-    const title = state === "prepared" ? "等待审批" : workflowCenterLabel(state);
-    const action = state === "prepared" || state === "failed"
+    const task = p.task || {};
+    const title = task.blocked_reason ? taskReason(task.blocked_reason) :
+      task.phase && task.phase !== "finished" ? taskPhase(task.phase) : workflowCenterLabel(state);
+    const action = task.phase !== "finished" && (state === "prepared" || state === "failed")
       ? "继续审批 / 恢复" : "查看详情";
-    return `<div class="workflow-record">
+    return `<div class="workflow-record" id="wf-record-${esc(p.plan_id)}">
       <div class="wr-head"><b class="mono">${esc(p.plan_id)}</b>
         ${badge(title, workflowCenterClass(state))}
         ${p.risk_level ? badge("风险 " + p.risk_level, "info") : ""}
       </div>
       <div class="wr-meta">
-        <span>服务器 <b>${esc(p.server || "—")}</b></span>
+        <span>${p.domain === "general" ? "本机 Python · " + esc(p.project) : "VASP · 服务器 " + esc(p.server || "—")}</span>
         <span>文件 ${esc(p.file_count)} 个 · 步骤 ${esc(p.step_count)} 步</span>
+        <span>运行号 <span class="mono">${esc(p.job_id || "—")}</span> · ${p.domain === "general" ? "执行 " + esc(p.execution_state || "尚未开始") : "调度器 " + esc(p.scheduler_state || "尚未查询")}</span>
+        ${state !== "prepared" ? `<span>后台 ${task.worker_alive ? "运行中" : task.phase === "finished" ? "已结束" : "未运行"} · 最后核对 ${esc(displayTaskTime(task.last_checked_at))}</span>` : ""}
         <span class="wr-path">${esc(p.remote_dir || "—")}</span>
+        ${task.download_root ? `<span class="wr-path">结果目录 ${esc(task.download_root)}</span>` : ""}
       </div>
       ${p.failure ? `<div style="margin-top:6px;color:var(--err);font-size:12px">${esc(p.failure.detail || "执行失败")}</div>` : ""}
+      ${task.last_error && !p.failure ? `<div role="status" style="margin-top:6px">${esc(task.last_error)}</div>` : ""}
       <div class="wr-actions"><button class="btn ghost" onclick="openWorkflowPlan('${esc(p.plan_id)}')">${action}</button>
-        ${state === "running" ? `<input id="wf-resume-${esc(p.plan_id)}" class="path-input" style="min-width:260px" placeholder="粘贴原 approval_ref">
-          <button class="btn ghost" onclick="resumeWorkflow('${esc(p.plan_id)}')">恢复未完成步骤</button>` : ""}</div>
+        ${task.blocked_reason === "execution_uncertain" ? `<button class="btn ghost" onclick="reconcileWorkflow('${esc(p.plan_id)}')">只读核对本地执行</button>` : ""}
+        ${canResumeTask(p) ? `<button class="btn ghost" onclick="resumeWorkflow('${esc(p.plan_id)}', ${task.blocked_reason === 'monitor_timeout'})">${task.blocked_reason === "monitor_timeout" ? "延长同一作业的监控" : "恢复未完成步骤"}</button>` : ""}
+        ${task.blocked_reason === "submit_uncertain" ? `<button class="btn ghost" onclick="reconcileWorkflow('${esc(p.plan_id)}')">只读核对远端</button>
+          <input id="wf-job-${esc(p.plan_id)}" value="${esc(drafts['wf-job-' + p.plan_id] || '')}" inputmode="numeric" aria-label="待关联的远端作业号" placeholder="远端作业号">
+          <input id="wf-bind-${esc(p.plan_id)}" value="${esc(drafts['wf-bind-' + p.plan_id] || '')}" aria-label="关联作业确认短语" placeholder="bind ${esc(p.plan_id)} 作业号">
+          <button class="btn ghost" onclick="bindWorkflowJob('${esc(p.plan_id)}')">确认关联并继续监控</button>` : ""}</div>
+      ${task.blocked_reason === "submit_uncertain" ? `<p class="desc">核对后输入作业号，确认短语为 <span class="mono">bind ${esc(p.plan_id)} 作业号</span>。关联只接续监控与回收，不会提交新作业。</p>` : ""}
+      ${taskEvidence(p.plan_id)}
     </div>`;
   }).join("");
 }
 async function openWorkflowPlan(planId) {
   const r = await api("workflow.get", {plan_id: planId}, true);
   if (!r.ok) return;
+  document.querySelector('.tab[data-v="flow"]').click();
   document.getElementById("manualflow").style.display = "";
   showPlanResult(r, r.run || null);
   if (r.run?.status === "running") pollRun(planId);
 }
-async function resumeWorkflow(planId) {
-  const input = document.getElementById("wf-resume-" + planId);
-  const approvalRef = input?.value.trim() || "";
-  if (!approvalRef) return toast("恢复需要原 approval_ref", "err");
-  const r = await api("workflow.resume", {
-    plan_id: planId, approval_ref: approvalRef}, true);
-  if (!r.ok) return toast(r.error?.message || "恢复失败", "err");
-  toast("已启动恢复尝试", "ok");
-  pollRun(planId, true);
-  refreshWorkflowCenter();
+async function taskAction(planId, action, body, success) {
+  if (WORKFLOW_BUSY.has(planId)) return;
+  WORKFLOW_BUSY.add(planId);
+  const buttons = [...(document.getElementById("wf-record-" + planId)?.querySelectorAll("button") || [])];
+  buttons.forEach(b => b.disabled = true);
+  try {
+    const r = await api(action, {plan_id: planId, ...body}, true);
+    if (!r.ok) { toast(r.error?.message || "操作失败，原任务记录已保留", "err"); return; }
+    if (action === "workflow.reconcile") WORKFLOW_EVIDENCE[planId] = r;
+    else toast(success, "ok");
+  } catch (_) { toast("连接中断，请刷新任务状态后再操作。不要重新提交计算。", "err"); }
+  finally {
+    WORKFLOW_BUSY.delete(planId);
+    buttons.forEach(b => b.disabled = false);
+    refreshWorkflowCenter();
+  }
 }
+async function resumeWorkflow(planId, extendMonitor = false) {
+  return taskAction(planId, "workflow.resume", {extend_monitor: extendMonitor}, "已请求接续原任务，不会重新提交远端作业");
+}
+async function reconcileWorkflow(planId) {
+  return taskAction(planId, "workflow.reconcile", {}, "");
+}
+async function bindWorkflowJob(planId) {
+  const jobId = document.getElementById("wf-job-" + planId)?.value.trim() || "";
+  const phrase = document.getElementById("wf-bind-" + planId)?.value.trim() || "";
+  if (!jobId || phrase !== `bind ${planId} ${jobId}`) return toast(`请输入确认短语：bind ${planId} ${jobId || "作业号"}`, "err");
+  return taskAction(planId, "workflow.bind_job", {job_id: jobId, phrase}, "已关联原作业，后台将继续监控与回收");
+}
+setInterval(() => {
+  if (!document.hidden && document.getElementById("v-flow").classList.contains("on")) refreshWorkflowCenter(true);
+}, 5000);
 
 /* ===================== 对话（SSE 流式） ===================== */
 let CURRENT_SESSION = "";
@@ -2657,8 +2994,126 @@ let CHAT_ATTACHMENTS = [];
 const CHAT_FILE_LIMIT = 5;
 const CHAT_FILE_BYTES = 512 * 1024;
 const CHAT_FILES_TOTAL = 2 * 1024 * 1024;
+let CHAT_VIEW = null;
+let SESSION_OPEN_VERSION = 0, SESSION_LIST_VERSION = 0, SESSION_SEARCH_TIMER = null, SESSION_LOADING = false;
+const CHAT_DRAFTS = new Map();
+let COMPOSER_SESSION = "", COMPOSER_READY = false;
+function draftKey(id = CURRENT_SESSION) { return "rsci.chat.draft." + (id || "new"); }
+function saveChatDraft(force = false) {
+  if (!COMPOSER_READY && !force) return;
+  if (!COMPOSER_READY) { COMPOSER_SESSION = CURRENT_SESSION; COMPOSER_READY = true; }
+  const draft = {text:document.getElementById("chatinput").value,
+    files:CHAT_ATTACHMENTS.map(file => ({...file}))};
+  const key = draftKey(COMPOSER_SESSION);
+  CHAT_DRAFTS.set(key, draft);
+  try {
+    if (draft.text || draft.files.length) localStorage.setItem(key, JSON.stringify(draft));
+    else localStorage.removeItem(key);
+    document.getElementById("draftstatus").textContent = draft.text || draft.files.length
+      ? "草稿已保存在此浏览器" : "";
+  } catch (_) {
+    document.getElementById("draftstatus").textContent = "草稿暂存在当前页面，浏览器未能保存；关闭前请复制重要内容";
+  }
+}
+function restoreChatDraft() {
+  COMPOSER_SESSION = CURRENT_SESSION; COMPOSER_READY = true;
+  const key = draftKey();
+  let draft = CHAT_DRAFTS.get(key);
+  try { draft = draft || JSON.parse(localStorage.getItem(key) || "null"); } catch (_) {}
+  document.getElementById("chatinput").value = typeof draft?.text === "string" ? draft.text : "";
+  CHAT_ATTACHMENTS = Array.isArray(draft?.files) ? draft.files.filter(file =>
+    typeof file.name === "string" && typeof file.content === "string").slice(0, CHAT_FILE_LIMIT) : [];
+  renderChatAttachments();
+  document.getElementById("draftstatus").textContent = draft?.text || CHAT_ATTACHMENTS.length ? "已恢复未发送的草稿" : "";
+}
+function setChatNotice(text = "", action = null, label = "查看原回答") {
+  const notice = document.getElementById("chatstatus");
+  notice.textContent = text;
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button"; button.textContent = label; button.onclick = action;
+    notice.appendChild(button);
+  }
+}
+function setChatBusy(busy) {
+  CHAT_ACTIVE = busy;
+  const button = document.getElementById("sendbtn");
+  button.disabled = false;
+  button.textContent = busy ? "停止" : "发送";
+  button.classList.toggle("danger", busy);
+}
+function detachChatView() {
+  const view = CHAT_VIEW;
+  CHAT_VIEW = null;
+  if (view) {
+    view.controller?.abort(); clearTimeout(view.pollTimer); clearInterval(view.watchdog);
+    if (view.log?._timer) { clearInterval(view.log._timer); view.log._timer = null; }
+  }
+  CHAT_REQUEST_ID = ""; CHAT_RUN = ""; setChatBusy(false);
+}
+function restoreLastChatDraft(draft = LAST_CHAT_DRAFT) {
+  if (!draft || draft.session_id !== CURRENT_SESSION) return;
+  const input = document.getElementById("chatinput");
+  if (input.value || CHAT_ATTACHMENTS.length) return toast("输入框已有草稿，请先保留或发送当前内容", "err");
+  input.value = draft.text;
+  CHAT_ATTACHMENTS = draft.files.map(file => ({...file, size:new TextEncoder().encode(file.content).length}));
+  renderChatAttachments(); saveChatDraft(); input.focus();
+}
+// Handles arbitrary UTF-8 chunk boundaries, CRLF, comments and multi-line data.
+function chatEventDecoder(onEvent) {
+  const decoder = new TextDecoder(); let buffer = "";
+  function frame(raw) {
+    const data = raw.split(/\r?\n/).filter(line => line.startsWith("data:"))
+      .map(line => line.slice(5).replace(/^ /, "")).join("\n");
+    if (data) onEvent(JSON.parse(data));
+  }
+  return (bytes, done = false) => {
+    buffer += decoder.decode(bytes, {stream:!done});
+    let match;
+    while ((match = /\r?\n\r?\n/.exec(buffer))) {
+      frame(buffer.slice(0, match.index)); buffer = buffer.slice(match.index + match[0].length);
+    }
+    if (done && buffer.trim()) { frame(buffer); buffer = ""; }
+  };
+}
+async function pollChatView(view) {
+  if (CHAT_VIEW !== view) return;
+  const r = await api("chat.status", {session_id:view.session_id, request_id:view.request_id}, true);
+  if (CHAT_VIEW !== view) return;
+  if (!r.ok) {
+    setChatNotice("暂时无法读取回答，正在重新连接。应用恢复后会继续核对原请求。");
+    view.pollDelay = Math.min((view.pollDelay || 1500) * 2, 10000);
+  } else {
+    const turn = r.turn || {};
+    restoreWorkflowCards(r.workflow_plans, view.session_id, SESSION_OPEN_VERSION);
+    if (turn.request_id !== view.request_id && !turn.active) {
+      detachChatView();
+      setChatNotice("尚未找到这条请求的记录。可恢复输入并核对后重新发送。",
+        () => restoreLastChatDraft(view.draft), "恢复输入");
+      return;
+    }
+    if (typeof r.answer === "string" && turn.request_id === view.request_id) {
+      view.bubble.dataset.acc = r.answer;
+      view.bubble.innerHTML = safeMD(r.answer || "正在等待回答…");
+    }
+    if (turn.request_id === view.request_id && turn.status !== "running") {
+      handleChatEvent({type:"final", result:{ok:turn.status === "completed", answer:r.answer,
+        cancelled:turn.status === "stopped", error:turn.error}}, view.bubble, view.log, () => {});
+      detachChatView();
+      setChatNotice(turn.status === "completed" ? "回答已恢复" : (turn.error || "回答已结束"),
+        turn.status === "completed" || !view.draft ? null : () => restoreLastChatDraft(view.draft), "恢复输入");
+      loadSessions(); pollPendingCards(); refreshContextUsage();
+      return;
+    }
+    setChatNotice(turn.stage === "tool" ? `正在${verbOf(turn.current_tool)}；回答会保存在此会话`
+      : "回答仍在生成，已重新连接原请求");
+    view.pollDelay = 1500;
+  }
+  view.pollTimer = setTimeout(() => pollChatView(view), view.pollDelay || 1500);
+}
 async function addChatFiles(fileList) {
   const incoming = [...(fileList || [])];
+  const sessionId = CURRENT_SESSION;
   document.getElementById("chatfileinput").value = "";
   for (const file of incoming) {
     if (CHAT_ATTACHMENTS.length >= CHAT_FILE_LIMIT) {
@@ -2671,6 +3126,7 @@ async function addChatFiles(fileList) {
     }
     try {
       const content = await file.text();
+      if (sessionId !== CURRENT_SESSION) return toast("会话已切换，请在目标会话重新选择附件", "err");
       if (content.includes("\u0000")) {
         toast(`${file.name} 看起来不是文本文件，未添加`, "err");
         continue;
@@ -2687,6 +3143,7 @@ async function addChatFiles(fileList) {
     }
   }
   renderChatAttachments();
+  saveChatDraft(true);
 }
 function renderChatAttachments() {
   const box = document.getElementById("chatattachments");
@@ -2703,9 +3160,10 @@ function renderChatAttachments() {
 function removeChatFile(index) {
   CHAT_ATTACHMENTS.splice(index, 1);
   renderChatAttachments();
+  saveChatDraft(true);
 }
 async function sendChat(override = null) {
-  if (CHAT_ACTIVE) return;
+  if (CHAT_ACTIVE || SESSION_LOADING) return;
   const input = document.getElementById("chatinput");
   const text = override ? String(override.text || "").trim() : input.value.trim();
   const outgoingFiles = override ? (override.files || []).map(file => ({
@@ -2714,10 +3172,25 @@ async function sendChat(override = null) {
     name:file.name, content:file.content
   }));
   if (!text && !outgoingFiles.length) return;
-  LAST_CHAT_DRAFT = {text, files: outgoingFiles.map(file => ({...file}))};
+  setChatBusy(true);
+  const openVersion = SESSION_OPEN_VERSION;
+  if (!CURRENT_SESSION) {
+    document.getElementById("sendbtn").disabled = true;
+    const created = await api("chat.new");
+    if (openVersion !== SESSION_OPEN_VERSION) return;
+    if (!created.ok) { setChatBusy(false); return; }
+    CURRENT_SESSION = created.session_id;
+    try { localStorage.removeItem(draftKey("")); } catch (_) {}
+    CHAT_DRAFTS.delete(draftKey(""));
+  }
+  const sessionId = CURRENT_SESSION;
+  COMPOSER_SESSION = sessionId; COMPOSER_READY = true;
+  LAST_CHAT_DRAFT = {session_id:sessionId, text, files: outgoingFiles.map(file => ({...file}))};
   const shownText = (text || "请阅读附件。") + (outgoingFiles.length
     ? `\n\n[文本附件：${outgoingFiles.map(file => file.name).join("、")}]` : "");
   input.value = "";
+  CHAT_ATTACHMENTS = []; renderChatAttachments(); saveChatDraft();
+  setChatNotice("正在发送…");
   addMsg("user", shownText);
   const log = document.getElementById("chatlog");
   const botBody = addMsg("bot", "");
@@ -2747,55 +3220,68 @@ async function sendChat(override = null) {
   CHAT_ACTIVE = true;
   CHAT_REQUEST_ID = globalThis.crypto?.randomUUID?.() ||
     `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const view = {session_id:sessionId, request_id:CHAT_REQUEST_ID, draft:LAST_CHAT_DRAFT,
+    bubble, log, controller:new AbortController(), lastFrame:Date.now(), terminal:false};
+  CHAT_VIEW = view;
   const sendButton = document.getElementById("sendbtn");
   sendButton.disabled = false;
   sendButton.textContent = "停止";
   sendButton.classList.add("danger");
   let acc = "";
+  view.watchdog = setInterval(() => {
+    if (Date.now() - view.lastFrame > 45000) view.controller.abort();
+  }, 5000);
   try {
     const res = await fetch("/api/agent/chat", {
       method: "POST",
       headers: {"Content-Type": "application/json", "X-RSCI-Token": TOKEN},
       body: JSON.stringify({provider: currentProvider(), message: text,
-                             session_id: CURRENT_SESSION,
+                             session_id: sessionId,
                              attachments: outgoingFiles,
-                             request_id: CHAT_REQUEST_ID, run_id: runId}),
+                             request_id: view.request_id, run_id: runId}),
+      signal:view.controller.signal,
     });
     const contentType = res.headers.get("Content-Type") || "";
     if (!contentType.includes("text/event-stream")) {
       const problem = await res.json().catch(() => ({}));
+      if (CHAT_VIEW !== view) return;
+      if (["chat_busy", "chat_duplicate"].includes(problem.error?.code)) {
+        restoreLastChatDraft(view.draft);
+        await openSession(sessionId);
+        return;
+      }
+      view.rejected = true;
       throw new Error(problem.error?.message || `请求失败（HTTP ${res.status}）`);
     }
-    CHAT_ATTACHMENTS = [];
-    renderChatAttachments();
     const reader = res.body.getReader();
-    const dec = new TextDecoder();
-    let buf = "";
+    const consume = chatEventDecoder(ev => {
+      view.lastFrame = Date.now();
+      if (CHAT_VIEW !== view) return;
+      if (ev.type === "final" || ev.type === "error") view.terminal = true;
+      handleChatEvent(ev, bubble, log, acc2 => { acc = acc2; });
+    });
     while (true) {
       const {value, done} = await reader.read();
+      consume(value, done);
       if (done) break;
-      buf += dec.decode(value, {stream: true});
-      let idx;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
-        const line = frame.split("\n").find(l => l.startsWith("data:"));
-        if (!line) continue;
-        let ev; try { ev = JSON.parse(line.slice(5).trim()); } catch { continue; }
-        handleChatEvent(ev, bubble, log, acc2 => { acc = acc2; });
-      }
     }
-    if (!acc.trim()) bubble.textContent = bubble.textContent || "（无输出）";
+    if (CHAT_VIEW !== view) return;
+    if (!view.terminal) throw new Error("连接结束，但尚未收到完成确认");
+    if (!acc.trim() && !bubble.textContent) bubble.textContent = "（无输出）";
   } catch (e) {
+    if (CHAT_VIEW !== view) return;
     if (log._timer) { clearInterval(log._timer); log._timer = null; }
-    showChatError(bubble, "连接中断：" + e.message);
+    if (view.rejected) {
+      showChatError(bubble, e.message);
+      restoreLastChatDraft(view.draft);
+    } else {
+      view.recovering = true;
+      setChatNotice("连接中断，正在读取原回答。已有操作不会因重连再次执行。");
+      pollChatView(view);
+    }
   } finally {
-    CHAT_RUN = "";
-    CHAT_ACTIVE = false;
-    CHAT_REQUEST_ID = "";
-    sendButton.disabled = false;
-    sendButton.textContent = "发送";
-    sendButton.classList.remove("danger");
-    input.focus();
+    clearInterval(view.watchdog);
+    if (CHAT_VIEW === view && !view.recovering) detachChatView();
   }
   await Promise.all([refreshServers(), loadSessions(), refreshProjects(),
                       refreshContextUsage()]);
@@ -2806,11 +3292,13 @@ function chatButtonAction() {
 }
 async function stopChat() {
   if (!CHAT_ACTIVE || !CHAT_REQUEST_ID) return;
+  const view = CHAT_VIEW;
   const button = document.getElementById("sendbtn");
   button.disabled = true;
   button.textContent = "正在中止…";
   const r = await api("chat.stop", {
-    request_id: CHAT_REQUEST_ID, run_id: CHAT_RUN}, true);
+    request_id: CHAT_REQUEST_ID, run_id: CHAT_RUN, session_id:CURRENT_SESSION}, true);
+  if (view !== CHAT_VIEW) return;
   if (!r.ok || !r.stopped) {
     button.disabled = false;
     button.textContent = "停止";
@@ -2818,20 +3306,27 @@ async function stopChat() {
   }
 }
 function showChatError(bubble, message) {
-  bubble.innerHTML = `<span style="color:var(--err)">${esc(message)}</span>
-    <button class="btn ghost" style="margin-left:8px;padding:4px 10px"
-      onclick="retryLastChat()">重试</button>`;
+  const partial = bubble.dataset.acc || "";
+  bubble.innerHTML = safeMD(partial);
+  const note = document.createElement("div"); note.className = "message-error";
+  note.textContent = message; bubble.appendChild(note);
+  const draft = CHAT_VIEW?.draft;
+  setChatNotice("回答未完成。已执行的操作保留，请核对后继续。",
+    draft ? () => restoreLastChatDraft(draft) : null, "恢复输入");
 }
 function retryLastChat() {
-  if (!LAST_CHAT_DRAFT) return toast("没有可重试的请求", "err");
-  sendChat({text: LAST_CHAT_DRAFT.text, files: LAST_CHAT_DRAFT.files});
+  restoreLastChatDraft();
 }
 function handleChatEvent(ev, bubble, log, setAcc) {
   if (ev.type === "meta") {
     const mode = ev.mode === "full" ? "完全" : "仅分析";
     bubble.dataset.meta = `${ev.provider} · ${mode}`;
-    if (ev.session_id) CURRENT_SESSION = ev.session_id;
+    setChatNotice(`${ev.provider} · ${mode} · 正在生成回答`);
     if (ev.context) renderContextUsage(ev.context);
+  } else if (ev.type === "activity") {
+    const text = ev.stage === "tool" ? `正在${verbOf(ev.tool)}` : "正在思考…";
+    if (log._txt) log._txt.textContent = text;
+    setChatNotice(text);
   } else if (ev.type === "delta") {
     if (log._txt && !bubble.dataset.acc) log._txt.textContent = "正在回答";
     const cur = bubble.dataset.acc || "";
@@ -2839,7 +3334,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     bubble.dataset.acc = next;
     bubble.innerHTML = esc(next) + '<span class="cursor"></span>';
     setAcc(next);
-    log.scrollTop = log.scrollHeight;
+    followChatScroll(log);
   } else if (ev.type === "tool") {
     const acc = bubble.dataset.acc || "";
     bubble.innerHTML = esc(acc);   // freeze streaming cursor
@@ -2851,7 +3346,7 @@ function handleChatEvent(ev, bubble, log, setAcc) {
         document.getElementById("pmloadstate").textContent =
           "智能体更新了项目。当前草稿保留；重新打开可读取最新配置，保存时会检查文件冲突。";
     }
-    if (ev.tool === "workflow_prepare" && ev.ok !== false &&
+    if (["workflow_prepare", "research_prepare"].includes(ev.tool) && ev.ok !== false &&
         (ev.outcome?.chat_plan || ev.outcome?.plan))
       addWorkflowPlanCard(log, ev.outcome);
   } else if (ev.type === "final") {
@@ -2860,9 +3355,12 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     const acc = bubble.dataset.acc || "";
     const r = ev.result || {};
     const stopped = !!(r.stopped || r.cancelled);
+    bubble.dataset.acc = r.answer || acc;
     bubble.innerHTML = safeMD(r.answer || acc || (stopped ? "（已停止）" : "（完成）"));
     if (stopped) toast("已停止：当前这一步完成后不会继续", "ok");
-    else if (!r.ok && r.error) toast(r.error, "err");
+    if (stopped) setChatNotice("回答已停止；已经执行的操作保留。");
+    else if (!r.ok && r.error) showChatError(bubble, typeof r.error === "string" ? r.error : r.error.message);
+    else setChatNotice("回答已保存");
     if (log._timer) { clearInterval(log._timer); log._timer = null; }
     // 活动行就地变成本回合的摘要；一次工具都没用过就整条消失
     if (log._proc) {
@@ -2896,8 +3394,15 @@ function handleChatEvent(ev, bubble, log, setAcc) {
   } else if (ev.type === "error") {
     showChatError(bubble, (ev.error || {}).message || "错误");
   }
-  log.scrollTop = log.scrollHeight;
+  followChatScroll(log);
 }
+function followChatScroll(log) {
+  if (log.dataset.follow !== "false") log.scrollTop = log.scrollHeight;
+}
+document.getElementById("chatlog").addEventListener("scroll", event => {
+  const log = event.currentTarget;
+  log.dataset.follow = String(log.scrollHeight - log.scrollTop - log.clientHeight < 100);
+});
 function addToolCard(log, ev) {
   log.dataset.tc = String(parseInt(log.dataset.tc || "0", 10) + 1);
   (log._labels = log._labels || []).push(String(ev.tool || ""));
@@ -2944,24 +3449,47 @@ function addToolCard(log, ev) {
     } else log.appendChild(card);
   }
 }
-const WORKFLOW_STEP_LABELS = {mkdir:"创建目录", upload:"上传文件", validate:"校验输入",
+const WORKFLOW_STEP_LABELS = {snapshot:"固定输入快照", execute:"执行 Python", collect:"回收结果", mkdir:"创建目录", upload:"上传文件", validate:"校验输入",
   submit:"提交作业", monitor:"监测作业", progress:"检查科学进度",
   download:"下载结果", parse:"解析结果"};
+async function restoreWorkflowCards(planIds, sessionId, version) {
+  for (const planId of planIds || []) {
+    if (sessionId !== CURRENT_SESSION || version !== SESSION_OPEN_VERSION) return;
+    if (!/^[0-9a-f]{16}$/.test(planId) || document.getElementById("wf-chat-" + planId)) continue;
+    const result = await api("workflow.get", {plan_id:planId}, true);
+    if (sessionId !== CURRENT_SESSION || version !== SESSION_OPEN_VERSION) return;
+    if (result.ok) addWorkflowPlanCard(document.getElementById("chatlog"), result);
+    else {
+      // Preserve a visible, non-executable reference when its plan is damaged/missing.
+      const log = document.getElementById("chatlog");
+      if (document.getElementById("wf-chat-" + planId)) continue;
+      const card = document.createElement("div");
+      card.id = "wf-chat-" + planId; card.className = "workflow-card";
+      card.innerHTML = `<h4>计划暂不可读取 <span class="mono">${esc(planId)}</span></h4>
+        <p>${esc(result.error?.message || "无法核对计划，请在任务中心检查；不会自动执行。")}</p>
+        <button class="btn ghost" onclick="this.parentElement.remove(); restoreWorkflowCards(['${planId}'], CURRENT_SESSION, SESSION_OPEN_VERSION)">重新核对计划</button>
+        <button class="btn ghost" onclick="openWorkflowPlan('${planId}')">查看任务中心</button>`;
+      log.appendChild(card);
+    }
+  }
+}
 function addWorkflowPlanCard(log, result) {
   const plan = result && (result.chat_plan || result.plan);
   const planId = String(result?.plan_id || plan?.plan_id || "");
-  if (!plan || !planId || document.getElementById("wf-chat-" + planId)) return;
+  if (!plan || !/^[0-9a-f]{16}$/.test(planId) || document.getElementById("wf-chat-" + planId)) return;
   const card = document.createElement("div");
   card.className = "workflow-card";
   card.id = "wf-chat-" + planId;
+  card.dataset.sessionId = CURRENT_SESSION;
   const steps = (plan.steps || []).map(step =>
     `<span>${esc(WORKFLOW_STEP_LABELS[step.type] || step.type)}</span>`).join(" → ");
   const files = plan.files || [];
+  const local = plan.domain === "general";
   card.innerHTML = `
-    <h4>执行计划待审批 <span class="mono">${esc(planId)}</span></h4>
+    <h4><span class="wf-title">执行计划 · 核对中</span> <span class="mono">${esc(planId)}</span></h4>
     <div class="wf-summary">
-      <span>服务器 <b>${esc(plan.server || "—")}</b></span>
-      <span>远端目录 <b class="mono">${esc(plan.remote_dir || "—")}</b></span>
+      <span>${local ? "执行位置" : "服务器"} <b>${local ? "本机 Python" : esc(plan.server || "—")}</b></span>
+      <span>${local ? "项目" : "远端目录"} <b class="mono">${esc(plan.project || plan.remote_dir || "—")}</b></span>
       <span>输入文件 <b>${files.length} 个</b></span>
       <span>风险 <b>${esc(plan.risk_summary?.level || "—")}</b></span>
     </div>
@@ -2970,17 +3498,39 @@ function addWorkflowPlanCard(log, result) {
       <div class="wf-steps">${steps || "—"}</div>
       <div style="margin-top:4px"><b>输入文件</b>：${files.map(file =>
         `<span class="mono">${esc(file.name || "")}</span>`).join(" · ") || "—"}</div>
-      <div style="margin-top:4px">文件哈希和计划哈希会绑定审批；审批前不会连接服务器、上传或提交作业。</div>
+      <div style="margin-top:4px">审批绑定计划与输入文件哈希；刷新、重连不会自动执行或重复提交。</div>
+      ${local ? `<p>Python 以当前用户权限运行，不是安全沙箱。请审阅完整脚本。</p>
+        <p>解释器：${esc(plan.execution?.python)} · 时限 ${esc(plan.execution?.timeout_seconds)} 秒</p>
+        <p>参数：${esc(JSON.stringify(plan.execution?.args || []))}</p>
+        <p>输出：${(plan.outputs || []).map(esc).join("、")}</p>
+        <details><summary>完整脚本与输入哈希</summary><pre>${esc(plan.job_script_content || "内容缺失，请到任务中心审阅")}</pre><pre>${esc(JSON.stringify(files, null, 2))}</pre></details>` : ""}
     </div>
     <div class="wf-actions">
-      <input id="wf-phrase-${esc(planId)}" placeholder="输入 approve ${esc(planId)}"
+      <input hidden disabled id="wf-phrase-${esc(planId)}" placeholder="输入 approve ${esc(planId)}"
         aria-label="执行计划确认短语">
-      <button class="btn" onclick="approveAndRunWorkflow('${esc(planId)}')">审批并执行</button>
-      <button class="btn ghost" onclick="openWorkflowPlan('${esc(planId)}')">查看计划中心</button>
+      <button hidden disabled class="btn wf-approve" onclick="approveAndRunWorkflow('${esc(planId)}')">审批并执行</button>
+      <button class="btn ghost" onclick="openWorkflowPlan('${esc(planId)}')">查看任务中心</button>
     </div>
-    <div class="workflow-status" id="wf-status-${esc(planId)}">等待人工审批</div>`;
+    <div class="workflow-status" role="status" id="wf-status-${esc(planId)}">正在核对执行状态，尚未执行任何操作…</div>`;
   log.appendChild(card);
+  if (Object.hasOwn(result, "run")) renderWorkflowChatState(card, result.run);
+  pollWorkflowChat(planId);
   log.scrollTop = log.scrollHeight;
+}
+function renderWorkflowChatState(card, run) {
+  const pending = !run;
+  const input = card.querySelector("input");
+  const approve = card.querySelector(".wf-approve");
+  input.hidden = approve.hidden = !pending;
+  input.disabled = approve.disabled = !pending || card.dataset.busy === "true";
+  card.querySelector(".wf-title").textContent = pending ? "执行计划待审批" : "执行计划 · 已有运行记录";
+  const label = pending ? "等待人工审批 · 尚未执行" :
+    run.task?.blocked_reason ? taskReason(run.task.blocked_reason) + "，请在任务中心处理" :
+    run.status === "completed" ? (run.domain === "general" ? "分析已完成并回收结果 · 科学结论需另行验证" : "已完成（科学收敛）") :
+    run.status === "needs_review" ? "计算完成，等待科学判读" :
+    run.status === "failed" ? `执行失败：${run.failure?.detail || "请查看任务中心"}` :
+    `${taskPhase(run.task?.phase)} · 可关闭窗口，后台继续执行`;
+  setWorkflowChatStatus(card.id.slice(8), label, run?.status === "completed" ? "ok" : run?.status === "failed" ? "err" : "");
 }
 function setWorkflowChatStatus(planId, text, kind = "") {
   const el = document.getElementById("wf-status-" + planId);
@@ -2989,51 +3539,79 @@ function setWorkflowChatStatus(planId, text, kind = "") {
 async function approveAndRunWorkflow(planId) {
   const card = document.getElementById("wf-chat-" + planId);
   const input = document.getElementById("wf-phrase-" + planId);
-  if (!card || !input) return;
-  const buttons = card.querySelectorAll("button");
-  buttons.forEach(button => button.disabled = true);
-  setWorkflowChatStatus(planId, "正在校验确认短语…");
-  const approved = await api("workflow.approve", {
-    plan_id: planId, phrase: input.value.trim(), session_id: CURRENT_SESSION}, true);
-  if (!approved.ok) {
-    buttons.forEach(button => button.disabled = false);
-    setWorkflowChatStatus(planId, approved.error?.message || "审批失败", "err");
-    toast(approved.error?.message || "审批失败", "err");
-    return;
+  if (!card || !input || input.disabled || card.dataset.busy === "true") return;
+  const sessionId = CURRENT_SESSION;
+  card.dataset.busy = "true";
+  try {
+    const buttons = card.querySelectorAll("button");
+    buttons.forEach(button => button.disabled = true);
+    const existing = await api("workflow.get", {plan_id: planId}, true);
+    if (!existing.ok) {
+      setWorkflowChatStatus(planId, "无法核对执行状态；未申请审批。请稍后重试或在任务中心检查。", "err");
+      return;
+    }
+    if (existing.run && existing.run.task?.blocked_reason !== "approval_required") {
+      buttons.forEach(button => button.disabled = false);
+      setWorkflowChatStatus(planId, existing.run.task?.blocked_reason ?
+        taskReason(existing.run.task.blocked_reason) + "，请在任务中心处理" :
+        "任务已有运行记录，请在任务中心查看或恢复，不要重新提交");
+      return;
+    }
+    setWorkflowChatStatus(planId, "正在校验确认短语…");
+    const approved = await api("workflow.approve", {
+      plan_id: planId, phrase: input.value.trim(), session_id: sessionId}, true);
+    if (!approved.ok) {
+      buttons.forEach(button => button.disabled = false);
+      setWorkflowChatStatus(planId, approved.error?.message || "审批失败", "err");
+      toast(approved.error?.message || "审批失败", "err");
+      return;
+    }
+    setWorkflowChatStatus(planId, "审批通过，正在启动计划…", "ok");
+    const started = await api(existing.run ? "workflow.resume" : "workflow.run", {
+      plan_id: planId, approval_ref: approved.approval_ref}, true);
+    if (!started.ok) {
+      buttons.forEach(button => button.disabled = false);
+      setWorkflowChatStatus(planId, started.error?.message || "启动失败", "err");
+      toast(started.error?.message || "工作流启动失败", "err");
+      return;
+    }
+    input.disabled = true;
+    setWorkflowChatStatus(planId, "已入队 · 独立后台执行，关闭窗口不会取消远端任务", "acc");
+    pollWorkflowChat(planId);
+    refreshWorkflowCenter();
+    toast("计划已审批并开始执行", "ok");
+  } finally {
+    card.dataset.busy = "false";
+    card.querySelectorAll("button:not(.wf-approve)").forEach(button => button.disabled = false);
+    // Re-read authoritative state, including admission/start failures.
+    if (document.getElementById(card.id) === card) pollWorkflowChat(planId);
   }
-  card.dataset.approvalRef = approved.approval_ref;
-  setWorkflowChatStatus(planId, "审批通过，正在启动计划…", "ok");
-  const started = await api("workflow.run", {
-    plan_id: planId, approval_ref: approved.approval_ref}, true);
-  if (!started.ok) {
-    buttons.forEach(button => button.disabled = false);
-    setWorkflowChatStatus(planId, started.error?.message || "启动失败", "err");
-    toast(started.error?.message || "工作流启动失败", "err");
-    return;
-  }
-  input.disabled = true;
-  setWorkflowChatStatus(planId, "已启动 · 工作流引擎执行中", "acc");
-  pollWorkflowChat(planId);
-  refreshWorkflowCenter();
-  toast("计划已审批并开始执行", "ok");
 }
 function pollWorkflowChat(planId) {
   if (WORKFLOW_CHAT_TIMERS[planId]) clearInterval(WORKFLOW_CHAT_TIMERS[planId]);
+  const card = document.getElementById("wf-chat-" + planId);
+  if (!card) return;
+  let checking = false;
+  const stop = () => { clearInterval(timer); if (WORKFLOW_CHAT_TIMERS[planId] === timer) delete WORKFLOW_CHAT_TIMERS[planId]; };
+  const current = () => WORKFLOW_CHAT_TIMERS[planId] === timer &&
+    document.getElementById(card.id) === card && card.dataset.sessionId === CURRENT_SESSION;
   const tick = async () => {
-    const r = await api("workflow.status", {plan_id: planId}, true);
-    if (!r.ok) return;
-    const state = r.status || "running";
-    const label = state === "completed" ? "已完成（科学收敛）" :
-      state === "needs_review" ? "计算完成，等待科学判读" :
-      state === "failed" ? `执行失败：${r.failure?.detail || "请查看计划中心"}` :
-      "执行中 · 可离开页面，状态已持久化";
-    setWorkflowChatStatus(planId, label,
-      state === "completed" ? "ok" : state === "failed" ? "err" : "");
-    if (state !== "running") {
-      clearInterval(WORKFLOW_CHAT_TIMERS[planId]);
-      delete WORKFLOW_CHAT_TIMERS[planId];
-      refreshWorkflowCenter();
-    }
+    if (!current()) return stop();
+    if (checking || card.dataset.busy === "true") return;
+    checking = true;
+    try {
+      const r = await api("workflow.get", {plan_id: planId}, true);
+      if (!current()) return stop();
+      if (card.dataset.busy === "true") return;
+      if (!r.ok) {
+        card.querySelector("input").disabled = true;
+        card.querySelector(".wf-approve").disabled = true;
+        setWorkflowChatStatus(planId, "状态暂不可核对，已暂停审批；保留最后已知状态。正在重试，也可在任务中心检查。", "err");
+        return;
+      }
+      renderWorkflowChatState(card, r.run);
+      if (r.run && (r.run.status !== "running" || r.run.task?.blocked_reason)) stop();
+    } finally { checking = false; }
   };
   const timer = setInterval(tick, 5000);
   WORKFLOW_CHAT_TIMERS[planId] = timer;
@@ -3147,14 +3725,14 @@ function safeMD(src) {
   };
   const flushTable = () => {
     if (!tableBuf) return;
+    const head = "<thead><tr>" + tableHead.map(c => `<th scope="col">${inline(c.trim())}</th>`).join("") + "</tr></thead>";
     let body = "";
     tableBuf.forEach(cells => {
-      body += "<tr>" + cells.map((c, i) =>
-        `<${tableHead && i < tableHead.length ? "th" : "td"}>` +
-        inline(c.trim()) + `</${tableHead && i < tableHead.length ? "th" : "td"}>`
+      body += "<tr>" + cells.map(c =>
+        `<td>${inline(c.trim())}</td>`
       ).join("") + "</tr>";
     });
-    html += `<table class="mdtable">${body}</table>`;
+    html += `<table class="mdtable">${head}<tbody>${body}</tbody></table>`;
     tableBuf = null; tableHead = null;
   };
   for (const raw of lines) {
@@ -3198,14 +3776,22 @@ function addMsg(role, text) {
   const log = document.getElementById("chatlog");
   const div = document.createElement("div");
   div.className = "msg " + role;
-  div.innerHTML = `<div class="av">${role === "user" ? "你" : "V"}</div>
-    <div class="bd"><div class="who">${role === "user" ? "你" : "远端控制智能体"}</div>
+  div.innerHTML = `<div class="av">${role === "user" ? "你" : "R"}</div>
+    <div class="bd"><div class="who">${role === "user" ? "你" : "RSCI 科研助手"}<button type="button" class="msg-action">复制</button></div>
     <div class="bubble"></div></div>`;
   if (text) {
     const bubble = div.querySelector(".bubble");
+    bubble.dataset.acc = text;
     if (role === "user") bubble.textContent = text;
     else bubble.innerHTML = safeMD(text);
   }
+  div.querySelector(".msg-action").onclick = async () => {
+    const bubble = div.querySelector(".bubble");
+    try {
+      await navigator.clipboard.writeText(bubble.dataset.acc || bubble.innerText);
+      toast("已复制消息", "ok");
+    } catch (_) { toast("复制不可用，请选中文字后复制", "err"); }
+  };
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
@@ -3453,9 +4039,14 @@ async function saveServerModal() {
 
 /* ===================== 会话（记忆） ===================== */
 async function loadSessions(pickLatest = false) {
-  const r = await api("chat.sessions");
-  if (!r.ok) return;
+  const version = ++SESSION_LIST_VERSION;
+  const query = document.getElementById("sessionsearch").value.trim();
+  const r = await api("chat.sessions", {query});
+  if (!r.ok || version !== SESSION_LIST_VERSION) return;
   const sessions = r.sessions || [];
+  const foundCount = sessions.length;
+  const current = lastSessions.find(s => s.session_id === CURRENT_SESSION);
+  if (query && current && !sessions.some(s => s.session_id === CURRENT_SESSION)) sessions.unshift(current);
   lastSessions = sessions;
   const sel = document.getElementById("sesssel");
   // 空标题的新会话显示成可读的「新会话 HH:MM」，避免看起来像丢了一条
@@ -3467,40 +4058,73 @@ async function loadSessions(pickLatest = false) {
   sel.innerHTML = sessions.map(s =>
     `<option value="${esc(s.session_id)}">${label(s)}</option>`).join("")
     || "<option value=''>（无会话）</option>";
-  if (pickLatest && sessions.length) CURRENT_SESSION = sessions[0].session_id;
-  if (sessions.length && !sessions.some(s => s.session_id === CURRENT_SESSION))
-    CURRENT_SESSION = sessions[0].session_id;
+  if (pickLatest && !CURRENT_SESSION && sessions.length) {
+    let previous = ""; try { previous = localStorage.getItem("rsci.chat.last-session") || ""; } catch (_) {}
+    CURRENT_SESSION = sessions.some(s => s.session_id === previous) ? previous : sessions[0].session_id;
+  }
   sel.value = CURRENT_SESSION || "";
   document.getElementById("sesshint").textContent =
-    sessions.length > 1 ? `共 ${sessions.length} 个会话` : "";
+    query ? (foundCount ? `找到 ${foundCount} 个会话` : "没有匹配的会话；仍保留当前选择")
+      : sessions.length > 1 ? `共 ${sessions.length} 个会话` : "";
   renderProjectSidebar(sessions);
 }
 document.getElementById("sesssel").onchange = () => openSession(document.getElementById("sesssel").value);
 async function openSession(id) {
   if (!id) return;
+  closeSessionRename();
+  saveChatDraft(); detachChatView();
+  const version = ++SESSION_OPEN_VERSION;
+  SESSION_LOADING = true;
   CURRENT_SESSION = id;
+  restoreChatDraft(); setChatNotice("正在读取会话…");
   const r = await api("chat.load", {session_id: id});
-  if (!r.ok) return;
+  if (version !== SESSION_OPEN_VERSION) return;
+  SESSION_LOADING = false;
+  if (!r.ok) { setChatNotice(r.error?.message || "无法读取会话"); return; }
+  ACTIVE_PROJECT = r.project || ""; applyProjectContext();
+  try { localStorage.setItem("rsci.chat.last-session", id); } catch (_) {}
   const log = document.getElementById("chatlog");
   log.innerHTML = "";
+  log.dataset.follow = "true";
   const visibleMessages = [...(r.archived_messages || []), ...(r.messages || [])];
-  for (const m of visibleMessages) addMsg(m.role === "user" ? "user" : "bot", m.content);
+  let activeBubble = null;
+  for (const m of visibleMessages) {
+    const node = addMsg(m.role === "user" ? "user" : "bot", m.content);
+    if (m.error && m.status !== "stopped") {
+      const note = document.createElement("div"); note.className = "message-error";
+      note.textContent = m.error; node.querySelector(".bd").appendChild(note);
+    }
+    if (m.role === "assistant" && m.request_id === r.turn?.request_id) activeBubble = node.querySelector(".bubble");
+  }
   if (!visibleMessages.length) addMsg("bot", "（新会话，还没有对话）");
+  restoreWorkflowCards(r.workflow_plans, id, version);
   const compacted = Number(r.compacted_messages || 0);
   document.getElementById("sesshint").textContent =
     `${visibleMessages.length} 条消息${compacted ? ` · ${compacted} 条已压缩进上下文摘要` : ""}${r.parent_session_id ? " · 分支会话" : ""}`;
   renderContextUsage(null);
+  const turn = r.turn || {};
+  setChatNotice(turn.status === "stopped" ? "回答已停止；已经执行的操作保留。" : turn.error || "");
+  if (turn.status === "running" && turn.active && activeBubble) {
+    const view = {session_id:id, request_id:turn.request_id, bubble:activeBubble, log};
+    CHAT_VIEW = view; CHAT_REQUEST_ID = turn.request_id; setChatBusy(true);
+    pollChatView(view);
+  }
   await refreshContextUsage();
   pollPendingCards();
 }
 async function newSession(project = "") {
+  saveChatDraft(); detachChatView();
+  const version = ++SESSION_OPEN_VERSION;
+  SESSION_LOADING = true;
   const r = await api("chat.new", {project});
+  if (version !== SESSION_OPEN_VERSION) return;
+  SESSION_LOADING = false;
   if (!r.ok) return;
-  CURRENT_SESSION = r.session_id;
+  await openSession(r.session_id);
   await loadSessions();
   document.getElementById("chatlog").innerHTML = "";
-  addMsg("bot", project ? `新会话（项目：${project}）。有什么要计算的？`
-                         : "新会话已创建（记忆从现在开始）。有什么要计算的？");
+  addMsg("bot", project ? `新会话（${activeProjectKind() === "vasp" ? "VASP" : "通用科研"}项目：${project}）。想研究什么问题？`
+                         : "我是 RSCI 科研助手。可以从整理数据、审阅分析脚本或记录研究方法开始。执行分析需要你明确审批。");
   renderContextUsage({estimated_tokens: 0, budget_tokens: 12000,
                      percent: 0, can_compact: true});
   document.getElementById("chatinput").focus();
@@ -3508,12 +4132,15 @@ async function newSession(project = "") {
 async function clearSession() {
   if (!CURRENT_SESSION) return toast("当前没有会话", "err");
   if (!confirm("清空该会话的记忆？聊天记录将删除且不可恢复。")) return;
-  await api("chat.clear", {session_id: CURRENT_SESSION});
+  const cleared = await api("chat.clear", {session_id: CURRENT_SESSION});
+  if (!cleared.ok) return;
+  detachChatView();
   CURRENT_SESSION = "";
   renderContextUsage(null);
   document.getElementById("chatlog").innerHTML = "";
   addMsg("bot", "记忆已清空。");
   await loadSessions(true);
+  if (CURRENT_SESSION) await openSession(CURRENT_SESSION);
 }
 async function deleteSession() {
   if (!CURRENT_SESSION) return toast("当前没有会话", "err");
@@ -3531,6 +4158,7 @@ async function deleteSessionById(id) {
   }
   const wasCurrent = id === CURRENT_SESSION;
   if (wasCurrent) {
+    detachChatView();
     CURRENT_SESSION = "";
     renderContextUsage(null);
     document.getElementById("chatlog").innerHTML = "";
@@ -3543,8 +4171,51 @@ async function deleteSessionById(id) {
   }
 }
 
+function queueSessionSearch() {
+  clearTimeout(SESSION_SEARCH_TIMER);
+  SESSION_SEARCH_TIMER = setTimeout(() => loadSessions(), 250);
+}
+function closeSessionRename() {
+  document.getElementById("sessionrename").hidden = true;
+}
+function renameSession() {
+  if (!CURRENT_SESSION) return toast("请先选择会话", "err");
+  const form = document.getElementById("sessionrename");
+  form.dataset.session = CURRENT_SESSION; form.hidden = false;
+  document.querySelector("#sessbar details").removeAttribute("open");
+  const input = document.getElementById("sessionname");
+  input.value = lastSessions.find(s => s.session_id === CURRENT_SESSION)?.title || "";
+  input.focus(); input.select();
+}
+async function saveSessionName() {
+  const form = document.getElementById("sessionrename");
+  const title = document.getElementById("sessionname").value.trim();
+  if (!title) return toast("请输入会话名称", "err");
+  const button = document.getElementById("sessionnamesave");
+  button.disabled = true;
+  const r = await api("chat.rename", {session_id:form.dataset.session, title});
+  button.disabled = false;
+  if (r.ok) { closeSessionRename(); toast("会话已重命名", "ok"); loadSessions(); }
+}
+async function exportSession() {
+  if (!CURRENT_SESSION) return toast("请先选择会话", "err");
+  const r = await api("chat.export", {session_id:CURRENT_SESSION});
+  if (!r.ok) return;
+  const url = URL.createObjectURL(new Blob([r.content], {type:"text/markdown;charset=utf-8"}));
+  const link = document.createElement("a"); link.href = url; link.download = r.filename;
+  link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("已导出完整对话，包含已归档的记录", "ok");
+}
+
 /* ===================== 项目（侧边栏 + 工作流） ===================== */
 let PROJECTS = [];
+let ACTIVE_PROJECT = "";
+function activeProjectKind() { return PROJECTS.find(p => p.name === ACTIVE_PROJECT)?.kind || "general"; }
+function applyProjectContext() {
+  document.documentElement.dataset.projectKind = activeProjectKind();
+  if (activeProjectKind() !== "vasp" && document.querySelector('.cfgitem.on')?.dataset.c === "vaspkit")
+    document.querySelector('.cfgitem[data-c="providers"]').click();
+}
 function renderProjectSidebar(sessions) {
   const box = document.getElementById("projects");
   if (!PROJECTS.length) {
@@ -3561,11 +4232,11 @@ function renderProjectSidebar(sessions) {
       <div class="p-row" onclick="toggleProjSess(this)" title="${esc(p.path)}">
         <span>📁</span>
         <span class="nm">${esc(p.name)}${p.pinned ? " 📌" : ""}
-          <small>${p.complete ? "本地输入齐全" : p.ready_with_remote_potcar ?
+          <small>${p.kind === "general" ? "通用科研 · " + Object.keys(p.files || {}).length + " 个文件" : p.complete ? "VASP · 本地输入齐全" : p.ready_with_remote_potcar ?
             "可提交（POTCAR 需远端预置）" : "缺 " + esc((p.missing || []).join("/"))}</small></span>
         <button title="${p.pinned ? "取消置顶" : "置顶"}" data-act="pin">${p.pinned ? "★" : "☆"}</button>
         <button title="新建会话" data-act="new">＋</button>
-        <button title="修改计算输入，准备提交任务" aria-label="计算配置" data-act="edit">计算配置</button>
+        <button title="${p.kind === "general" ? "管理数据、脚本与结果" : "修改 VASP 输入，准备提交任务"}" aria-label="${p.kind === "general" ? "项目文件" : "计算配置"}" data-act="edit">${p.kind === "general" ? "项目文件" : "计算配置"}</button>
         <button title="删除项目（目录进回收站）" data-act="del">🗑</button>
       </div>
       <div class="psess" style="display:none"></div>`;
@@ -3578,7 +4249,7 @@ function renderProjectSidebar(sessions) {
       e.stopPropagation(); newSession(p.name);
     };
     div.querySelector('[data-act="edit"]').onclick = e => {
-      e.stopPropagation(); openProjectModal(p.name);
+      e.stopPropagation(); p.kind === "general" ? openResearchProject(p.name) : openProjectModal(p.name);
     };
     div.querySelector('[data-act="del"]').onclick = async e => {
       e.stopPropagation();
@@ -3616,17 +4287,23 @@ async function refreshProjects() {
   const r = await api("project.list");
   if (!r.ok) return;
   PROJECTS = r.projects || [];
+  applyProjectContext();
+  const research = document.getElementById("researchproject");
+  const researchPrev = research.value;
+  research.innerHTML = '<option value="">（选择通用科研项目…）</option>' + PROJECTS.filter(p => p.kind === "general")
+    .map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+  if (PROJECTS.some(p => p.name === researchPrev && p.kind === "general")) research.value = researchPrev;
   renderProjectSidebar(lastSessions);
   // workflow project picker
   const sel = document.getElementById("wproj");
   const prev = sel.value;
-  sel.innerHTML = `<option value="">（选择项目…）</option>` + PROJECTS.map(p =>
+  sel.innerHTML = `<option value="">（选择 VASP 项目…）</option>` + PROJECTS.filter(p => p.kind === "vasp").map(p =>
     `<option value="${esc(p.name)}">${esc(p.name)}${p.complete || p.ready_with_remote_potcar ? "" : "（缺文件）"}</option>`).join("");
   if (prev && PROJECTS.some(p => p.name === prev)) sel.value = prev;
   // edit-file modal picker
   const em = document.getElementById("emproj");
   const eprev = em.value;
-  em.innerHTML = PROJECTS.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
+  em.innerHTML = PROJECTS.filter(p => p.kind === "vasp").map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("");
   if (eprev && PROJECTS.some(p => p.name === eprev)) em.value = eprev;
 }
 function pickProject() {
@@ -3634,6 +4311,7 @@ function pickProject() {
   const p = PROJECTS.find(x => x.name === name);
   const info = document.getElementById("wprojinfo");
   if (!p) { info.textContent = ""; return; }
+  if (p.kind !== "vasp") return;
   document.getElementById("wfrom").value = p.path;
   info.innerHTML = `项目目录已填入：<span class="mono">${esc(p.path)}</span> ·
     ${p.complete ? badge("本地输入齐全", "ok") : p.ready_with_remote_potcar ?
@@ -3669,6 +4347,7 @@ let PM_BASE = {};
 let PM_BASE_REMOTE = "";
 let PM_OPEN_VERSION = 0;
 async function openProjectModal(name = "") {
+  if (PROJECTS.find(p => p.name === name)?.kind === "general") return openResearchProject(name);
   const version = ++PM_OPEN_VERSION;
   const back = document.getElementById("projmodalback");
   const tsel = document.getElementById("pmtemplate");
@@ -3683,6 +4362,8 @@ async function openProjectModal(name = "") {
   document.getElementById("pmsessionwrap").style.display = name ? "none" : "";
   document.getElementById("pmremovepotcar").checked = false;
   document.getElementById("pmname").value = name;
+  document.getElementById("pmkind").value = name ? "vasp" : "general";
+  document.getElementById("pmkind").disabled = !!name;
   document.getElementById("pmpotcar").value = "";
   document.getElementById("pmsource").value = "";
   back.classList.add("on");
@@ -3741,9 +4422,8 @@ async function forkSession() {
   if (!CURRENT_SESSION) return toast("当前没有可分支的会话", "err");
   const r = await api("chat.fork", {session_id: CURRENT_SESSION});
   if (!r.ok) return;
-  CURRENT_SESSION = r.session_id;
+  await openSession(r.session_id);
   await loadSessions();
-  await openSession(CURRENT_SESSION);
   toast("已创建独立分支；后续消息不会影响原会话", "ok");
 }
 async function compactSession() {
@@ -3784,7 +4464,7 @@ async function saveProjectModal() {
       .filter(([file, content]) => content !== PM_BASE[file])),
     potcar_path: document.getElementById("pmpotcar").value.trim() || null,
     remove_potcar: document.getElementById("pmremovepotcar").checked,
-  } : {name};
+  } : {name, kind: document.getElementById("pmkind").value};
   if (editing && document.getElementById("pmremotepotcar").value.trim() !== PM_BASE_REMOTE)
     body.potcar_remote = document.getElementById("pmremotepotcar").value.trim();
   try {
@@ -3813,9 +4493,189 @@ async function saveProjectModal() {
     pickProject();
     if (!editing && document.getElementById("pmsession").value === "yes")
       await newSession(name);
+    if (!editing && r.kind === "general") await openResearchProject(name);
   } finally {
     save.disabled = false;
   }
+}
+
+/* ===================== 通用科研文件与分析 ===================== */
+let RESEARCH_PROJECT = "", RESEARCH_FILE = null, RESEARCH_DIRTY = false, RESEARCH_VERSION = 0;
+const researchNotice = text => { document.getElementById("researchstatus").textContent = text; };
+function leaveResearchDraft() { return !RESEARCH_DIRTY || confirm("当前文件有未保存修改。放弃这些修改？"); }
+async function openResearchProject(name = "", file = "") {
+  if (!leaveResearchDraft()) return;
+  await refreshProjects();
+  const selected = name || (activeProjectKind() === "general" ? ACTIVE_PROJECT : "") ||
+    PROJECTS.find(p => p.kind === "general")?.name || "";
+  if (selected && !PROJECTS.some(p => p.name === selected && p.kind === "general")) return toast("通用科研项目不存在，请刷新列表", "err");
+  document.querySelector('.tab[data-v="research"]').click();
+  document.getElementById("researchproject").value = selected;
+  RESEARCH_PROJECT = selected; RESEARCH_FILE = null; RESEARCH_DIRTY = false;
+  resetResearchEditor();
+  await loadResearchFiles(file);
+}
+async function selectResearchProject() {
+  const selector = document.getElementById("researchproject");
+  if (!leaveResearchDraft()) { selector.value = RESEARCH_PROJECT; return; }
+  RESEARCH_PROJECT = selector.value; RESEARCH_DIRTY = false; RESEARCH_FILE = null;
+  resetResearchEditor(); await loadResearchFiles();
+}
+function resetResearchEditor() {
+  document.getElementById("researchfilename").value = "";
+  document.getElementById("researchfilename").readOnly = false;
+  document.getElementById("researchcontent").value = "";
+  document.getElementById("researchcontent").readOnly = false;
+  document.getElementById("researchfilemeta").textContent = "使用 data/、scripts/、notes/、results/ 或 references/ 目录。";
+  document.getElementById("researchsave").disabled = !RESEARCH_PROJECT;
+  document.getElementById("researchdownload").disabled = true;
+  document.getElementById("researchtemplate").disabled = true;
+  document.getElementById("researchprepare").disabled = !RESEARCH_PROJECT;
+}
+async function loadResearchFiles(openFile = "") {
+  const name = document.getElementById("researchproject").value;
+  const version = ++RESEARCH_VERSION;
+  const box = document.getElementById("researchfiles");
+  if (!name) { box.textContent = "尚未选择项目"; return; }
+  if (!RESEARCH_PROJECT) RESEARCH_PROJECT = name;
+  const r = await api("project.files", {name});
+  if (version !== RESEARCH_VERSION || !r.ok) return;
+  const project = PROJECTS.find(p => p.name === name);
+  if (project) { project.files = Object.fromEntries((r.files || []).map(f => [f.name,true])); renderProjectSidebar(lastSessions); }
+  box.innerHTML = "";
+  for (const file of r.files || []) {
+    const button = document.createElement("button");
+    button.innerHTML = `${esc(file.name)}<small>${esc(file.size)} B · ${esc(file.sha256.slice(0,12))}…</small>`;
+    button.setAttribute("aria-current", String(file.name === RESEARCH_FILE?.name));
+    button.onclick = () => openResearchFile(file.name);
+    box.appendChild(button);
+  }
+  if (!r.files?.length) box.textContent = "项目为空。导入数据，或新建 notes/method.md 记录研究方法。";
+  researchNotice(`${name} · ${(r.files || []).length} 个文件 · 导入上限 16 MiB/文件；文本编辑上限 256 KiB`);
+  if (typeof openFile === "string" && openFile) await openResearchFile(openFile);
+}
+async function openResearchFile(file) {
+  if (!leaveResearchDraft()) return;
+  const name = RESEARCH_PROJECT, version = ++RESEARCH_VERSION;
+  const r = await api("project.read", {name, file});
+  if (version !== RESEARCH_VERSION || !r.ok) return;
+  RESEARCH_FILE = r; RESEARCH_DIRTY = false;
+  document.getElementById("researchfilename").value = file;
+  document.getElementById("researchfilename").readOnly = true;
+  document.getElementById("researchcontent").value = r.content ?? (r.binary ? "二进制文件，请下载后查看。" : r.note || "无法预览");
+  document.getElementById("researchcontent").readOnly = !Object.hasOwn(r, "content");
+  document.getElementById("researchfilemeta").textContent = `${r.size} B · SHA-256 ${r.sha256}`;
+  document.getElementById("researchsave").disabled = !Object.hasOwn(r, "content");
+  document.getElementById("researchdownload").disabled = false;
+  document.getElementById("researchtemplate").disabled = !/\.(csv|tsv)$/i.test(file);
+  document.querySelectorAll("#researchfiles button").forEach(b => b.setAttribute("aria-current", String(b.firstChild?.textContent === file)));
+}
+function newResearchFile() {
+  if (!RESEARCH_PROJECT) return toast("请先选择通用科研项目", "err");
+  if (!leaveResearchDraft()) return;
+  ++RESEARCH_VERSION; RESEARCH_FILE = null; RESEARCH_DIRTY = false;
+  resetResearchEditor(); document.getElementById("researchfilename").focus();
+}
+async function saveResearchFile() {
+  const name = RESEARCH_PROJECT, file = document.getElementById("researchfilename").value.trim();
+  if (!name || !file) return toast("请先选择项目并填写项目内文件路径", "err");
+  const content = document.getElementById("researchcontent").value;
+  const button = document.getElementById("researchsave"); button.disabled = true;
+  try {
+    const r = await api("project.write", {name, file, content, expected_sha256: RESEARCH_FILE?.sha256 || "missing"});
+    if (!r.ok) return;
+    if (name !== RESEARCH_PROJECT || file !== document.getElementById("researchfilename").value.trim()) return;
+    RESEARCH_FILE = {...r, content};
+    RESEARCH_DIRTY = document.getElementById("researchcontent").value !== content;
+    document.getElementById("researchfilename").readOnly = true;
+    document.getElementById("researchfilemeta").textContent = `${r.size} B · SHA-256 ${r.sha256}`;
+    document.getElementById("researchdownload").disabled = false;
+    document.getElementById("researchtemplate").disabled = !/\.(csv|tsv)$/i.test(file);
+    toast("文件已保存，尚未执行", "ok"); await loadResearchFiles();
+  } finally { button.disabled = false; }
+}
+async function importResearchFile(input) {
+  const file = input.files[0], name = RESEARCH_PROJECT; input.value = "";
+  if (!file) return;
+  if (!name) return toast("请先选择项目", "err");
+  if (file.size > 16 * 1024 * 1024) return toast("单个文件不能超过 16 MiB", "err");
+  try {
+    const encoded = await new Promise((resolve,reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(",")[1]); reader.onerror = reject; reader.onabort = reject; reader.readAsDataURL(file); });
+    const target = "data/" + file.name;
+    const r = await api("project.import", {name, file:target, content_base64:encoded});
+    if (r.ok && name === RESEARCH_PROJECT) { await loadResearchFiles(target); toast("数据已导入并计算哈希", "ok"); }
+  } catch (_) { toast("无法读取导入文件，请确认文件可访问后重新选择。", "err"); }
+}
+async function downloadResearchFile() {
+  if (!RESEARCH_PROJECT || !RESEARCH_FILE) return;
+  try {
+    const response = await fetch("/api/project.download", {method:"POST", headers:{"Content-Type":"application/json", "X-RSCI-Token":TOKEN},
+      body:JSON.stringify({name:RESEARCH_PROJECT, file:RESEARCH_FILE.name})});
+    if (!response.ok || response.headers.get("Content-Type")?.includes("json")) {
+      const error = await response.json(); return toast(error.error?.message || "下载失败", "err");
+    }
+    const url = URL.createObjectURL(await response.blob()), link = document.createElement("a");
+    link.href = url; link.download = RESEARCH_FILE.name.split("/").pop(); link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (_) { toast("下载中断，请重试；原文件保留", "err"); }
+}
+async function createCsvAnalysis() {
+  if (!RESEARCH_FILE || RESEARCH_DIRTY) return toast("请先保存并选择一个 CSV/TSV 文件", "err");
+  const name = RESEARCH_PROJECT;
+  const r = await api("project.csv_template", {name, file:RESEARCH_FILE.name, script:document.getElementById("researchscript").value.trim()});
+  if (!r.ok || name !== RESEARCH_PROJECT) return;
+  document.getElementById("researchinputs").value = r.spec.inputs.join("\n");
+  document.getElementById("researchoutputs").value = r.spec.outputs.join("\n");
+  await loadResearchFiles(r.script.name); researchNotice(r.message);
+}
+async function prepareResearchPlan() {
+  if (!RESEARCH_PROJECT || RESEARCH_DIRTY) return toast("请先选择项目并保存文件修改", "err");
+  const lines = id => document.getElementById(id).value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const button = document.getElementById("researchprepare"); button.disabled = true;
+  try {
+    const r = await api("workflow.prepare", {spec:{domain:"general", project:RESEARCH_PROJECT,
+      script:document.getElementById("researchscript").value.trim(), inputs:lines("researchinputs"), outputs:lines("researchoutputs"),
+      python:document.getElementById("researchpython").value.trim(), timeout_seconds:Number(document.getElementById("researchtimeout").value)}});
+    if (!r.ok) return;
+    await openWorkflowPlan(r.plan_id);
+  } finally { button.disabled = false; }
+}
+async function searchLiterature() {
+  const box = document.getElementById("literatureresults"); box.textContent = "正在查询 Crossref…";
+  const r = await api("project.literature_search", {query:document.getElementById("literaturequery").value.trim()});
+  if (!r.ok) { box.textContent = "查询未完成，请检查网络或稍后重试；未验证任何文献。"; return; }
+  box.innerHTML = "";
+  for (const item of r.results || []) {
+    const button = document.createElement("button"); button.className = "btn ghost";
+    button.textContent = `${item.title} · ${item.doi}`; button.style.whiteSpace = "normal";
+    button.onclick = () => { document.getElementById("referencetitle").value = item.title; document.getElementById("referencedoi").value = item.doi; };
+    box.appendChild(button);
+  }
+  if (!r.results?.length) box.textContent = "未找到候选条目；不代表文献不存在。";
+}
+async function saveReference() {
+  if (!RESEARCH_PROJECT) return toast("请先选择通用项目", "err");
+  const name = RESEARCH_PROJECT;
+  const r = await api("project.reference_add", {name, doi:document.getElementById("referencedoi").value.trim(), title:document.getElementById("referencetitle").value.trim()});
+  if (r.ok && name === RESEARCH_PROJECT) { await loadResearchFiles(r.file); toast("已保存为未核对文献", "ok"); }
+}
+async function checkSelectedReference() {
+  const match = RESEARCH_FILE?.name?.match(/^references\/([0-9a-f]{16})\.json$/);
+  if (!match || RESEARCH_DIRTY) return toast("请先保存并打开 references/ 下的文献记录", "err");
+  const name = RESEARCH_PROJECT;
+  const r = await api("project.reference_check", {name, reference_id:match[1]});
+  if (r.ok && name === RESEARCH_PROJECT) {
+    await loadResearchFiles(r.file);
+    researchNotice(({metadata_matched:"DOI 与标题元数据匹配", metadata_mismatch:"元数据不匹配，请核对", unavailable:"来源暂不可用，未核验"}[r.status] || r.status) + "。" + r.limitation);
+  }
+}
+async function saveExperiment() {
+  if (!RESEARCH_PROJECT) return toast("请先选择通用项目", "err");
+  const name = RESEARCH_PROJECT;
+  const r = await api("project.experiment_record", {name,
+    ...Object.fromEntries(["title","method","observations","interpretation","limitations"].map(k => [k,document.getElementById("experiment" + k).value])),
+    plan_id:document.getElementById("experimentplan").value.trim()});
+  if (r.ok && name === RESEARCH_PROJECT) { await loadResearchFiles(r.file); toast("实验记录已保存；录入内容不代表已独立核实", "ok"); }
 }
 
 /* ===================== 编辑项目文件模态 ===================== */
@@ -4011,7 +4871,7 @@ function renderDetail(reloadTrendToo) {
     return `<div class="gpucard"><h3><span>GPU ${g.index}</span>
         <span style="color:${hot ? "var(--err)" : "inherit"}">${hot ? "⚠ " : ""}${g.temp_c}°C · ${Math.round(g.power_w)}W</span></h3>
       <div style="font-size:11px;color:var(--fg2);margin-bottom:4px">${esc(g.name)}</div>
-      MEM<div class="gbar"><i style="width:${usedPct}%;background:#bc8cff"></i></div>
+      MEM<div class="gbar"><i style="width:${usedPct}%;background:var(--memory)"></i></div>
       <span style="font-size:11px;color:var(--fg2)">${g.mem_used_gb} / ${g.mem_total_gb} GB</span>
       UTL<div class="gbar"><i style="width:${g.util_pct}%;background:${gpuColor(g.util_pct)}"></i></div>
       <span style="font-size:11px;color:var(--fg2)">利用率 ${g.util_pct}%${cnt ? ` · ${cnt} 个进程` : ""}</span></div>`;
@@ -4023,7 +4883,7 @@ function renderDetail(reloadTrendToo) {
     <div class="gpucard"><h3><span>CPU</span><span style="color:${gpuColor(cpu.usage_pct || 0)}">${cpu.usage_pct ?? "?"}%</span></h3>
       <div style="font-size:11px;color:var(--fg2);margin-bottom:6px">${cpu.cores ?? "?"} 核 · 负载 ${load.one ?? "?"} / ${load.five ?? "?"} / ${load.fifteen ?? "?"}</div>
       CPU<div class="gbar"><i style="width:${cpu.usage_pct || 0}%;background:${gpuColor(cpu.usage_pct || 0)}"></i></div>
-      内存<div class="gbar"><i style="width:${mem.used_pct || 0}%;background:#bc8cff"></i></div>
+      内存<div class="gbar"><i style="width:${mem.used_pct || 0}%;background:var(--memory)"></i></div>
       <span style="font-size:11px;color:var(--fg2)">系统内存 ${(mem.total_gb - mem.available_gb).toFixed(1)} / ${mem.total_gb} GB</span></div>
     <div class="gpucard"><h3><span>磁盘</span><span style="color:var(--fg2)">${disks.length} 个挂载点</span></h3>
       ${disks.map(d => `<div class="gpurow"><span class="gchip">${esc(d.mount)}</span>
@@ -4417,6 +5277,7 @@ refreshServers().then(() => Promise.all([
   pickFileServer();  // 启动即为文件页预填默认服务器的根目录
   // 恢复最近会话的历史气泡
   if (CURRENT_SESSION) openSession(CURRENT_SESSION);
+  else restoreChatDraft();
 });
 setInterval(pollPendingCards, 30000);
 </script>

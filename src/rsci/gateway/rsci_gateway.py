@@ -1575,7 +1575,8 @@ def op_job_state(args) -> int:
             f"else qstat -x -f {q(args.job_id)} 2>/dev/null | grep -i 'job_state' "
             f"| head -n 1; fi")
         match = re.search(r"job_state\s*[:=]\s*(\w+)", raw, re.IGNORECASE)
-        state = normalize_state(match.group(1)) if match else "COMPLETED"
+        # Missing queue/history evidence is not evidence of completion.
+        state = normalize_state(match.group(1)) if match else "UNKNOWN"
     out({"job_id": args.job_id, "scheduler": scheduler, "state": state})
     audit("job-state", "ok", f"{args.job_id}={state}", name)
     return 0

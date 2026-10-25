@@ -8,8 +8,8 @@ Execution model ("immutable plan, one approval, unattended inside the plan"):
              (server, plan_hash, files_hash); the model never sees the key
   run        verify approval -> execute steps unattended; every step result
              is journaled into the run state; failures append a new attempt
-  resume     continue the pending steps in a NEW attempt while the approval
-             stays valid and the plan hash still matches
+  resume     recover the exact ledger-bound execution; known jobs can be
+             observed and collected after the original approval expires
   status     replay the persisted run state
 
 The scheduler-completed and scientific-converged dimensions are recorded
@@ -22,7 +22,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -34,16 +33,16 @@ from ..core.hashing import file_sha256, obj_sha256, text_sha256
 from ..core.locking import exclusive_file_lock
 from ..core.validation import valid_filename, valid_server_name
 from ..gateway.client import GatewayClient
-from ..hpc.vasp import scientific_status
-from .approval import (DEFAULT_VALIDITY_HOURS, ApprovalToken, decode_token,
+from ..domains import plan_domain
+from .approval import (DEFAULT_VALIDITY_HOURS, ApprovalToken,
                        issue_token, verify_token)
 from .plan import (DEFAULT_DOWNLOAD_FILES, build_plan, plan_files_hash,
                    verify_plan_integrity)
+from .tasks import SCHEMA, WorkflowTasks, finished, job_id as task_job_id
 
 TERMINAL_SCHEDULER_STATES = {"COMPLETED", "FAILED", "TIMEOUT", "CANCELLED",
                              "OUT_OF_MEMORY", "NODE_FAIL", "PREEMPTED"}
-MONITOR_POLL_SECONDS = 60
-MAX_MONITOR_POLLS = 100_000
+MONITOR_POLL_SECONDS = 30
 
 
 class WorkflowEngine:
@@ -55,7 +54,8 @@ class WorkflowEngine:
         self.client = client
         self.audit = audit
         self.monitor_poll_seconds = monitor_poll_seconds
-        # clock is injectable for tests; production uses time.monotonic
+        # Retained for caller compatibility. Durable deadlines use UTC so a
+        # process or computer restart cannot reset the monitoring budget.
         self._clock = clock
 
     # ------------------------------------------------------------- paths
@@ -74,6 +74,21 @@ class WorkflowEngine:
     # ------------------------------------------------------ preview / prepare
     def preview(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Deterministically build a plan from a validated spec dict."""
+        from .research import build_python_plan, project_store
+        project = str(spec.get("project") or "")
+        if not project and spec.get("from_dir"):
+            source = Path(spec["from_dir"]).resolve()
+            if source.parent == self.config.projects_dir.resolve() and source.is_dir():
+                project = source.name
+        domain = spec.get("domain") or (project_store(self.config).kind(project) if project else "vasp")
+        if domain == "general":
+            plan = build_python_plan(self.config, {**spec, "project": project})
+            return {"plan": plan, "files_hash": plan_files_hash(plan),
+                    "next": "review the Python script and risk summary, then approve this exact plan"}
+        if domain != "vasp":
+            raise ValidationError("unsupported workflow domain")
+        if project and project_store(self.config).kind(project) != "vasp":
+            raise ValidationError("VASP workflow requires an explicitly enabled VASP project")
         for key in ("from_dir", "server", "remote_dir"):
             if not spec.get(key):
                 raise ValidationError(f"plan spec is missing {key!r}")
@@ -125,7 +140,12 @@ class WorkflowEngine:
         if not path.is_file():
             raise ValidationError(
                 f"plan {plan_id} was not found; run prepare first")
-        plan = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValidationError(f"plan {plan_id} is unreadable or damaged; preserved for manual review") from exc
+        if not isinstance(plan, dict):
+            raise ValidationError(f"plan {plan_id} must be an object; preserved for manual review")
         verify_plan_integrity(plan)
         return plan
 
@@ -160,7 +180,7 @@ class WorkflowEngine:
                 print(f"  remote dir : {plan['remote_dir']}")
                 print(f"  files      : {len(plan['files'])} "
                       f"(files_hash {files_hash[:12]}…)")
-                print(f"  submit     : run.job.sh via "
+                print(f"  execute    : {plan['job_script']['name']} via "
                       f"{plan['job_script']['scheduler']}")
                 print(f"  risk       : {plan['risk_summary']['level']} "
                       f"(walltime {plan['job_script']['walltime']}, "
@@ -283,100 +303,69 @@ class WorkflowEngine:
         })
 
     # ------------------------------------------------------------- run / resume
+    @property
+    def tasks(self) -> WorkflowTasks:
+        return WorkflowTasks(self)
+
     def run(self, plan_id: str, approval_ref: str, *,
             poll_seconds: int | None = None,
             download_root: str | Path | None = None,
             force: bool = False, _resume: bool = False) -> dict[str, Any]:
-        # Keep the lock for the entire attempt.  This serializes UI retries
-        # and, importantly, ensures two processes cannot both pass the
-        # approval check before either persists its run instance.
-        with exclusive_file_lock(self.run_path(plan_id).with_suffix(".lock")):
-            return self._run_locked(
-                plan_id, approval_ref, poll_seconds=poll_seconds,
-                download_root=download_root, force=force, _resume=_resume)
+        self.tasks.enqueue(plan_id, approval_ref, poll_seconds=poll_seconds,
+                           download_root=download_root, force=force, resume=_resume)
+        self.tasks.execute(plan_id)
+        return self.status(plan_id)
 
-    def _run_locked(self, plan_id: str, approval_ref: str, *,
-                    poll_seconds: int | None,
-                    download_root: str | Path | None,
-                    force: bool, _resume: bool) -> dict[str, Any]:
-        plan = self.load_plan(plan_id)
-        files_hash = plan_files_hash(plan)
-        key = self.config.approval_signing_key()
-        state = self._load_run(plan_id)
-
-        if _resume and state and state.get("status") == "completed":
-            return state
-        if state and state.get("status") == "running" and not (force or _resume):
-            raise ValidationError(
-                f"plan {plan_id} has a running attempt; use resume after a "
-                "failure, or --force after an interrupted session")
-
-        token = verify_token(
-            key, approval_ref,
-            server=plan["server"],
-            plan_hash=plan["plan_hash"],
-            files_hash=files_hash,
-            action="workflow_run",
-            parameter_hash=self._run_parameters_hash(plan))
-        if _resume:
-            # only the run instance that consumed the token may resume it
-            consumed = self._ledger_consumed()
-            if (state is None
-                    or state.get("approval_token_id") != token.token_id
-                    or consumed.get(token.token_id) != state.get("run_instance")):
-                raise ApprovalError(
-                    "resume requires the approval bound to this exact run; "
-                    "approve again")
-            instance = state["run_instance"]
-        else:
-            instance = f"run-{token.token_id[:8]}-{_now_iso()}"
-            self._consume_approval(token.token_id, instance)
-
-        if not state:
-            state = {
-                "plan_id": plan_id,
-                "plan_hash": plan["plan_hash"],
-                "files_hash": files_hash,
-                "server": plan["server"],
-                "created_at": _now_iso(),
-                "attempts": [],
-            }
-        state["run_instance"] = instance
-        state["approval_token_id"] = token.token_id
-        attempt = {
-            "attempt": len(state["attempts"]) + 1,
-            "started_at": _now_iso(),
-            "steps": [],
-            "status": "running",
-        }
-        state["attempts"].append(attempt)
-        state["status"] = "running"
-        self._save_run(state)
-        return self._execute(plan, state, attempt, approval_ref,
-                             poll_seconds=poll_seconds,
-                             download_root=download_root)
-
-    def resume(self, plan_id: str, approval_ref: str, *,
+    def resume(self, plan_id: str, approval_ref: str = "", *,
                poll_seconds: int | None = None,
-               download_root: str | Path | None = None) -> dict[str, Any]:
-        state = self._load_run(plan_id)
-        if not state:
-            raise ValidationError(f"no run state for plan {plan_id}; use run")
-        if state.get("status") in {"completed", "needs_review"}:
-            return self.status(plan_id)
-        plan = self.load_plan(plan_id)
-        if plan["plan_hash"] != state.get("plan_hash"):
-            raise ApprovalError(
-                "the plan changed after this run started; a new approval is "
-                "required (prepare + approve again)")
-        return self.run(plan_id, approval_ref, poll_seconds=poll_seconds,
-                        download_root=download_root, _resume=True)
+               download_root: str | Path | None = None,
+               extend_monitor: bool = False) -> dict[str, Any]:
+        self.tasks.enqueue(plan_id, approval_ref, resume=True,
+                           poll_seconds=poll_seconds, download_root=download_root,
+                           extend_monitor=extend_monitor)
+        self.tasks.execute(plan_id)
+        return self.status(plan_id)
+
+    def background(self, plan_id: str, approval_ref: str = "", **options) -> dict:
+        from .worker import launch
+        self.tasks.enqueue(plan_id, approval_ref, **options)
+        return launch(self, plan_id)
 
     def status(self, plan_id: str) -> dict[str, Any]:
         state = self._load_run(plan_id)
         if not state:
             raise ValidationError(f"no run state for plan {plan_id}")
+        task = self._task_view(plan_id, state)
+        state.pop("execution_receipt", None)
+        try:
+            plan = self.load_plan(plan_id)
+        except (ValidationError, OSError, ValueError) as exc:
+            # A damaged/missing plan must not hide the last persisted job
+            # result. This is a read-only view, never permission to resume.
+            task.update(phase="blocked", blocked_reason="invalid_plan",
+                        last_error="计划缺失或损坏；保留最后已知状态，请先人工核对。")
+            state["plan_error"] = str(exc)
+        else:
+            state.update(domain=plan.get("domain", "vasp"), project=plan.get("project", ""),
+                         execution=plan.get("execution", {}))
+        state["task"] = task
         return state
+
+    def _task_view(self, plan_id: str, state: dict) -> dict:
+        task = dict(state.get("task") or {})
+        task["worker_alive"] = self.tasks.alive(plan_id)
+        if state.get("schema") not in (None, SCHEMA) or state.get("status") == "invalid":
+            task.update(phase="blocked", blocked_reason="invalid_plan",
+                        last_error="状态版本未知或记录损坏，保留只读记录，请先人工核对。")
+        elif not task.get("phase"):
+            if finished(state):
+                task["phase"] = "finished"
+            elif task["worker_alive"]:
+                task["phase"] = "preparing"
+            else:
+                task.update(phase="blocked", blocked_reason="legacy_confirmation_required",
+                            last_error="旧运行缺少可验证的恢复信息，请先核对审批归属和远端作业号。")
+        return task
 
     def list_plans(self) -> list[dict[str, Any]]:
         """Return compact, persisted plan records for the plan center.
@@ -385,8 +374,6 @@ class WorkflowEngine:
         created from chat, the web form, or the CLI without requiring a
         second database or an in-memory UI session.
         """
-        if not self.plans_dir.is_dir():
-            return []
         rows: list[dict[str, Any]] = []
         for path in sorted(self.plans_dir.glob("*.json")):
             try:
@@ -407,6 +394,10 @@ class WorkflowEngine:
             last_attempt = attempts[-1] if attempts else {}
             rows.append({
                 "plan_id": plan["plan_id"],
+                "domain": plan.get("domain", "vasp"),
+                "project": plan.get("project", ""),
+                "execution_state": (state or {}).get("execution_state", ""),
+                "scientific_status": (state or {}).get("scientific_status", ""),
                 "server": plan.get("server", ""),
                 "remote_dir": plan.get("remote_dir", ""),
                 "file_count": len(plan.get("files") or []),
@@ -419,10 +410,21 @@ class WorkflowEngine:
                 "scientific_converged": (state or {}).get(
                     "scientific_converged"),
                 "failure": (state or {}).get("failure"),
-                "updated_at": (last_attempt.get("started_at") or
+                "job_id": task_job_id(state or {}),
+                "collection_status": (state or {}).get("collection_status"),
+                "task": self._task_view(str(plan["plan_id"]), state) if state else {},
+                "updated_at": ((state or {}).get("updated_at") or last_attempt.get("started_at") or
                                 (state or {}).get("created_at") or
                                 path.stat().st_mtime),
             })
+        listed = {row["plan_id"] for row in rows}
+        for path in sorted(self.config.runs_dir.glob("*.json")):
+            if path.name.endswith(".python.json"):
+                continue
+            if path.stem not in listed:
+                rows.append({"plan_id": path.stem, "status": "invalid",
+                             "failure": {"step": "plan", "detail": "运行记录缺少对应计划，保留只读记录。"},
+                             "task": {"phase": "blocked", "blocked_reason": "invalid_plan"}})
         rows.sort(key=lambda row: str(row.get("updated_at", "")), reverse=True)
         return rows
 
@@ -462,9 +464,22 @@ class WorkflowEngine:
                     "backup before resuming") from exc
         if not isinstance(state, dict):
             raise ValidationError(f"run state {path} is not a JSON object")
+        if state.get("plan_id") != plan_id or not isinstance(state.get("attempts"), list):
+            raise ValidationError(f"run state {path} has invalid identity or attempts; record is read-only")
+        if any(not isinstance(attempt, dict) or not isinstance(attempt.get("steps"), list)
+               or any(not isinstance(row, dict) for row in attempt["steps"])
+               for attempt in state["attempts"]):
+            raise ValidationError(f"run state {path} has invalid step journals; record is read-only")
+        if state.get("schema") == "rsci.run/2":
+            task = state.get("task")
+            if (not isinstance(task, dict) or not isinstance(task.get("download_root"), str)
+                    or not isinstance(task.get("poll_seconds"), (int, float))
+                    or not 0 <= task["poll_seconds"] <= 3600):
+                raise ValidationError(f"run state {path} has invalid task metadata; record is read-only")
         return state
 
     def _save_run(self, state: dict[str, Any]) -> None:
+        state["updated_at"] = _now_iso()
         target = self.run_path(state["plan_id"])
         with exclusive_file_lock(target.with_suffix(".state.lock")):
             self.config.runs_dir.mkdir(parents=True, exist_ok=True)
@@ -483,101 +498,6 @@ class WorkflowEngine:
                 except OSError:
                     pass
                 raise
-
-    def mark_worker_failed(self, plan_id: str, detail: str) -> dict[str, Any] | None:
-        """Persist an unexpected worker exception instead of leaving ``running``."""
-        with exclusive_file_lock(self.run_path(plan_id).with_suffix(".lock")):
-            state = self._load_run(plan_id)
-            if not state or state.get("status") != "running":
-                return state
-            attempts = state.get("attempts") or []
-            if attempts and attempts[-1].get("status") == "running":
-                attempts[-1]["status"] = "failed"
-                attempts[-1]["finished_at"] = _now_iso()
-            state["status"] = "failed"
-            state["failure"] = {"step": "worker", "detail": str(detail)}
-            self._save_run(state)
-            if self.audit:
-                self.audit.record("workflow.run", outcome="failed",
-                                  plan_id=plan_id, step="worker")
-            return state
-
-    def _execute(self, plan: dict, state: dict, attempt: dict,
-                 approval_ref: str, *, poll_seconds: int | None,
-                 download_root: str | Path | None) -> dict:
-        completed_steps = {row["id"] for prev in state["attempts"]
-                           if prev is not attempt
-                           for row in prev.get("steps", []) if row.get("ok")}
-        context: dict[str, Any] = {"approval_ref": approval_ref, "job_id": None}
-        for step in plan["steps"]:
-            if step["id"] in completed_steps:
-                continue
-            if step["type"] == "submit" and _uncertain_submit(state):
-                detail = (
-                    "submit outcome is uncertain because the previous worker "
-                    "stopped after submission started; inspect the scheduler "
-                    "before retrying to avoid a duplicate VASP job")
-                attempt["status"] = "failed"
-                state["status"] = "needs_review"
-                state["failure"] = {"step": step["id"], "detail": detail}
-                self._save_run(state)
-                return state
-            journal = {"id": step["id"], "type": step["type"],
-                       "status": "started", "started_at": _now_iso()}
-            attempt["steps"].append(journal)
-            # Journal before every external effect.  A crash after sbatch/qsub
-            # therefore cannot look like a never-submitted plan on resume.
-            self._save_run(state)
-            try:
-                outcome = self._run_step(plan, state, step, context,
-                                         poll_seconds=poll_seconds,
-                                         download_root=download_root)
-            except rsciError as exc:
-                # any operation failure becomes a recorded failed step so a
-                # new attempt (resume) can retry it
-                outcome = {"ok": False, "type": step["type"],
-                           "error": exc.message}
-            journal.update(outcome, finished_at=_now_iso(),
-                          status="ok" if outcome.get("ok") else "failed")
-            self._save_run(state)
-            if not outcome.get("ok"):
-                attempt["status"] = "failed"
-                state["status"] = "failed"
-                state["failure"] = {"step": step["id"],
-                                    "detail": str(outcome.get("error", ""))}
-                self._save_run(state)
-                if self.audit:
-                    self.audit.record("workflow.run", outcome="failed",
-                                      plan_id=plan["plan_id"], step=step["id"])
-                return state
-        attempt["status"] = "completed"
-        progress = self._last_progress(state)
-        analysis = self._last_analysis(state)
-        scheduler_state = str(progress.get("scheduler_state", "UNKNOWN")) \
-            if progress else "UNKNOWN"
-        if analysis:
-            scientific = bool(analysis.get("scientific_converged"))
-        elif progress:
-            scientific = bool(progress.get("scientific_converged"))
-        else:
-            scientific = False
-        # The two dimensions never collapse: scheduler-finished but
-        # unconverged runs end in needs_review, not completed.
-        scheduler_success = scheduler_state == "COMPLETED"
-        scheduler_failed = scheduler_state in {
-            "FAILED", "TIMEOUT", "CANCELLED", "OUT_OF_MEMORY", "NODE_FAIL",
-            "PREEMPTED"}
-        state["status"] = (
-            "completed" if scheduler_success and scientific else
-            "failed" if scheduler_failed else "needs_review")
-        state["scheduler_state"] = scheduler_state
-        state["scientific_converged"] = scientific
-        self._save_run(state)
-        if self.audit:
-            self.audit.record("workflow.run", outcome="ok",
-                              plan_id=plan["plan_id"], scheduler=scheduler_state,
-                              scientific_converged=scientific)
-        return state
 
     @staticmethod
     def _last_progress(state: dict) -> dict[str, Any] | None:
@@ -642,7 +562,7 @@ class WorkflowEngine:
                     "sha256": step["sha256"],
                     "status": result.get("status", result.get("ok"))}
         if kind == "validate":
-            result = self.client.vasp_validate(step["path"], server=server)
+            result = plan_domain(plan).validate_remote(self.client, step["path"], server)
             errors = result.get("errors") or []
             if errors:
                 return {"ok": False, "type": kind,
@@ -656,23 +576,8 @@ class WorkflowEngine:
                 server=server)
             context["job_id"] = result.get("job_id")
             return {"ok": True, "type": kind, "job_id": result.get("job_id")}
-        if kind == "monitor":
-            job_id = context.get("job_id") or _find_job_id(state)
-            if not job_id:
-                return {"ok": False, "type": kind,
-                        "error": "no job id known for monitoring"}
-            monitored = self._monitor_until_terminal(
-                str(job_id), server=server,
-                timeout_min=int(step.get("timeout_min", 2880)),
-                poll_seconds=poll_seconds)
-            if not monitored.get("ok"):
-                return {"ok": False, "type": kind,
-                        "error": str(monitored.get("error", "monitor failed"))}
-            context["scheduler_state"] = monitored["state"]
-            return {"ok": True, "type": kind, "job_id": job_id,
-                    "state": monitored["state"]}
         if kind == "progress":
-            result = self.client.vasp_progress(step["path"], server=server)
+            result = plan_domain(plan).progress(self.client, step["path"], server)
             scheduler_state = str(context.get("scheduler_state") or "UNKNOWN")
             merged = dict(result)
             merged["scheduler_state"] = scheduler_state
@@ -681,6 +586,10 @@ class WorkflowEngine:
             root = Path(download_root) if download_root else \
                 self.config.home / "downloads" / plan["plan_id"]
             downloaded = []
+            def record_download(item: dict) -> None:
+                downloaded.append(item)
+                state["task"]["artifacts"] = list(downloaded)
+                self._save_run(state)
             optional = set(step.get("optional_files") or [])
             for name in step.get("files", []):
                 valid_filename(name)
@@ -704,9 +613,9 @@ class WorkflowEngine:
                             raise ValidationError(
                                 f"local output {name} is stale and will not "
                                 "be used; choose a new download directory")
-                        downloaded.append({"name": name,
-                                           "status": "verified_existing",
-                                           "sha256": local_sha})
+                        record_download({"name": name,
+                                         "status": "verified_existing",
+                                         "sha256": local_sha})
                     except rsciError as exc:
                         if name in optional and _is_missing_remote(exc):
                             raise ValidationError(
@@ -723,11 +632,11 @@ class WorkflowEngine:
                         server=server)
                 except rsciError as exc:
                     if name in optional and _is_missing_remote(exc):
-                        downloaded.append({"name": name, "status": "missing"})
+                        record_download({"name": name, "status": "missing"})
                         continue
                     raise
-                downloaded.append({"name": name, "status": "downloaded",
-                                   "sha256": result.get("sha256")})
+                record_download({"name": name, "status": "downloaded",
+                                 "sha256": result.get("sha256")})
             return {"ok": True, "type": kind, "directory": str(root),
                     "files": downloaded}
         if kind == "parse":
@@ -742,42 +651,10 @@ class WorkflowEngine:
             if not texts:
                 return {"ok": False, "type": kind,
                         "error": "no downloaded sources to parse"}
-            analysis = scientific_status(
-                scheduler_state=str(context.get("scheduler_state") or "UNKNOWN"),
-                files=texts)
+            analysis = plan_domain(plan).parse(str(context.get("scheduler_state") or "UNKNOWN"), texts)
             return {"ok": True, "type": kind, "analysis": analysis}
         return {"ok": False, "type": kind,
                 "error": f"unknown step type {kind}"}
-
-    def _monitor_until_terminal(self, job_id: str, *, server: str,
-                                timeout_min: int,
-                                poll_seconds: int | None) -> dict[str, Any]:
-        clock = self._clock or time.monotonic
-        deadline = clock() + max(1, timeout_min) * 60
-        interval = poll_seconds if poll_seconds is not None \
-            else self.monitor_poll_seconds
-        polls = 0
-        while polls < MAX_MONITOR_POLLS:
-            polls += 1
-            result = self.client.job_state(job_id, server=server)
-            state = str(result.get("state") or "UNKNOWN")
-            if state in TERMINAL_SCHEDULER_STATES:
-                return {"ok": True, "state": state}
-            if clock() >= deadline:
-                return {"ok": False,
-                        "error": f"monitoring timed out after {timeout_min} min "
-                                 f"(job still {state})"}
-            if self._clock is None:
-                time.sleep(interval)
-        return {"ok": False, "error": "monitoring exceeded the poll budget"}
-
-
-def _find_job_id(state: dict[str, Any]) -> str | None:
-    for attempt in reversed(state.get("attempts", [])):
-        for row in reversed(attempt.get("steps", [])):
-            if row.get("type") == "submit" and row.get("job_id"):
-                return str(row["job_id"])
-    return None
 
 
 def _adhoc_plan_hash(server: str, directory: str, script: str) -> str:
@@ -790,14 +667,6 @@ def _validate_plan_id(plan_id: str) -> None:
             or not all(ch in "0123456789abcdef" for ch in plan_id):
         raise ValidationError("plan id must be 16 hex characters")
 
-
-def _uncertain_submit(state: dict[str, Any]) -> bool:
-    """Whether a prior attempt entered submit but never journaled its result."""
-    return any(
-        row.get("type") == "submit" and row.get("status") == "started"
-        for attempt in state.get("attempts", [])
-        for row in attempt.get("steps", [])
-    )
 
 
 def _is_missing_remote(error: rsciError) -> bool:

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from ..core.errors import ValidationError
 
-WINDOW_TITLE = "远端控制智能体"
+WINDOW_TITLE = "RSCI 科研助手"
 WINDOW_SIZE = (1280, 840)
 WINDOW_MIN_SIZE = (900, 600)
 DEFAULT_PORT = 8930
@@ -178,7 +178,7 @@ def main(app, *, port: int = DEFAULT_PORT, platform: str | None = None) -> int:
         raise ValidationError(
             "desktop mode needs Windows or macOS "
             f"(this is {target}); use `rsci ui` instead")
-    home = ui_home()
+    home = app.config.home if app is not None else ui_home()
     log = _open_log(home)
     _log(log, f"desktop start pid={os.getpid()} port={port} platform={target}")
     try:

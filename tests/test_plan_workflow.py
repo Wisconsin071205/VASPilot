@@ -194,7 +194,8 @@ class TestWorkflowLifecycle:
         # mutate a local input AFTER approval: the engine must refuse
         (vasp_inputs / "INCAR").write_text("SYSTEM = mutated post-approval\n",
                                            encoding="utf-8")
-        result = engine.run(prepared["plan_id"], approved["approval_ref"],
-                            poll_seconds=0)
+        with pytest.raises(ValidationError, match="changed since approval"):
+            engine.run(prepared["plan_id"], approved["approval_ref"], poll_seconds=0)
+        result = engine.status(prepared["plan_id"])
         assert result["status"] == "failed"
         assert "changed since approval" in result["failure"]["detail"]

@@ -10,9 +10,15 @@ from tests.conftest import ROOT
 from tests.test_campaign import VASP_FILE
 from tests.test_ui import call, ui  # noqa: F401  (fixture)
 from rsci.core.errors import ValidationError
+from rsci.workflow.research import project_store
 
 RECIPE = {"functional": "PBE", "stages": ["band", "dos"],
           "resources": {"ntasks": 16, "walltime": "12:00:00"}}
+
+
+def vasp_registry(app):
+    project = project_store(app.config).create("materials", kind="vasp")
+    return app.build_registry(project_root=project["path"])
 
 
 @pytest.fixture()
@@ -20,7 +26,7 @@ def tools(app_with_fake, tmp_path):
     app, transport = app_with_fake
     vasp = tmp_path / "Si.vasp"
     vasp.write_text(VASP_FILE, encoding="utf-8")
-    return app, app.registry(), transport.state, str(vasp)
+    return app, vasp_registry(app), transport.state, str(vasp)
 
 
 def doctor(registry):
@@ -144,7 +150,7 @@ class TestConsole:
     def test_approve_in_the_console_starts_the_chain(self, ui):  # noqa: F811
         app = ui["app"]
         app.config.set_agent_submit_mode("confirm")
-        registry = app.registry()
+        registry = vasp_registry(app)
         registry.dispatch("vaspkit_doctor", {"server": "cl9"})
         attached = call(ui, "vasp.attach", {"name": "Si.vasp", "text": VASP_FILE})
         started = registry.dispatch("campaign_start", {
@@ -170,7 +176,7 @@ class TestConsole:
     def test_reject_in_the_console_runs_nothing(self, ui):  # noqa: F811
         app = ui["app"]
         app.config.set_agent_submit_mode("confirm")
-        registry = app.registry()
+        registry = vasp_registry(app)
         registry.dispatch("vaspkit_doctor", {"server": "cl9"})
         attached = call(ui, "vasp.attach", {"name": "Si.vasp", "text": VASP_FILE})
         started = registry.dispatch("campaign_start", {

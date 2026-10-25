@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import argparse
 from pathlib import Path
 
 from ..core.errors import ValidationError
@@ -11,7 +11,7 @@ from ..hpc.vasp import validate_inputs
 
 
 def register(sub) -> None:
-    parser = sub.add_parser("workflow", help="approval-gated VASP workflows")
+    parser = sub.add_parser("workflow", help="approval-gated research workflows")
     commands = parser.add_subparsers(dest="command", required=True)
 
     def command(name, handler, **kw):
@@ -70,16 +70,58 @@ def register(sub) -> None:
     p.add_argument("--poll-seconds", dest="poll_seconds", type=int, default=None)
     p.add_argument("--download-root", dest="download_root", default=None)
     p.add_argument("--force", action="store_true",
-                   help="proceed even if a stale attempt is marked running")
+                   help="recover an existing run; never bypass submit uncertainty")
+    p.add_argument("--background", action="store_true",
+                   help="persist the task and run in a detached background process")
 
     p = command("resume", cmd_resume)
     p.add_argument("plan_id")
-    p.add_argument("--approval-ref", dest="approval_ref", required=True)
+    p.add_argument("--approval-ref", dest="approval_ref", default="",
+                   help="only needed when a new approval is required before submission")
     p.add_argument("--poll-seconds", dest="poll_seconds", type=int, default=None)
     p.add_argument("--download-root", dest="download_root", default=None)
+    p.add_argument("--background", action="store_true")
+    p.add_argument("--extend-monitor", action="store_true",
+                   help="extend monitoring for the SAME job; never resubmit")
 
     p = command("status", cmd_status)
     p.add_argument("plan_id")
+
+    command("list", cmd_list)
+    p = command("reconcile", cmd_reconcile)
+    p.add_argument("plan_id")
+    p = command("bind-job", cmd_bind_job)
+    p.add_argument("plan_id")
+    p.add_argument("--job-id", required=True)
+    p.add_argument("--confirm", required=True,
+                   help="type: bind PLAN_ID JOB_ID (only associates; never submits)")
+    p = command("_worker", cmd_worker, help=argparse.SUPPRESS)
+    p.add_argument("plan_id")
+    p = command("_python_job", cmd_python_job, help=argparse.SUPPRESS)
+    p.add_argument("plan_id")
+
+    p = command("analyze", cmd_analyze, help="prepare a local Python analysis for review; does not execute")
+    p.add_argument("project")
+    p.add_argument("--script", default="scripts/analyze.py")
+    p.add_argument("--input", dest="inputs", action="append", required=True)
+    p.add_argument("--output", dest="outputs", action="append", required=True)
+    p.add_argument("--python", default="")
+    p.add_argument("--arg", dest="args", action="append", default=[])
+    p.add_argument("--timeout-seconds", type=int, default=600)
+    p.add_argument("--run-label", default="")
+
+
+def cmd_analyze(app, args):
+    return app.engine().prepare({"domain": "general", "project": args.project,
+        "script": args.script, "inputs": args.inputs, "outputs": args.outputs,
+        "python": args.python, "args": args.args, "timeout_seconds": args.timeout_seconds,
+        "run_label": args.run_label})
+
+
+def cmd_python_job(app, args):
+    from ..workflow.local_python import main
+    main(app, args.plan_id)
+    return {"ok": True}
 
 
 def _spec_from_args(args) -> dict:
@@ -156,6 +198,11 @@ def cmd_approve_submit(app, args):
 
 
 def cmd_run(app, args):
+    if args.background:
+        return app.engine().background(args.plan_id, args.approval_ref,
+                                       poll_seconds=args.poll_seconds,
+                                       download_root=args.download_root,
+                                       force=args.force)
     return app.engine().run(args.plan_id, args.approval_ref,
                             poll_seconds=args.poll_seconds,
                             download_root=args.download_root,
@@ -163,10 +210,36 @@ def cmd_run(app, args):
 
 
 def cmd_resume(app, args):
+    if args.background:
+        return app.engine().background(args.plan_id, args.approval_ref, resume=True,
+                                       poll_seconds=args.poll_seconds,
+                                       download_root=args.download_root,
+                                       extend_monitor=args.extend_monitor)
     return app.engine().resume(args.plan_id, args.approval_ref,
                                poll_seconds=args.poll_seconds,
-                               download_root=args.download_root)
+                               download_root=args.download_root,
+                               extend_monitor=args.extend_monitor)
 
 
 def cmd_status(app, args):
     return app.engine().status(args.plan_id)
+
+
+def cmd_list(app, args):
+    return {"plans": app.engine().list_plans()}
+
+
+def cmd_reconcile(app, args):
+    return app.engine().tasks.reconcile(args.plan_id)
+
+
+def cmd_bind_job(app, args):
+    from ..workflow.worker import launch
+    app.engine().tasks.bind_job(args.plan_id, args.job_id, args.confirm)
+    return launch(app.engine(), args.plan_id)
+
+
+def cmd_worker(app, args):
+    from ..workflow.worker import main
+    main(app, args.plan_id)
+    return None

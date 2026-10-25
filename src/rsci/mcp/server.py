@@ -323,7 +323,7 @@ def self_test() -> int:
     app, registry = build_registry()
     tools = _wrap(app, registry)
     names = {t["name"] for t in tools}
-    expected = {"server_list", "remote_list", "remote_read", "vasp_progress",
+    expected = {"server_list", "remote_list", "remote_read", "research_prepare",
                 "job_state", "open_remote_login", "open_approval_terminal",
                 "rsci_self_check", "server_connect", "server_key_status",
                 "open_key_setup_terminal"}

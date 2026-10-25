@@ -35,6 +35,15 @@ def ui(config_home, fake_state, monkeypatch):
     app = App(config)
     transport = FakeTransport(fake_state)
     monkeypatch.setattr(App, "transport", lambda self: transport)
+    # Unit-level UI tests share an in-memory transport. Real detached process
+    # ownership/recovery is tested separately against the disk-backed HPC.
+    workflow_threads = []
+    def unit_launch(engine, plan_id):
+        thread = threading.Thread(target=engine.tasks.execute, args=(plan_id,))
+        workflow_threads.append(thread)
+        thread.start()
+        return {"ok": True, "started": plan_id, "background": True}
+    monkeypatch.setattr("rsci.workflow.worker.launch", unit_launch)
     # bind a scripted provider so agent chat works without network; patch the
     # name as imported INSIDE rsci.cli.agent (module-level import)
     scripted = ScriptedProvider([
@@ -56,6 +65,10 @@ def ui(config_home, fake_state, monkeypatch):
            "scripted": scripted}
     httpd.shutdown()
     httpd.server_close()
+    httpd.RequestHandlerClass.state.stopped.set()
+    httpd.RequestHandlerClass.state.kick_campaigns()
+    for workflow_thread in workflow_threads:
+        workflow_thread.join(timeout=5)
 
 
 class ScriptedProvider:
@@ -124,13 +137,13 @@ class TestTokenGuard:
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "远端控制智能体" in body and "rsci ui" in body
+        assert "RSCI 科研助手" in body and "rsci ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "远端控制智能体" in html and "chatinput" in html
+        assert "RSCI 科研助手" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
@@ -377,7 +390,7 @@ class TestWorkflowLoop:
         for _ in range(100):
             status = call(ui, "workflow/status",
                           {"plan_id": prepared["plan_id"]}, method="GET")
-            if status.get("status") not in ("running", None):
+            if status.get("status") not in ("running", None) and not status.get("task", {}).get("worker_alive"):
                 break
             time.sleep(0.05)
         assert status["status"] == "completed", status.get("failure", status)
@@ -397,25 +410,25 @@ class TestWorkflowLoop:
         for _ in range(100):
             status = call(ui, "workflow/status",
                           {"plan_id": prepared["plan_id"]}, method="GET")
-            if status.get("status") not in ("running", None):
+            if status.get("status") not in ("running", None) and not status.get("task", {}).get("worker_alive"):
                 break
             time.sleep(0.05)
         assert status["status"] == "failed"  # upload collision
-        # replaying the consumed approval for a fresh run is refused: the
-        # worker rejects it before creating any state, so the deleted run
-        # file is never recreated and the rejection shows via status
+        # Wait for the owner to release its task lock before deleting this
+        # fixture's state. A terminal status can precede its final exit snapshot.
+        # Replaying the consumed approval is rejected during admission.
         ui["app"].engine().run_path(prepared["plan_id"]).unlink()
         replay = call(ui, "workflow.run", {"plan_id": prepared["plan_id"],
                                            "approval_ref": approved["approval_ref"],
                                            "poll_seconds": 0})
-        assert replay["ok"]  # accepted for async execution...
+        assert not replay["ok"]  # admission rejects replay before launching
         for _ in range(100):
             after = call(ui, "workflow/status",
                          {"plan_id": prepared["plan_id"]}, method="GET")
             if not after.get("ok"):
                 break
             time.sleep(0.05)
-        assert not after.get("ok")  # ...but no run state was ever created
+        assert not after.get("ok")  # no new state was ever created
         assert "no run state" in after["error"]["message"]
 
 
@@ -813,7 +826,7 @@ class TestProjectFlow:
     def test_empty_project_user_and_agent_share_inputs(self, ui):
         from rsci.providers.base import ToolCall
 
-        created = call(ui, "project.create", {"name": "draft"})
+        created = call(ui, "project.create", {"name": "draft", "kind": "vasp"})
         assert created["ok"] and created["files"] == []
         assert call(ui, "project.potcar_remote", {
             "name": "draft", "path": "/home/user/POTCAR.Fe"

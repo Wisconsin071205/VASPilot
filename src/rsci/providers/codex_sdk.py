@@ -24,7 +24,7 @@ from .base import BaseProvider, CapabilityProbe, ProviderReply, ToolCall
 
 BRIDGE_PATH = Path(__file__).with_name("codex_bridge.mjs")
 
-TOOL_PROTOCOL = """You are driving rsci, a restricted VASP/HPC agent.
+TOOL_PROTOCOL = """You are driving RSCI, a general research assistant.
 You have NO shell. You act only by proposing one JSON document as your entire
 reply. The available tools are listed after the conversation. Reply with
 exactly one JSON object and nothing else:

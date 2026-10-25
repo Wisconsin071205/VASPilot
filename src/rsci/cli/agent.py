@@ -134,9 +134,12 @@ def cmd_provider_set_default(app, args):
 
 
 # ------------------------------------------------------------------ sessions
-def _resolve_mode(app, provider_id: str | None):
+def _resolve_mode(app, provider_id: str | None, *, on_provider=None):
     entry, provider = (provider_by_id(app.config, provider_id)
                        if provider_id else default_provider(app.config))
+    # Hosts can register cancellation before the first capability probe.
+    if on_provider is not None:
+        on_provider(provider)
     cached = app.config.load_settings().get(PROBE_CACHE_KEY) or {}
     probe = cached.get(entry.id)
     if not isinstance(probe, dict) or not probe.get("checked_at"):

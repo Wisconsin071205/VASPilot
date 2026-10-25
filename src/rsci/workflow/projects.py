@@ -1,455 +1,377 @@
-"""Local VASP projects under ``~/.rsci/projects``.
-
-A project is one directory holding the input files for a calculation
-(INCAR/KPOINTS/POSCAR, an optional POTCAR copied byte-for-byte from a
-user-supplied path, and an optional custom run.job.sh). Workflow plans take
-``from_dir`` straight from a project directory.
-
-Safety model:
-  - project names are strict identifiers; resolved paths must stay inside
-    the projects root
-  - only whitelisted file names may be written
-  - POTCAR content is never read, returned or logged — the file is copied
-    verbatim and only its metadata (size/sha256/TITEL/ENMAX) is exposed
-"""
-
+"""Typed research projects with confined files, atomic writes and legacy migration."""
 from __future__ import annotations
 
-import re
+import json
+import os
+import secrets
 import shutil
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any
+import re
 
+from ..core.config import _atomic_write_json
 from ..core.errors import ValidationError
-from ..core.hashing import file_sha256, text_sha256
+from ..core.hashing import file_sha256
+from ..core.locking import reentrant_file_lock
+from ..core.project_paths import (
+    GENERAL_DIRS, MAX_IMPORT_BYTES, MAX_PROJECT_FILES, MAX_TEXT_BYTES,
+    TEXT_SUFFIXES, atomic_bytes, confined_path, general_name, is_link,
+)
+from ..domains import domain_for
+from ..domains.vasp import FILE_WHITELIST, REQUIRED_INPUTS, TEMPLATES  # compatibility
 
 PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-FILE_WHITELIST = ("INCAR", "KPOINTS", "POSCAR", "POTCAR", "run.job.sh")
-REQUIRED_INPUTS = ("INCAR", "KPOINTS", "POSCAR")
-
-INCAR_RELAX = """SYSTEM = relax
-ISTART = 0
-ICHARG = 2
-ENCUT  = 520
-PREC   = Accurate
-EDIFF  = 1E-5
-EDIFFG = -0.02
-ISMEAR = 0
-SIGMA  = 0.05
-IBRION = 2
-ISIF   = 3
-NSW    = 60
-ISYM   = 0
-NELM   = 200
-LWAVE  = .FALSE.
-LCHARG = .FALSE.
-"""
-
-INCAR_SCF = """SYSTEM = scf
-ISTART = 0
-ICHARG = 2
-ENCUT  = 520
-PREC   = Accurate
-EDIFF  = 1E-5
-ISMEAR = 0
-SIGMA  = 0.05
-IBRION = -1
-NSW    = 0
-ISYM   = 0
-NELM   = 200
-LWAVE  = .FALSE.
-LCHARG = .TRUE.
-"""
-
-KPOINTS_AUTO = """Automatic mesh
-0
-Gamma
-2 2 2
-0 0 0
-"""
-
-# A fake Fe cell is dangerous: it looks runnable and can silently submit the
-# wrong material.  Templates deliberately leave POSCAR empty so the project
-# cannot become runnable until the user supplies a real structure.
-POSCAR_PLACEHOLDER = ""
-
-TEMPLATES: dict[str, dict[str, str]] = {
-    "relax": {
-        "description": "结构优化（ISIF=3, IBRION=2, NSW=60）",
-        "INCAR": INCAR_RELAX,
-        "KPOINTS": KPOINTS_AUTO,
-        "POSCAR": POSCAR_PLACEHOLDER,
-    },
-    "scf": {
-        "description": "静态单点计算（NSW=0；本次作业只提交这一阶段）",
-        "INCAR": INCAR_SCF,
-        "KPOINTS": KPOINTS_AUTO,
-        "POSCAR": POSCAR_PLACEHOLDER,
-    },
-    "blank": {
-        "description": "空白（全部自填）",
-        "INCAR": "",
-        "KPOINTS": "",
-        "POSCAR": "",
-    },
-}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _locked(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with reentrant_file_lock(self.index_path.with_suffix(".lock")):
+            return method(self, *args, **kwargs)
+    return call
+
+
 class ProjectStore:
-    def __init__(self, *, projects_dir: Path, index_path: Path,
-                 audit: Any = None) -> None:
-        self.root = Path(projects_dir)
-        self.index_path = Path(index_path)
+    def __init__(self, *, projects_dir: Path, index_path: Path, audit: Any = None):
+        self.root, self.index_path = Path(projects_dir), Path(index_path)
         self.audit = audit
 
-    # -- index ------------------------------------------------------------------
-    def _load_index(self) -> dict[str, dict[str, Any]]:
+    def _record(self, event, **fields):
+        if self.audit is not None:
+            self.audit.record(event, **fields)
+
+    def _load_index(self):
         try:
-            with open(self.index_path, "r", encoding="utf-8-sig") as handle:
-                import json
-                data = json.load(handle)
-            return data if isinstance(data, dict) else {}
+            data = json.loads(self.index_path.read_text(encoding="utf-8-sig"))
         except FileNotFoundError:
             return {}
-        except (OSError, ValueError):
-            return {}
+        except (OSError, ValueError) as exc:
+            raise ValidationError("project index is damaged; preserved for manual recovery") from exc
+        if not isinstance(data, dict) or any(not isinstance(v, dict) for v in data.values()):
+            raise ValidationError("project index has an unsupported shape; no records changed")
+        return data
 
-    def _save_index(self, index: dict[str, dict[str, Any]]) -> None:
-        import json
-        import os
-        import tempfile
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix="." + self.index_path.name + ".",
-                                   dir=str(self.index_path.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-                json.dump(index, handle, ensure_ascii=False, indent=2,
-                          sort_keys=True)
-            os.replace(tmp, self.index_path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
+    def _save_index(self, index):
+        _atomic_write_json(self.index_path, index)
 
-    def _record(self, event: str, **fields: Any) -> None:
-        if self.audit is not None:
-            try:
-                self.audit.record(event, **fields)
-            except Exception:
-                pass
-
-    # -- paths --------------------------------------------------------------------
-    def _project_dir(self, name: str) -> Path:
+    def _project_dir(self, name):
         if not PROJECT_NAME_RE.fullmatch(name or ""):
-            raise ValidationError(
-                f"project name {name!r} must match [A-Za-z0-9][A-Za-z0-9._-]{{0,63}}")
-        candidate = (self.root / name).resolve()
-        root = self.root.resolve()
-        if root != candidate and root not in candidate.parents:
-            raise ValidationError("project path escapes the projects root")
-        return candidate
+            raise ValidationError("project name must match [A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+        if name.endswith(".") or re.match(r"^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)", name, re.I):
+            raise ValidationError("project name is reserved or not portable")
+        return confined_path(self.root, name)
 
-    # -- create / list / delete -----------------------------------------------------
-    def create(self, name: str, files: dict[str, str] | None = None,
-               potcar_path: str | Path | None = None,
-               potcar_remote: str = "") -> dict[str, Any]:
-        directory = self._project_dir(name)
-        if directory.exists():
-            raise ValidationError(f"project {name!r} already exists")
-        potcar_remote = str(potcar_remote or "").strip()
-        if len(potcar_remote.encode("utf-8")) > 512:
-            raise ValidationError("potcar_remote path exceeds 512 bytes")
-        files = {str(k): str(v) for k, v in (files or {}).items()
-                 if str(v).strip()}
-        for fname in files:
-            if fname not in FILE_WHITELIST:
-                raise ValidationError(
-                    f"file {fname!r} is not one of {FILE_WHITELIST}")
-            if fname == "POTCAR":
-                raise ValidationError(
-                    "POTCAR cannot be written as text; provide potcar_path "
-                    "so it is copied byte-for-byte instead")
-        directory.mkdir(parents=True, exist_ok=False)
-        written: list[dict[str, Any]] = []
-        try:
-            for fname in ("INCAR", "KPOINTS", "POSCAR"):
-                content = files.get(fname, "")
-                if content:
-                    path = directory / fname
-                    path.write_text(content, encoding="utf-8", newline="\n")
-                    written.append({"name": fname, "size": path.stat().st_size})
-            for fname, content in files.items():
-                if fname in REQUIRED_INPUTS or fname == "POTCAR":
-                    continue
-                path = directory / fname
-                path.write_text(content, encoding="utf-8", newline="\n")
-                written.append({"name": fname, "size": path.stat().st_size})
-            potcar: dict[str, Any] | None = None
-            if potcar_path:
-                source = Path(potcar_path).expanduser()
-                if not source.is_file():
-                    raise ValidationError(f"POTCAR source not found: {source}")
-                shutil.copyfile(source, directory / "POTCAR")
-                target = directory / "POTCAR"
-                potcar = {"size": target.stat().st_size,
-                          "sha256": file_sha256(target)}
-        except BaseException:
-            shutil.rmtree(directory, ignore_errors=True)
-            raise
-        index = self._load_index()
-        index[name] = {"created_at": _now(), "pinned": False,
-                       "potcar_remote": potcar_remote}
-        self._save_index(index)
-        self._record("project.create", outcome="ok", project=name,
-                     files=[w["name"] for w in written],
-                     potcar=bool(potcar))
-        return {"name": name, "path": str(directory), "files": written,
-                "potcar": potcar}
-
-    def list(self) -> list[dict[str, Any]]:
-        index = self._load_index()
-        out: list[dict[str, Any]] = []
-        if not self.root.is_dir():
-            return out
-        for entry in sorted(self.root.iterdir()):
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            meta = index.get(entry.name, {})
-            present = {name: ((entry / name).is_file() and
-                              (entry / name).stat().st_size > 0)
-                       for name in FILE_WHITELIST}
-            missing = [name for name in REQUIRED_INPUTS + ("POTCAR",)
-                       if not present.get(name)]
-            out.append({
-                "name": entry.name,
-                "path": str(entry.resolve()),
-                "pinned": bool(meta.get("pinned")),
-                "created_at": meta.get("created_at", ""),
-                "potcar_remote": meta.get("potcar_remote", ""),
-                "mtime": datetime.fromtimestamp(
-                    entry.stat().st_mtime, timezone.utc).isoformat(
-                        timespec="seconds"),
-                "files": present,
-                "missing": missing,
-                # ``complete`` means a directly uploadable local input set.
-                # A remote POTCAR path is metadata only and does not make the
-                # local project complete; the workflow still checks the remote
-                # run directory for an assembled POTCAR.
-                "complete": not missing,
-                "ready_with_remote_potcar": (
-                    not [n for n in REQUIRED_INPUTS if not present.get(n)]
-                    and not present.get("POTCAR")
-                    and bool(meta.get("potcar_remote"))),
-            })
-        out.sort(key=lambda item: (not item["pinned"],
-                                   item["name"].lower()))
-        return out
-
-    def pin(self, name: str, pinned: bool = True) -> dict[str, Any]:
+    def _metadata(self, name):
         directory = self._project_dir(name)
         if not directory.is_dir():
             raise ValidationError(f"project {name!r} not found")
         index = self._load_index()
-        meta = index.get(name, {"created_at": _now()})
+        meta = dict(index.get(name) or {})
+        if "kind" not in meta:
+            # Every directory predating typed projects is VASP, even an empty
+            # draft. This is an explicit, locked, additive metadata migration.
+            meta.update(kind="vasp", schema="rsci.project/2", migrated_from="legacy-vasp")
+            index[name] = meta
+            self._save_index(index)
+            self._record("project.migrate", outcome="ok", project=name, kind="vasp")
+        domain_for(meta["kind"])
+        return meta
+
+    @_locked
+    def kind(self, name):
+        return self._metadata(name)["kind"]
+
+    def _file(self, name, fname, *, kind=None):
+        kind = kind or self._metadata(name)["kind"]
+        if kind == "general":
+            fname = general_name(fname)
+        elif fname not in FILE_WHITELIST:
+            raise ValidationError(f"file {fname!r} is not one of {FILE_WHITELIST}")
+        return confined_path(self._project_dir(name), fname)
+
+    @staticmethod
+    def _text(content, fname):
+        data = str(content).encode("utf-8")
+        if len(data) > MAX_TEXT_BYTES:
+            raise ValidationError(f"{fname} exceeds the 256 KiB text cap")
+        if b"\0" in data:
+            raise ValidationError("text files cannot contain NUL bytes")
+        return data
+
+    @_locked
+    def create(self, name, files=None, potcar_path=None, potcar_remote="", *, kind=None):
+        directory = self._project_dir(name)
+        if directory.exists():
+            raise ValidationError(f"project {name!r} already exists")
+        files = {str(k): str(v) for k, v in (files or {}).items()}
+        # Existing integrations that explicitly supply VASP inputs keep their
+        # behavior. A name-only creation is now a general research project.
+        kind = kind or ("vasp" if potcar_path or potcar_remote or
+                        any(k in FILE_WHITELIST for k in files) else "general")
+        domain_for(kind)
+        if kind != "vasp" and (potcar_path or potcar_remote):
+            raise ValidationError("POTCAR requires a VASP project")
+        potcar_remote = str(potcar_remote or "").strip()
+        if len(potcar_remote.encode("utf-8")) > 512:
+            raise ValidationError("potcar_remote path exceeds 512 bytes")
+        prepared = {}
+        for fname, content in files.items():
+            self._file(name, fname, kind=kind)
+            if fname == "POTCAR":
+                raise ValidationError("POTCAR cannot be written as text; provide a source path")
+            data = self._text(content, fname)
+            if content.strip():
+                prepared[fname] = data
+        source = Path(potcar_path).expanduser() if potcar_path else None
+        if source is not None and not source.is_file():
+            raise ValidationError(f"POTCAR source not found: {source}")
+        directory.mkdir(parents=True, exist_ok=False)
+        written, potcar = [], None
+        try:
+            if kind == "general":
+                for child in GENERAL_DIRS:
+                    (directory / child).mkdir()
+            for fname, data in prepared.items():
+                path = self._file(name, fname, kind=kind)
+                atomic_bytes(path, data)
+                written.append({"name": fname, "size": len(data), "sha256": file_sha256(path)})
+            if source is not None:
+                target = self._file(name, "POTCAR", kind=kind)
+                shutil.copyfile(source, target)
+                potcar = {"size": target.stat().st_size, "sha256": file_sha256(target)}
+            index = self._load_index()
+            index[name] = {"kind": kind, "schema": "rsci.project/2", "created_at": _now(),
+                           "pinned": False, "potcar_remote": potcar_remote}
+            self._save_index(index)
+        except BaseException:
+            # Only this call's newly created, validated directory is removed.
+            shutil.rmtree(directory, ignore_errors=True)
+            raise
+        self._record("project.create", outcome="ok", project=name, kind=kind,
+                     files=[w["name"] for w in written])
+        return {"name": name, "kind": kind, "path": str(directory), "files": written, "potcar": potcar}
+
+    @_locked
+    def list(self):
+        if not self.root.is_dir():
+            return []
+        out = []
+        for entry in sorted(self.root.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            meta = self._metadata(entry.name)
+            kind = meta["kind"]
+            if kind == "vasp":
+                present = {name: (self._file(entry.name, name).is_file() and
+                                  self._file(entry.name, name).stat().st_size > 0)
+                           for name in FILE_WHITELIST}
+                missing = [n for n in REQUIRED_INPUTS + ("POTCAR",) if not present[n]]
+            else:
+                tree = self.files(entry.name)
+                present = {row["name"]: True for row in tree}
+                missing = []
+            out.append({"name": entry.name, "kind": kind, "path": str(entry.resolve()),
+                        "pinned": bool(meta.get("pinned")), "created_at": meta.get("created_at", ""),
+                        "potcar_remote": meta.get("potcar_remote", ""),
+                        "mtime": datetime.fromtimestamp(entry.stat().st_mtime, timezone.utc).isoformat(),
+                        "files": present, "missing": missing, "complete": not missing,
+                        "ready_with_remote_potcar": kind == "vasp" and
+                        all(present.get(n) for n in REQUIRED_INPUTS) and
+                        not present.get("POTCAR") and bool(meta.get("potcar_remote"))})
+        return sorted(out, key=lambda row: (not row["pinned"], row["name"].lower()))
+
+    @_locked
+    def files(self, name):
+        directory = self._project_dir(name)
+        kind = self._metadata(name)["kind"]
+        rows = []
+        candidates = [directory / n for n in FILE_WHITELIST] if kind == "vasp" else directory.rglob("*")
+        for path in candidates:
+            if is_link(path):
+                raise ValidationError(f"symlink/junction is not allowed: {path.name}")
+            if not path.is_file():
+                continue
+            relative = path.relative_to(directory).as_posix()
+            if kind == "general":
+                # Files made externally are visible as metadata but not given
+                # broader read/write permissions than the managed interface.
+                try:
+                    self._file(name, relative)
+                except ValidationError:
+                    continue
+            rows.append({"name": relative, "size": path.stat().st_size,
+                         "sha256": file_sha256(path),
+                         "text": (kind == "vasp" and relative != "POTCAR") or
+                         (kind == "general" and path.suffix.lower() in TEXT_SUFFIXES)})
+            if len(rows) > MAX_PROJECT_FILES:
+                raise ValidationError("project exceeds the 2000-file listing limit")
+        return sorted(rows, key=lambda row: row["name"])
+
+    @_locked
+    def pin(self, name, pinned=True):
+        meta = self._metadata(name)
+        index = self._load_index()
         meta["pinned"] = bool(pinned)
         index[name] = meta
         self._save_index(index)
-        return {"name": name, "pinned": meta["pinned"]}
+        return {"name": name, "pinned": bool(pinned)}
 
-    def update(self, name: str, *, new_name: str | None = None,
-               files: dict[str, str] | None = None,
-               potcar_path: str | Path | None = None,
-               potcar_remote: str | None = None,
-               remove_potcar: bool = False) -> dict[str, Any]:
-        """Update project metadata and text inputs, optionally renaming it.
-
-        All values are validated before the directory is renamed. Text files
-        use the same whitelist and size cap as :meth:`write_file`; POTCAR is
-        only ever replaced by a byte-for-byte copy from an explicit path.
-        """
+    @_locked
+    def update(self, name, *, new_name=None, files=None, potcar_path=None,
+               potcar_remote=None, remove_potcar=False):
         source = self._project_dir(name)
-        if not source.is_dir():
-            raise ValidationError(f"project {name!r} not found")
+        meta = self._metadata(name)
         target_name = str(new_name or name).strip()
         target = self._project_dir(target_name)
         if target_name != name and target.exists():
             raise ValidationError(f"project {target_name!r} already exists")
-
-        text_files = {str(k): str(v) for k, v in (files or {}).items()}
-        for fname, content in text_files.items():
-            if fname not in FILE_WHITELIST or fname == "POTCAR":
-                raise ValidationError(
-                    f"file {fname!r} is not an editable project text file")
-            if len(content.encode("utf-8")) > 262144:
-                raise ValidationError(f"{fname} exceeds the 256 KiB text cap")
-        source_potcar = None
-        if potcar_path:
-            source_potcar = Path(potcar_path).expanduser()
-            if not source_potcar.is_file():
-                raise ValidationError(f"POTCAR source not found: {source_potcar}")
-        if potcar_remote is not None and \
-                len(str(potcar_remote).strip().encode("utf-8")) > 512:
+        files = {str(k): str(v) for k, v in (files or {}).items()}
+        for fname, content in files.items():
+            self._file(name, fname)
+            if fname == "POTCAR":
+                raise ValidationError("POTCAR cannot be written as text")
+            self._text(content, fname)
+        if meta["kind"] != "vasp" and (potcar_path or potcar_remote or remove_potcar):
+            raise ValidationError("POTCAR settings require a VASP project")
+        source_potcar = Path(potcar_path).expanduser() if potcar_path else None
+        if source_potcar is not None and not source_potcar.is_file():
+            raise ValidationError(f"POTCAR source not found: {source_potcar}")
+        if potcar_remote is not None and len(str(potcar_remote).encode("utf-8")) > 512:
             raise ValidationError("potcar_remote path exceeds 512 bytes")
-
-        index = self._load_index()
-        meta = index.get(name, {"created_at": _now(), "pinned": False})
         if target_name != name:
             source.rename(target)
+            index = self._load_index()
             index.pop(name, None)
             index[target_name] = meta
             self._save_index(index)
-        else:
-            target = source
+        written = [self.write_file(target_name, k, v) for k, v in files.items()]
+        removed = False
+        if remove_potcar and source_potcar is None:
+            existing = self._file(target_name, "POTCAR")
+            if existing.is_file():
+                existing.unlink()
+                removed = True
+        potcar = self.copy_potcar(target_name, source_potcar) if source_potcar else None
+        if potcar_remote is not None and meta["kind"] == "vasp":
+            self.set_potcar_remote(target_name, potcar_remote)
+        self._record("project.update", outcome="ok", project=target_name, renamed_from=name)
+        return {"name": target_name, "kind": meta["kind"], "previous_name": name,
+                "path": str(target), "files": written, "potcar": potcar, "potcar_removed": removed}
 
-        written = [self.write_file(target_name, fname, content)
-                   for fname, content in text_files.items()]
-        potcar_removed = False
-        existing_potcar = target / "POTCAR"
-        if remove_potcar and source_potcar is None and existing_potcar.is_file():
-            existing_potcar.unlink()
-            potcar_removed = True
-        potcar = self.copy_potcar(target_name, source_potcar) \
-            if source_potcar is not None else None
-        if potcar_remote is not None:
-            self.set_potcar_remote(target_name, str(potcar_remote))
-        self._record("project.update", outcome="ok", project=target_name,
-                     renamed_from=name if target_name != name else "",
-                     files=[row["name"] for row in written],
-                     potcar=bool(potcar))
-        return {"name": target_name, "previous_name": name,
-                "path": str(target), "files": written, "potcar": potcar,
-                "potcar_removed": potcar_removed}
-
-    def set_potcar_remote(self, name: str, path: str) -> dict[str, Any]:
-        """Record where the POTCAR lives on the HPC side (library path).
-
-        Pure metadata: nothing is read or copied until a human-approved /
-        audited remote command assembles it into the run directory.
-        """
-        directory = self._project_dir(name)
-        if not directory.is_dir():
-            raise ValidationError(f"project {name!r} not found")
-        path = str(path or "").strip()
-        if len(path.encode("utf-8")) > 512:
+    @_locked
+    def set_potcar_remote(self, name, path):
+        meta = self._metadata(name)
+        if meta["kind"] != "vasp":
+            raise ValidationError("POTCAR requires a VASP project")
+        value = str(path or "").strip()
+        if len(value.encode("utf-8")) > 512:
             raise ValidationError("path exceeds 512 bytes")
         index = self._load_index()
-        meta = index.get(name, {"created_at": _now()})
-        meta["potcar_remote"] = path
+        meta["potcar_remote"] = value
         index[name] = meta
         self._save_index(index)
-        self._record("project.potcar_remote", outcome="ok",
-                     project=name, remote_path=path)
-        return {"name": name, "potcar_remote": path}
+        self._record("project.potcar_remote", outcome="ok", project=name, remote_path=value)
+        return {"name": name, "potcar_remote": value}
 
-    def delete(self, name: str) -> dict[str, Any]:
+    @_locked
+    def delete(self, name):
         directory = self._project_dir(name)
-        if not directory.is_dir():
-            raise ValidationError(f"project {name!r} not found")
-        trash = self.root / ".trash"
+        self._metadata(name)
+        trash = confined_path(self.root, ".trash")
         trash.mkdir(parents=True, exist_ok=True)
-        target = trash / f"{name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+        target = trash / f"{name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(3)}"
         shutil.move(str(directory), str(target))
         index = self._load_index()
         index.pop(name, None)
         self._save_index(index)
-        self._record("project.delete", outcome="ok", project=name,
-                     moved_to=str(target))
+        self._record("project.delete", outcome="ok", project=name, moved_to=str(target))
         return {"name": name, "moved_to": str(target)}
 
-    # -- file access ------------------------------------------------------------------
-    def read_file(self, name: str, fname: str) -> dict[str, Any]:
-        if fname not in FILE_WHITELIST:
-            raise ValidationError(
-                f"file {fname!r} is not one of {FILE_WHITELIST}")
-        path = self._project_dir(name) / fname
+    @_locked
+    def read_file(self, name, fname):
+        path = self._file(name, fname)
         if not path.is_file():
             raise ValidationError(f"{fname} not found in project {name!r}")
+        result = {"name": fname, "size": path.stat().st_size, "sha256": file_sha256(path)}
         if fname == "POTCAR":
-            # metadata only: content never enters the model, UI or logs
-            meta: dict[str, Any] = {"name": fname, "size": path.stat().st_size,
-                                    "sha256": file_sha256(path)}
             from ..hpc.vasp import potcar_metadata
-            parsed = potcar_metadata(
-                path.read_text(encoding="utf-8", errors="replace"))
-            if parsed:
-                meta.update(parsed)
-            return meta
-        return {"name": fname, "size": path.stat().st_size,
-                "content": path.read_text(encoding="utf-8", errors="replace")}
+            result.update(potcar_metadata(path.read_text(encoding="utf-8", errors="replace")) or {})
+        elif (self._metadata(name)["kind"] == "general" and path.suffix.lower() not in TEXT_SUFFIXES):
+            result["binary"] = True
+        elif path.stat().st_size > MAX_TEXT_BYTES:
+            result.update(too_large=True, note="文件超过文本预览上限，可下载完整文件")
+        else:
+            result["content"] = path.read_text(encoding="utf-8-sig", errors="replace")
+        return result
 
-    def write_file(self, name: str, fname: str, content: str) -> dict[str, Any]:
-        if fname not in FILE_WHITELIST:
-            raise ValidationError(
-                f"file {fname!r} is not one of {FILE_WHITELIST}")
+    @_locked
+    def write_file(self, name, fname, content, *, expected_sha256=None):
+        path = self._file(name, fname)
         if fname == "POTCAR":
-            raise ValidationError(
-                "POTCAR cannot be written as text; supply a source path at "
-                "project creation so it is copied byte-for-byte")
-        directory = self._project_dir(name)
-        if not directory.is_dir():
-            raise ValidationError(f"project {name!r} not found")
-        if len(content.encode("utf-8")) > 262144:
-            raise ValidationError(f"{fname} exceeds the 256 KiB text cap")
-        path = directory / fname
-        path.write_text(str(content), encoding="utf-8", newline="\n")
-        self._record("project.write", outcome="ok", project=name,
-                     file=fname, sha256=text_sha256(content),
-                     size=path.stat().st_size)
-        return {"name": fname, "path": str(path),
-                "size": path.stat().st_size, "sha256": text_sha256(content)}
+            raise ValidationError("POTCAR cannot be written as text; supply a source path")
+        if self._metadata(name)["kind"] == "general" and path.suffix.lower() not in TEXT_SUFFIXES:
+            raise ValidationError("use file import for binary research files")
+        if expected_sha256 == "missing" and path.exists():
+            raise ValidationError("file already exists; open it before editing")
+        if expected_sha256 not in (None, "missing") and (not path.is_file() or file_sha256(path) != expected_sha256):
+            raise ValidationError("file changed since it was opened; reload before saving")
+        data = self._text(content, fname)
+        atomic_bytes(path, data)
+        digest = file_sha256(path)
+        self._record("project.write", outcome="ok", project=name, file=fname, sha256=digest, size=len(data))
+        return {"name": fname, "path": str(path), "size": len(data), "sha256": digest}
 
-    def copy_potcar(self, name: str, potcar_path: str | Path) -> dict[str, Any]:
-        """Attach a POTCAR by byte-copy from a user-supplied local path."""
-        directory = self._project_dir(name)
-        if not directory.is_dir():
-            raise ValidationError(f"project {name!r} not found")
+    @_locked
+    def import_file(self, name, fname, data: bytes, *, expected_sha256=None):
+        if self._metadata(name)["kind"] != "general":
+            raise ValidationError("research import requires a general project")
+        path = self._file(name, fname)
+        if not isinstance(data, bytes) or len(data) > MAX_IMPORT_BYTES:
+            raise ValidationError("import exceeds the 16 MiB file limit")
+        if path.exists() and (not expected_sha256 or not path.is_file() or file_sha256(path) != expected_sha256):
+            raise ValidationError("file already exists; choose a new name or confirm its current hash")
+        if path.suffix.lower() in TEXT_SUFFIXES:
+            try:
+                data.decode("utf-8-sig")
+            except UnicodeDecodeError as exc:
+                raise ValidationError("text imports must be UTF-8; convert the file first") from exc
+            if b"\0" in data:
+                raise ValidationError("text imports cannot contain NUL bytes")
+        atomic_bytes(path, data)
+        digest = file_sha256(path)
+        self._record("project.import", outcome="ok", project=name, file=fname, size=len(data), sha256=digest)
+        return {"name": fname, "size": len(data), "sha256": digest}
+
+    @_locked
+    def copy_potcar(self, name, potcar_path):
+        if self._metadata(name)["kind"] != "vasp":
+            raise ValidationError("POTCAR requires a VASP project")
         source = Path(potcar_path).expanduser()
         if not source.is_file():
             raise ValidationError(f"POTCAR source not found: {source}")
-        shutil.copyfile(source, directory / "POTCAR")
-        target = directory / "POTCAR"
-        self._record("project.write", outcome="ok", project=name,
-                     file="POTCAR", size=target.stat().st_size,
-                     sha256=file_sha256(target))
-        return {"name": "POTCAR", "size": target.stat().st_size,
-                "sha256": file_sha256(target)}
+        target = self._file(name, "POTCAR")
+        # Copy to a private sibling first, never follow an existing target link.
+        temporary = target.with_name(".potcar-" + secrets.token_hex(8))
+        try:
+            shutil.copyfile(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        result = {"name": "POTCAR", "size": target.stat().st_size, "sha256": file_sha256(target)}
+        self._record("project.write", outcome="ok", project=name, **result)
+        return result
 
-    # -- validation -----------------------------------------------------------------
-    def validate(self, name: str) -> dict[str, Any]:
-        directory = self._project_dir(name)
-        if not directory.is_dir():
-            raise ValidationError(f"project {name!r} not found")
-        from ..hpc.vasp import validate_inputs
-        files: dict[str, Any] = {}
-        for fname in FILE_WHITELIST:
-            path = directory / fname
-            if not path.is_file():
-                continue
-            if fname == "POTCAR":
-                files[fname] = path.stat().st_size
-            else:
-                files[fname] = path.read_text(encoding="utf-8",
-                                              errors="replace")
-        result = validate_inputs(files, require_potcar=False)
-        from ..integrations.materials import validate_vasp_directory
-        materials = validate_vasp_directory(directory)
-        result["materials_backend"] = materials
-        if materials.get("enabled") and materials.get("errors"):
-            result.setdefault("errors", []).extend(materials["errors"])
-        metadata = self._load_index().get(name, {})
-        if "POTCAR" not in files:
-            result.setdefault("warnings", []).append(
-                "本地项目没有 POTCAR；单阶段提交必须先补充本地 POTCAR，"
-                "或在远端运行目录预置已组装的 POTCAR 后使用 --skip-potcar")
-        result["ready_for_single_stage"] = bool(
-            result.get("ok") and "POTCAR" in files)
-        result["potcar_remote"] = str(metadata.get("potcar_remote") or "")
+    @_locked
+    def validate(self, name):
+        metadata = self._metadata(name)
+        # Traverse the managed inventory first so validators never follow links.
+        self.files(name)
+        result = domain_for(metadata["kind"]).validate_project(self._project_dir(name), metadata)
         result["project"] = name
         return result

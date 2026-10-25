@@ -19,7 +19,7 @@ FLEET_DASHBOARD_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>远端控制智能体 · 集群作业面板</title>
+  <title>RSCI 科研助手 · 集群作业面板</title>
   <style>
     :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, "Microsoft YaHei", sans-serif;
       --bg:#111715; --card:#18201d; --line:#2b3731; --muted:#9ba8a1; --text:#ecf5ee;
@@ -123,7 +123,7 @@ def resource_definition() -> dict:
     """Return the standards-compliant resource catalog entry."""
     return {
         "uri": FLEET_DASHBOARD_RESOURCE_URI,
-        "name": "远端控制智能体集群作业面板",
+        "name": "RSCI 科研助手集群作业面板",
         "description": "Read-only multi-server scheduler and VASP progress monitor",
         "mimeType": "text/html;profile=mcp-app",
         "_meta": {"ui": {"prefersBorder": True}},
