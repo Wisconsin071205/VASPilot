@@ -22,7 +22,13 @@ def project_store(config, audit=None):
 
 def python_executable(config, requested="") -> Path:
     configured = str(config.load_settings().get("research_python") or "")
-    value = str(requested or configured or ("python" if getattr(sys, "frozen", False) else sys.executable))
+    fallback = "python" if getattr(sys, "frozen", False) else sys.executable
+    if getattr(sys, "frozen", False) and not requested and not configured:
+        from ..research.ocr_runtime import status
+        runtime = status(config)
+        if runtime["ready"]:
+            fallback = runtime["executable"]
+    value = str(requested or configured or fallback)
     found = shutil.which(value) or value
     path = Path(found).expanduser().absolute()
     if not path.is_file():
@@ -82,6 +88,7 @@ def build_python_plan(config, spec: dict) -> dict:
         raise ValidationError("Python timeout must be between 1 and 3600 seconds")
     body = {
         "schema": "rsci.plan/2", "domain": "general", "project": name,
+        "project_id": store._metadata(name)["project_id"],
         "project_root": str(root), "server": "local", "remote_dir": str(root),
         "execution": {"kind": "local_python", "python": str(executable),
                       "python_sha256": file_sha256(executable), "script": script,
