@@ -81,6 +81,10 @@ class ProjectStore:
             self._save_index(index)
             self._record("project.migrate", outcome="ok", project=name, kind="vasp")
         domain_for(meta["kind"])
+        if not meta.get("project_id"):
+            meta["project_id"] = secrets.token_hex(16)
+            index[name] = meta
+            self._save_index(index)
         return meta
 
     @_locked
@@ -147,7 +151,8 @@ class ProjectStore:
                 potcar = {"size": target.stat().st_size, "sha256": file_sha256(target)}
             index = self._load_index()
             index[name] = {"kind": kind, "schema": "rsci.project/2", "created_at": _now(),
-                           "pinned": False, "potcar_remote": potcar_remote}
+                           "pinned": False, "potcar_remote": potcar_remote,
+                           "project_id": secrets.token_hex(16)}
             self._save_index(index)
         except BaseException:
             # Only this call's newly created, validated directory is removed.
@@ -176,7 +181,7 @@ class ProjectStore:
                 tree = self.files(entry.name)
                 present = {row["name"]: True for row in tree}
                 missing = []
-            out.append({"name": entry.name, "kind": kind, "path": str(entry.resolve()),
+            out.append({"name": entry.name, "kind": kind, "project_id": meta["project_id"], "path": str(entry.resolve()),
                         "pinned": bool(meta.get("pinned")), "created_at": meta.get("created_at", ""),
                         "potcar_remote": meta.get("potcar_remote", ""),
                         "mtime": datetime.fromtimestamp(entry.stat().st_mtime, timezone.utc).isoformat(),
@@ -245,6 +250,7 @@ class ProjectStore:
         if potcar_remote is not None and len(str(potcar_remote).encode("utf-8")) > 512:
             raise ValidationError("potcar_remote path exceeds 512 bytes")
         if target_name != name:
+            self._check_research_tasks(meta["project_id"])
             source.rename(target)
             index = self._load_index()
             index.pop(name, None)
@@ -282,7 +288,8 @@ class ProjectStore:
     @_locked
     def delete(self, name):
         directory = self._project_dir(name)
-        self._metadata(name)
+        meta = self._metadata(name)
+        self._check_research_tasks(meta["project_id"])
         trash = confined_path(self.root, ".trash")
         trash.mkdir(parents=True, exist_ok=True)
         target = trash / f"{name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(3)}"
@@ -292,6 +299,13 @@ class ProjectStore:
         self._save_index(index)
         self._record("project.delete", outcome="ok", project=name, moved_to=str(target))
         return {"name": name, "moved_to": str(target)}
+
+    def _check_research_tasks(self, project_id):
+        from ..research.common import read
+        for path in (self.index_path.parent / "research-tasks").glob("*.json"):
+            state = read(path)
+            if state.get("project_id") == project_id and state.get("status") not in {"completed", "cancelled", "failed"}:
+                raise ValidationError("项目仍有科研任务，请先完成或取消任务后再重命名、删除。")
 
     @_locked
     def read_file(self, name, fname):

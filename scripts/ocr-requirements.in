@@ -1,0 +1,7 @@
+docling[rapidocr]==2.142.1
+rapidocr==3.10.0
+onnxruntime==1.31.0
+pypdf==6.21.2
+scipy==1.15.3
+torch==2.8.0+cpu ; sys_platform != 'darwin'
+torchvision==0.23.0+cpu ; sys_platform != 'darwin'

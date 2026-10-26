@@ -273,6 +273,9 @@ class UiHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == f"/t/{self.state.token}/research.js":
+            self._send(200, (STATIC_DIR / "research.js").read_bytes(), "text/javascript; charset=utf-8")
+            return
         if path == f"/t/{self.state.token}/download":
             query = parse_qs(parsed.query)
             self._download_remote(
@@ -286,6 +289,7 @@ class UiHandler(BaseHTTPRequestHandler):
                            "text/html; charset=utf-8")
                 return
             page = (STATIC_DIR / "index.html").read_bytes()
+            page = page.replace(b"</body>", f'<script src="/t/{self.state.token}/research.js"></script></body>'.encode())
             self._send(200, page, "text/html; charset=utf-8")
             return
         if path == "/" or path == "/index.html":
@@ -311,6 +315,22 @@ class UiHandler(BaseHTTPRequestHandler):
         self._send(404, _json_bytes({"ok": False, "error": {
             "code": "not_found", "message": path}}),
             "application/json; charset=utf-8")
+
+    def _import_document_stream(self, parsed):
+        from ..research.documents import import_stream
+        previous = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(60)
+            query = parse_qs(parsed.query)
+            length = int(self.headers.get("Content-Length", "0"))
+            result = import_stream(self.state.app.config, (query.get("project") or [""])[0],
+                self.rfile, length, (query.get("title") or [""])[0])
+            self._send_json({"ok": True, **result})
+        except Exception as exc:
+            self.close_connection = True
+            self._send_json({"ok": False, "error": {"code": "document_import", "message": str(exc)[:300]}}, status=400)
+        finally:
+            self.connection.settimeout(previous)
 
     def _download_remote(self, server: str, remote_path: str) -> None:
         """Explicit browser download through the existing structured client.
@@ -372,6 +392,9 @@ class UiHandler(BaseHTTPRequestHandler):
                 "code": "unauthorized", "message": "missing or wrong token"}},
                 status=403)
             return
+        if parsed.path == "/api/document/import":
+            self._import_document_stream(parsed)
+            return
         try:
             body = self._read_json()
         except RequestTooLargeError as exc:
@@ -389,6 +412,19 @@ class UiHandler(BaseHTTPRequestHandler):
         state = self.state
         app = state.app
         try:
+            if action.startswith(("document.", "literature.", "research.", "research_task.", "report.", "ocr.")):
+                if action == "document.page":
+                    from ..research.documents import render_page
+                    path = render_page(app.config, str(body.get("project", "")), str(body.get("document_id", "")), body.get("page", 1))
+                    self._send(200, path.read_bytes(), "image/png")
+                elif action == "report.export":
+                    from ..research.reports import export_path
+                    path = export_path(app.config, str(body.get("project", "")), str(body.get("report_id", "")), str(body.get("format", "zip")))
+                    self._send_file(path, path.name)
+                else:
+                    from ..research.api import dispatch
+                    self._send_json({"ok": True, **dispatch(app, action, body)})
+                return
             client = app.client()
             engine = app.engine()
             if action == "state":
@@ -2229,6 +2265,8 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
     httpd = _bind_with_fallback(BoundHandler, host, port)
     from ..workflow.worker import recover
     state.workflow_recovery = recover(app.engine())
+    from ..research.tasks import recover as recover_research
+    recover_research(app.config)
     state.start_campaign_ticker()
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
