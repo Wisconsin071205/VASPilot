@@ -200,6 +200,10 @@ class BaseProvider:
              *, stream_cb: Callable[[str], None] | None = None) -> ProviderReply:
         return self._chat(messages, tools, stream_cb=stream_cb)
 
+    def text_once(self, messages: list[dict]) -> ProviderReply:
+        """One tool-free request, without transport retries or stream fallback."""
+        raise ProviderError("该提供方不支持单次纯文本请求")
+
     def _chat(self, messages: list[dict], tools: list[dict],
               *, stream_cb: Callable[[str], None] | None) -> ProviderReply:
         raise NotImplementedError  # pragma: no cover - abstract

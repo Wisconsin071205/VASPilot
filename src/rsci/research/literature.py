@@ -103,7 +103,10 @@ def validate_answer(kind, answer, selected, documents):
             raise ValidationError("比较表引用属于另一篇论文")
         used.update(cites)
         return {"text": value["text"], "citations": cites}
-    result = {"limitations": [str(x)[:1000] for x in answer.get("limitations", [])[:20]]}
+    limitations = answer.get("limitations", [])
+    if not isinstance(limitations, list):
+        raise ValidationError("模型局限性字段格式无效")
+    result = {"limitations": [claim(x) if isinstance(x, dict) else str(x)[:1000] for x in limitations[:20]]}
     if kind == "ask":
         values = answer.get("claims")
         if not isinstance(values, list) or not 1 <= len(values) <= 40:
@@ -146,7 +149,10 @@ def generate(config, name, kind, params, task_id=None):
               "仅输出 JSON，格式：" + FORMATS[kind])
     messages = [{"role": "system", "content": prompt}, {"role": "user", "content": json.dumps({
         "question": params["question"], "documents": params["documents"], "evidence": selected}, ensure_ascii=False)}]
-    reply = provider.chat(messages, tools=[])
+    try:
+        reply = provider.text_once(messages)
+    except Exception as exc:
+        raise ValidationError("文献请求未完成，未自动重发；请手动重试。" + str(exc).replace("已重试仍", "")[:300]) from exc
     if reply.tool_calls or reply.finish != "stop" or len(reply.text) > 200000:
         raise ValidationError("模型响应不完整或要求执行工具，未保存结果")
     text = reply.text.strip()
@@ -161,6 +167,7 @@ def generate(config, name, kind, params, task_id=None):
     record = {"schema": "rsci.literature-note/1", "note_id": note_id, "kind": kind, "project_id": project(config, name)[2],
               "created_at": stamp(), "question": params["question"], "content": content, "citations": citations,
               "documents": params["documents"], "disclosure": disclosure, "manual_edits": [],
+              "verification_checks": {"doi_metadata": "not_checked", "source_evidence": "matched", "scientific_conclusion": "not_assessed"},
               "verification": "引用标识和原文片段已核对；不代表科学结论正确。"}
     target = location(config, name, f"notes/literature-{note_id}.json")
     save(target, record)
@@ -173,7 +180,14 @@ def note_get(config, name, note_id):
     if row.get("project_id") != project(config, name)[2]:
         raise ValidationError("笔记不属于当前项目")
     row["sha256"] = file_sha256(target)
-    row["stale"] = any(get(config, name, d["document_id"]).get("revision") != d["revision"] for d in row["documents"])
+    row["stale"] = False
+    for document in row["documents"]:
+        try:
+            current = get(config, name, document["document_id"])
+            row["stale"] |= current.get("revision") != document["revision"]
+        except (ValidationError, OSError):
+            # Keep the saved answer readable even when its original disappeared.
+            row["stale"] = True
     return row
 
 

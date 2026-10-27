@@ -192,8 +192,12 @@ class OpenAIChatCompatibleProvider(BaseProvider):
         reply.raw_events = events
         return reply
 
-    def _chat_blocking(self, payload: dict) -> ProviderReply:
-        response = self._request(payload)
+    def text_once(self, messages: list[dict]) -> ProviderReply:
+        return self._chat_blocking({"model": self.entry.model, "messages": messages,
+                                    "temperature": 0, "stream": False}, retries=0)
+
+    def _chat_blocking(self, payload: dict, *, retries: int = 3) -> ProviderReply:
+        response = self._request(payload, retries=retries)
         with self.track_response(response) as response:
             self.raise_if_cancelled()
             try:

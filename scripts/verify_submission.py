@@ -213,8 +213,8 @@ def main(archive=None):
     venv = work / 'venv'
     subprocess.run([sys.executable, '-m', 'venv', str(venv)], check=True)
     python = venv / 'Scripts/python.exe'
-    subprocess.run([str(python), '-m', 'pip', 'install', '--no-index', '--no-deps',
-                    str(next((bundle / 'python-package').glob('*.whl')))], check=True)
+    subprocess.run([str(python), '-m', 'pip', 'install', '--no-index', '--find-links', str(bundle / 'python-package'),
+                    str(next((bundle / 'python-package').glob('rsci-*.whl')))], check=True)
     report['installed_wheel'] = smoke([str(python), '-m', 'rsci'], work, work / 'wheel-home',
                                     expected_version=version)
     text = json.dumps(report, ensure_ascii=False, indent=2)

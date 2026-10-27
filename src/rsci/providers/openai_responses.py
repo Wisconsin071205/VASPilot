@@ -180,9 +180,12 @@ class OpenAIResponsesProvider(BaseProvider):
             return self._chat_blocking(payload)
         return reply
 
-    def _chat_blocking(self, payload: dict) -> ProviderReply:
+    def text_once(self, messages: list[dict]) -> ProviderReply:
+        return self._chat_blocking({"model": self.entry.model, "input": messages, "store": False}, retries=0)
+
+    def _chat_blocking(self, payload: dict, *, retries: int = 3) -> ProviderReply:
         response = self._post({k: v for k, v in payload.items()
-                               if k != "stream"})
+                               if k != "stream"}, retries=retries)
         with self.track_response(response) as response:
             self.raise_if_cancelled()
             try:
