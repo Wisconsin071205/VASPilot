@@ -29,6 +29,82 @@ def register(sub) -> None:
     p.add_argument("directory")
     p = command("diagnose", cmd_diagnose)
     p.add_argument("directory")
+    command("fleet", cmd_fleet)
+    for name, handler in (("details", cmd_details), ("analyze", cmd_analyze)):
+        p = command(name, handler)
+        p.add_argument("job_id")
+    p = command("associate", cmd_associate)
+    p.add_argument("job_id")
+    p.add_argument("project")
+    p = command("logs", cmd_logs)
+    p.add_argument("job_id")
+    p.add_argument("path")
+    p = command("collect", cmd_collect)
+    p.add_argument("job_id")
+    p.add_argument("paths", nargs="+")
+    command("collections", cmd_collections)
+    for name, handler in (("resume-collection", cmd_resume_collection),
+                          ("stop-collection", cmd_stop_collection), ("_collect", cmd_worker)):
+        p = command(name, handler)
+        p.add_argument("task_id")
+
+
+def _center(app):
+    from ..hpc.center import RemoteCenter
+    return RemoteCenter(app.config, app.client(), app.audit)
+
+
+def _queue(app):
+    from ..hpc.collections import Collections
+    return Collections(app.config, app.client(), app.audit)
+
+
+def _server(app, args):
+    return args.server or app.config.default_server()
+
+
+def cmd_fleet(app, args):
+    return _center(app).overview(args.server or "")
+
+
+def cmd_details(app, args):
+    return _center(app).details(_server(app, args), args.job_id)
+
+
+def cmd_analyze(app, args):
+    return _center(app).diagnose(_server(app, args), args.job_id)
+
+
+def cmd_associate(app, args):
+    return _center(app).associate(_server(app, args), args.job_id, args.project)
+
+
+def cmd_logs(app, args):
+    return _center(app).text(_server(app, args), args.job_id, args.path)
+
+
+def cmd_collect(app, args):
+    from ..hpc.collections import launch
+    queue = _queue(app)
+    state = queue.enqueue(_server(app, args), args.job_id, args.paths)
+    return launch(queue, state["task_id"])
+
+
+def cmd_collections(app, args):
+    return _queue(app).list()
+
+
+def cmd_resume_collection(app, args):
+    return _queue(app).resume(args.task_id)
+
+
+def cmd_stop_collection(app, args):
+    return _queue(app).cancel(args.task_id)
+
+
+def cmd_worker(app, args):
+    _queue(app).execute(args.task_id)
+    return {"ok": True, "task_id": args.task_id}
 
 
 def cmd_list(app, args):

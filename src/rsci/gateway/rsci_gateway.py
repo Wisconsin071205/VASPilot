@@ -53,7 +53,7 @@ from pathlib import Path, PurePosixPath
 # Keep in step with rsci.__version__ (this file is standalone by design
 # and may not import the package). PROTOCOL_VERSION is the real compatibility
 # contract; this string lets `server doctor` spot a stale deployed gateway.
-GATEWAY_VERSION = "1.5.1"
+GATEWAY_VERSION = "1.5.3"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -91,11 +91,13 @@ def out(payload: dict) -> int:
     return 0
 
 
-def fail(code: str, message: str, **fields: str) -> int:
+def fail(code: str, message: str, **fields) -> int:
     error = {"code": code, "message": message[:500]}
     for key in ("expected", "got"):
         if key in fields:
             error[key] = str(fields[key])
+    if isinstance(fields.get("submission"), dict):
+        error["submission"] = fields["submission"]
     return out({"ok": False, "error": error})
 
 
@@ -584,10 +586,11 @@ def credential_askpass(password: str, totp: str):
 
 
 class GatewayError(Exception):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, detail: dict | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.detail = detail or {}
 
 
 def remote(name: str, command: str, *, timeout: int = 180) -> str:
@@ -603,7 +606,10 @@ def remote(name: str, command: str, *, timeout: int = 180) -> str:
                                "refusing to continue (never auto-accept)")
         raise GatewayError("remote_command_failed",
                            f"remote command failed (rc={result.returncode}): "
-                           f"{stderr[:300]}")
+                           f"{stderr[:300]}", detail={"remote_result": {
+                               "returncode": result.returncode,
+                               "stderr": stderr[:2000],
+                               "stdout": (result.stdout or "")[:2000]}})
     return result.stdout or ""
 
 
@@ -1476,24 +1482,99 @@ def op_recent(args) -> int:
     return 0
 
 
-def op_submit(args) -> int:
+def submission_target(args) -> tuple:
     name, entry = resolve_server(args.server)
     directory = validated_remote_path(args.directory, entry, name)
     resolved = require_resolved_within_root(name, directory, entry)
     if not SAFE_JOB_SCRIPT.fullmatch(args.script or "") or args.script in (".", ".."):
-        return fail("invalid_script", "job script must be a simple filename")
+        raise GatewayError("invalid_script", "job script must be a simple filename")
     scheduler = scheduler_for(name, entry)
     if scheduler == "pbs":
-        command = f"cd -- {q(resolved)} && qsub -- {q(args.script)}"
+        # Torque 6.1's script scanner treats `--` as an option with an
+        # argument and skips the script. A ./ prefix safely names the file
+        # without relying on that unsupported end-of-options spelling.
+        command = f"cd -- {q(resolved)} && qsub {q('./' + args.script)}"
     else:
         command = f"cd -- {q(resolved)} && sbatch --parsable -- {q(args.script)}"
-    raw = remote(name, command).strip()
+    return name, resolved, scheduler, command
+
+
+def op_submit_inspect(args) -> int:
+    """Inspect the same command builder used by submit; never invoke it."""
+    name, resolved, scheduler, command = submission_target(args)
+    observed = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    result = {"server": name, "directory": resolved, "script": args.script,
+              "gateway_version": GATEWAY_VERSION, "scheduler": scheduler,
+              "observed_at": observed, "command": command,
+              "kind": "current_path_inspection", "submission_performed": False}
+    probes = {"scheduler_version": ("qsub --version 2>&1" if scheduler == "pbs"
+                                    else "sbatch --version 2>&1"),
+              "scheduler_executable": "command -v " + ("qsub" if scheduler == "pbs" else "sbatch")}
+    if scheduler == "pbs":
+        probes["directive_prefix"] = 'printf "%s" "${PBS_DPREFIX-#PBS}"'
+    probes["script_header"] = f"head -c 65536 -- {q(resolved + '/' + args.script)}"
+    if args.script.upper() in TEXT_DENYLIST:
+        raise GatewayError("protected_file", "protected scientific files are not job scripts")
+    if scheduler == "pbs":
+        probes.update(queue_list="qstat -Q", server_properties="qstat -Bf")
+    else:
+        probes["queue_list"] = "sinfo -h -o '%P|%a|%l'"
+    for key, probe in probes.items():
+        try:
+            raw = remote(name, probe, timeout=15)
+            if key == "script_header":
+                directives = []
+                lines = raw.splitlines()
+                complete = False
+                prefixes = tuple(prefix for prefix in (
+                    "#PBS", "#SBATCH", result.get("directive_prefix")) if prefix)
+                for line in lines[:80]:
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#") and stripped != ":":
+                        complete = True
+                        break
+                    if stripped.startswith(prefixes):
+                        directives.append(stripped[:500])
+                result["script_directives"] = directives[:40]
+                result["script_directives_complete"] = complete and len(directives) <= 40
+            elif key == "server_properties":
+                match = re.search(r"^\s*default_queue\s*=\s*(\S+)", raw, re.M)
+                result["default_queue"] = match.group(1) if match else ""
+            else:
+                result[key] = raw[:4000]
+                if key == "queue_list":
+                    result[key + "_truncated"] = len(raw) > 4000
+        except (GatewayError, subprocess.TimeoutExpired) as exc:
+            result[key + "_error"] = str(exc)[:500]
+    out(result)
+    audit("submit-inspect", "ok", f"{resolved}/{args.script}", name)
+    return 0
+
+
+def op_submit(args) -> int:
+    name, resolved, scheduler, command = submission_target(args)
+    execution = {"command": command, "scheduler": scheduler,
+                 "gateway_version": GATEWAY_VERSION, "stage": "scheduler_submit",
+                 "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    try:
+        raw = remote(name, command).strip()
+    except GatewayError as exc:
+        execution.update(exc.detail.get("remote_result", {}))
+        execution["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        raise GatewayError(exc.code, exc.message, detail={"submission": execution}) from exc
+    except subprocess.TimeoutExpired as exc:
+        execution["finished_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        raise GatewayError("timeout", "submission response timed out; acceptance is unknown",
+                           detail={"submission": execution}) from exc
+    execution.update(returncode=0, stdout=raw[:2000],
+                     finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
     match = re.search(r"(\d{1,19})", raw)
     if not match:
-        return fail("submit_no_job_id", f"scheduler produced no job id: {raw[:200]}")
+        return fail("submit_no_job_id", f"scheduler produced no job id: {raw[:200]}",
+                    submission=execution)
     out({"job_id": match.group(1), "scheduler": scheduler, "directory": resolved,
          "script": args.script, "raw": raw[:200],
-         "approval_ref": (args.approval_ref or "")[:120]})
+         "approval_ref": (args.approval_ref or "")[:120], "submission": execution})
     audit("submit", "ok", f"{resolved}/{args.script} job={match.group(1)}", name)
     return 0
 
@@ -1559,7 +1640,7 @@ def op_job_state(args) -> int:
             name,
             f"out=$(squeue -h -j {q(args.job_id)} -o '%i|%T' 2>/dev/null); "
             f"if [ -n \"$out\" ]; then echo \"$out\"; "
-            f"else sacct -j {q(args.job_id)} -n -X -o JobID%40,State 2>/dev/null; fi")
+            f"else sacct -j {q(args.job_id)} -n -P -X -o JobID%40,State 2>/dev/null; fi")
         state = "UNKNOWN"
         for line in raw.splitlines():
             fields = [f.strip() for f in line.split("|")]
@@ -2395,7 +2476,7 @@ def op_whoami(args) -> int:
 
 def op_version(args) -> int:
     out({"gateway_version": GATEWAY_VERSION, "protocol": PROTOCOL_VERSION,
-         "python": sys.version.split()[0]})
+         "python": sys.version.split()[0], "submission_inspection": True})
     return 0
 
 
@@ -2507,6 +2588,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("directory")
     p.add_argument("script")
     p.add_argument("--approval-ref", dest="approval_ref", default="")
+    p = add("submit-inspect", op_submit_inspect)
+    p.add_argument("directory")
+    p.add_argument("script")
     p = add("cancel", op_cancel)
     p.add_argument("job_id")
     p.add_argument("--confirm-job-id", dest="confirm_job_id", required=True)
@@ -2549,7 +2633,7 @@ def main() -> int:
     try:
         return args.func(args)
     except GatewayError as exc:
-        return fail(exc.code, exc.message)
+        return fail(exc.code, exc.message, **exc.detail)
     except ValueError as exc:
         return fail("invalid_argument", str(exc))
     except subprocess.TimeoutExpired:

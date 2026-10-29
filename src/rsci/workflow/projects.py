@@ -302,6 +302,10 @@ class ProjectStore:
 
     def _check_research_tasks(self, project_id):
         from ..research.common import read
+        for path in (self.index_path.parent / "remote-collections").glob("*.json"):
+            state = read(path)
+            if state.get("project_id") == project_id and state.get("status") not in {"completed", "cancelled"}:
+                raise ValidationError("项目仍有结果回收任务，请完成或停止回收后再重命名、删除。")
         for path in (self.index_path.parent / "research-tasks").glob("*.json"):
             state = read(path)
             if state.get("project_id") == project_id and state.get("status") not in {"completed", "cancelled", "failed"}:
@@ -312,7 +316,8 @@ class ProjectStore:
         path = self._file(name, fname)
         if not path.is_file():
             raise ValidationError(f"{fname} not found in project {name!r}")
-        result = {"name": fname, "size": path.stat().st_size, "sha256": file_sha256(path)}
+        result = {"name": fname, "path": str(path.resolve()),
+                  "size": path.stat().st_size, "sha256": file_sha256(path)}
         if fname == "POTCAR":
             from ..hpc.vasp import potcar_metadata
             result.update(potcar_metadata(path.read_text(encoding="utf-8", errors="replace")) or {})

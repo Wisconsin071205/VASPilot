@@ -165,6 +165,15 @@ class TestOpenConnectTerminal:
         assert len(calls) == 5  # probe, prepare, copy, install, operation
         assert any(cmd[0] == "scp" for cmd in calls)
 
+    @pytest.mark.parametrize("version, compatible", [("0.1.0", False), ("0.1.1", True), ("broken", False)])
+    def test_workspace_gateway_requires_current_catalog_version(self, version, compatible):
+        def run(cmd, **kwargs):
+            if "test -x" in cmd[-1]:
+                return 0, "", ""
+            return 0, json.dumps({"ok": True, "version": version}), ""
+        transport = SshTransport(host="vlab.invalid", user="test", runner=run)
+        assert transport._probe_workspace_gateway() is compatible
+
     def test_base_commands_carry_keepalives(self, transport):
         """Every outer ssh op sends heartbeats so idle NAT paths survive."""
         for cmd in (transport._base(), transport._base(batch=False, tty=True)):

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 TERMINAL_STATES = {"COMPLETED", "FAILED", "TIMEOUT", "CANCELLED",
-                   "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"}
+                   "CANCELED", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED", "BOOT_FAIL", "DEADLINE"}
 MAX_ENTRIES = 200
 KEEP_DAYS = 30
 
@@ -122,10 +122,7 @@ class JobLedger:
                 infer_missing: bool = False) -> list[dict[str, Any]]:
         """Fold freshly observed scheduler rows into the ledger.
 
-        ``infer_missing=True`` marks previously-tracked non-terminal jobs
-        that have vanished from the scheduler as COMPLETED at first
-        absence (PBS keeps finished jobs only briefly — when even the
-        finished listing no longer knows a job, it is finished).
+        Missing queue/history records mean UNKNOWN, never completion.
         """
         if not server:
             return []
@@ -146,6 +143,8 @@ class JobLedger:
                         and not _is_terminal(state)):
                     entry.pop("completed_at", None)
                 entry.pop("assumed_end", None)
+                entry.pop("last_known_state", None)
+                entry.pop("completion_source", None)
                 elapsed = "" if state.upper() == "PENDING" else \
                     str(row.get("elapsed") or "")
                 workdir = _absolute_workdir(
@@ -181,12 +180,13 @@ class JobLedger:
                 for job_id, entry in jobs.items():
                     if job_id in known or _is_terminal(str(entry.get("state"))):
                         continue
-                    entry["state"] = "COMPLETED"
-                    entry["assumed_end"] = True
+                    if entry.get("state") == "UNKNOWN":
+                        continue
+                    entry["last_known_state"] = entry.get("state")
+                    entry["state"] = "UNKNOWN"
+                    entry.pop("completed_at", None)
                     entry.setdefault("state_history", []).append(
-                        {"state": "COMPLETED", "assumed": True, "at": now})
-                    if not entry.get("completed_at"):
-                        entry["completed_at"] = now
+                        {"state": "UNKNOWN", "reason": "queue_missing", "at": now})
             # cap + prune old terminal entries
             horizon = datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)
             for job_id in list(jobs):
@@ -344,7 +344,8 @@ class JobLedger:
             "job_id": entry.get("job_id"),
             "name": entry.get("name"),
             "partition": entry.get("partition"),
-            "state": entry.get("state"),
+            "state": "UNKNOWN" if entry.get("assumed_end") or entry.get("completion_source") == "files" else entry.get("state"),
+            "last_known_state": entry.get("last_known_state"),
             "elapsed": entry.get("elapsed"),
             "directory": workdir,
             "workdir": workdir,

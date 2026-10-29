@@ -74,6 +74,9 @@ class DiskTransport:
     def run_gateway(self, args, **kwargs):
         op = args[0]
         self.hpc.gate("before", op)
+        if op == "download":
+            source = FakeTransport._positionals(args)[0]
+            self.hpc.gate("before", "download-" + Path(source).name)
         def run(data):
             if data.get("auth_required"):
                 raise AuthRequiredError("test session expired")

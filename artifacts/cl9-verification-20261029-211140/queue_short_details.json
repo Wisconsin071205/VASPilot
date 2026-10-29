@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": "Queue: short\n    queue_type = Execution\n    max_queuable = 30\n    max_user_queuable = 6\n    total_jobs = 5\n    state_count = Transit:0 Queued:2 Held:2 Waiting:0 Running:1 Exiting:0 Comp\n\tlete:0 \n    max_running = 20\n    acl_user_enable = False\n    resources_max.nodect = 5\n    resources_max.walltime = 06:00:00\n    resources_min.ncpus = 1\n    resources_min.nodect = 1\n    resources_default.walltime = 06:00:00\n    mtime = 1762957310\n    resources_assigned.nodect = 1\n    resources_assigned.mem = 25769803776b\n    max_user_run = 4\n    keep_completed = 0\n    enabled = True\n    started = True\n    ghost_queue = False\n\n",
+  "stderr": "",
+  "truncated": false,
+  "command": "qstat -Qf short"
+}

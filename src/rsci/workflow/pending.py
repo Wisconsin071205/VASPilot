@@ -59,15 +59,53 @@ class PendingSubmitStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
-    def _load(self) -> dict[str, dict[str, Any]]:
+    def _load(self, *, strict: bool = False) -> dict[str, dict[str, Any]]:
         try:
             with open(self.path, "r", encoding="utf-8-sig") as handle:
                 data = json.load(handle)
         except FileNotFoundError:
             return {}
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            if strict:
+                raise ValidationError("submission records are unreadable; their state is unknown") from exc
             return {}
+        if strict and (not isinstance(data, dict) or
+                       any(not isinstance(entry, dict) for entry in data.values())):
+            raise ValidationError("submission records are invalid; their state is unknown")
         return data if isinstance(data, dict) else {}
+
+    def inspect(self, *, entry_id: str = "", session_id: str = "",
+                server: str = "", directory: str = "", script: str = "",
+                limit: int = 10) -> list[dict[str, Any]]:
+        """Read bounded evidence, including final states, without changing it.
+
+        Atomic store writes make a read consistent without creating a lock or
+        expiring cards on disk. Script bodies and arbitrary result payloads are
+        deliberately omitted from the model-facing evidence.
+        """
+        if entry_id and not ID_RE.fullmatch(entry_id):
+            raise ValidationError("invalid pending-submit id")
+        entries = self._load(strict=True)
+        rows = [entry for entry in entries.values()
+                if (not entry_id or entry.get("id") == entry_id)
+                and (not session_id or entry.get("session_id") == session_id)
+                and (not server or entry.get("server") == server)
+                and (not directory or str(entry.get("directory", "")).rstrip("/")
+                     == directory.rstrip("/"))
+                and (not script or entry.get("script") == script)]
+        if entry_id and not rows:
+            raise ValidationError("submission record not found in the requested scope")
+
+        def updated_at(entry: dict) -> float:
+            stamp = (entry.get("settled_at") or entry.get("submission_started_at")
+                     or entry.get("created_at") or "")
+            try:
+                return datetime.fromisoformat(str(stamp)).timestamp()
+            except (ValueError, TypeError):
+                return 0.0
+
+        rows.sort(key=updated_at, reverse=True)
+        return [submission_evidence(entry) for entry in rows[:max(1, min(limit, 20))]]
 
     def _save(self, entries: dict[str, dict[str, Any]]) -> None:
         if len(entries) > MAX_ENTRIES:  # drop the oldest finalised entries
@@ -93,6 +131,21 @@ class PendingSubmitStore:
                 changed = True
         if changed:
             self._save(entries)
+
+    def accepted_submissions(self, identity: dict) -> list[dict]:
+        """Read accepted jobs for an exact recorded connection identity.
+
+        Legacy cards need explicit reconciliation: a server name alone cannot
+        identify the original account after connection settings change.
+        """
+        return [{**entry["result"], "script": entry.get("script", ""),
+                 "submission_id": entry.get("id", ""),
+                 "submitted_at": entry.get("submission_started_at")}
+                for entry in self._load(strict=True).values()
+                if entry.get("status") == "approved"
+                and isinstance(entry.get("result"), dict)
+                and entry["result"].get("job_id")
+                and entry["result"].get("server_identity") == identity]
 
     @_locked
     def create(self, *, server: str, directory: str, script: str,
@@ -196,7 +249,8 @@ class PendingSubmitStore:
 
     @_locked
     def finish_submission(self, entry_id: str, *, result: dict | None = None,
-                          error: str | None = None) -> dict[str, Any]:
+                          error: str | None = None,
+                          execution: dict | None = None) -> dict[str, Any]:
         entries = self._load()
         entry = entries.get(entry_id)
         if entry is None or entry.get("status") != "submitting":
@@ -207,6 +261,9 @@ class PendingSubmitStore:
             entry["error"] = str(error)[:2000]
         if result is not None:
             entry["result"] = result
+        details = execution if execution is not None else (result or {}).get("submission")
+        if isinstance(details, dict):
+            entry["execution"] = execution_evidence(details)
         self._save(entries)
         return entry
 
@@ -251,3 +308,46 @@ class PendingSubmitStore:
             out = [e for e in out if e.get("session_id") == session_id]
         out.sort(key=lambda e: str(e.get("created_at", "")), reverse=True)
         return out[:max(1, min(int(limit), 50))]
+
+
+def submission_evidence(entry: dict[str, Any]) -> dict[str, Any]:
+    """Separate human approval, a submit attempt, and scheduler acceptance."""
+    row = {key: entry[key] for key in (
+        "id", "server", "directory", "script", "status", "created_at",
+        "expires_at", "submission_started_at", "settled_at") if key in entry}
+    status = str(row.get("status") or "unknown")
+    if status == "pending":
+        try:
+            if datetime.fromisoformat(str(entry.get("expires_at"))) <= _utcnow():
+                status = "expired"
+        except (ValueError, TypeError):
+            status = "unknown"
+    row["status"] = status
+    attempted = bool(entry.get("submission_started_at")) or status in {
+        "submitting", "uncertain", "approved"}
+    result = entry.get("result")
+    job_id = str(result.get("job_id") or "") if isinstance(result, dict) else ""
+    row.update(
+        approval_received=attempted,
+        submission_attempted=attempted,
+        awaiting_approval=status == "pending",
+        scheduler_accepted=True if job_id else None,
+        job_id=job_id,
+        requires_remote_reconciliation=status in {"submitting", "uncertain"},
+    )
+    if entry.get("error"):
+        row["error"] = str(entry["error"])[:2000]
+    if isinstance(entry.get("execution"), dict):
+        row["execution"] = execution_evidence(entry["execution"])
+    return row
+
+
+def execution_evidence(details: dict) -> dict:
+    """Keep bounded execution facts, never arbitrary gateway result bodies."""
+    row = {key: str(details[key])[:2000] for key in (
+        "command", "scheduler", "gateway_version", "scheduler_version",
+        "stage", "started_at", "finished_at", "stdout", "stderr")
+        if details.get(key) is not None}
+    if isinstance(details.get("returncode"), int):
+        row["returncode"] = details["returncode"]
+    return row

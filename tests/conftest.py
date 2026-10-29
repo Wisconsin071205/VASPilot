@@ -126,7 +126,7 @@ class FakeTransport:
         self.credential_connects: list[dict] = []
 
     # -- transport surface ----------------------------------------------------
-    def run_gateway(self, args, *, timeout=180, tty=False, capture=True):
+    def run_gateway(self, args, *, timeout=180, tty=False, capture=True, prepare=True):
         self.calls.append(list(args))
         op = args[0]
         handler = getattr(self, "op_" + op.replace("-", "_"), None)

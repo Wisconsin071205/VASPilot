@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "server": "cl9",
+  "rc": 1,
+  "stdout": "",
+  "stderr": "",
+  "truncated": false,
+  "command": "printenv PBS_DPREFIX PBS_DEFAULT PBS_SERVER"
+}

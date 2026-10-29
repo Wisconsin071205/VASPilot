@@ -28,13 +28,13 @@ import socket
 import tempfile
 import threading
 import webbrowser
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as _ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse, parse_qs, quote
 
 from .. import __version__
-from ..core.errors import rsciError
+from ..core.errors import RemoteError, rsciError
 from ..workflow.plan import plan_files_hash
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -46,6 +46,17 @@ MAX_CHAT_ATTACHMENTS = 5
 MAX_CHAT_ATTACHMENT_BYTES = 512 * 1024
 MAX_CHAT_ATTACHMENTS_TOTAL = 2 * 1024 * 1024
 _PATH_PICKER_LOCK = threading.Lock()
+
+
+class ThreadingHTTPServer(_ThreadingHTTPServer):
+    # Windows SO_REUSEADDR permits multiple live listeners on the same port.
+    # A new window can then talk to the old backend despite a successful bind.
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 class RequestTooLargeError(ValueError):
@@ -85,6 +96,8 @@ class UiState:
     """Shared per-server state: app wiring, token, background runs."""
 
     def __init__(self, app) -> None:
+        from ..core.runtime import source_fingerprint
+        self.source_fingerprint = source_fingerprint()
         self.app = app
         self.token = secrets.token_urlsafe(24)
         self.lock = threading.Lock()
@@ -211,13 +224,18 @@ class UiHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------- helpers
     def _send(self, status: int, body: bytes, content_type: str) -> None:
-        self.send_response(status)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # The page closed or cancelled a request. Do not attempt a second
+            # JSON response on the same dead socket (WinError 10053/10054).
+            self.close_connection = True
 
     def _send_json(self, payload: dict, status: int = 200) -> None:
         if status == 200:
@@ -273,8 +291,8 @@ class UiHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
-        if path == f"/t/{self.state.token}/research.js":
-            self._send(200, (STATIC_DIR / "research.js").read_bytes(), "text/javascript; charset=utf-8")
+        if path in {f"/t/{self.state.token}/{name}" for name in ("research.js", "remote-center.js")}:
+            self._send(200, (STATIC_DIR / path.rsplit("/", 1)[1]).read_bytes(), "text/javascript; charset=utf-8")
             return
         if path == f"/t/{self.state.token}/download":
             query = parse_qs(parsed.query)
@@ -289,7 +307,8 @@ class UiHandler(BaseHTTPRequestHandler):
                            "text/html; charset=utf-8")
                 return
             page = (STATIC_DIR / "index.html").read_bytes()
-            page = page.replace(b"</body>", f'<script src="/t/{self.state.token}/research.js"></script></body>'.encode())
+            page = page.replace(b"</body>", (f'<script src="/t/{self.state.token}/research.js"></script>'
+                                f'<script src="/t/{self.state.token}/remote-center.js"></script></body>').encode())
             self._send(200, page, "text/html; charset=utf-8")
             return
         if path == "/" or path == "/index.html":
@@ -412,6 +431,17 @@ class UiHandler(BaseHTTPRequestHandler):
         state = self.state
         app = state.app
         try:
+            if action in {"vlab.check", "vlab.terminal", "vlab.save"}:
+                from . import vlab
+                if action == "vlab.check":
+                    result = vlab.check_connection(app.config)
+                elif action == "vlab.terminal":
+                    result = vlab.open_terminal(app.config)
+                else:
+                    with state.lock:
+                        result = vlab.save_connection(app, body)
+                self._send_json(result)
+                return
             if action.startswith(("document.", "literature.", "research.", "research_task.", "report.", "ocr.")):
                 if action == "document.page":
                     from ..research.documents import render_page
@@ -428,7 +458,7 @@ class UiHandler(BaseHTTPRequestHandler):
             client = app.client()
             engine = app.engine()
             if action == "state":
-                self._send_json(self._state_payload())
+                self._send_json(self._state_payload(refresh=body.get("refresh") is not False))
             elif action == "local.pick":
                 self._pick_local(body)
             elif action == "local.read_structure":
@@ -450,8 +480,21 @@ class UiHandler(BaseHTTPRequestHandler):
                     # The web request carries no secret. Direct mode supplies
                     # the local OpenSSH child; Vlab mode uses verified SSH
                     # stdin and never stores the values on Vlab.
-                    result = client.connect(name, manual=True)
-                    result.setdefault("automatic", True)
+                    try:
+                        result = client.connect(name, manual=True)
+                        result.setdefault("automatic", True)
+                    except RemoteError as exc:
+                        # A saved password cannot confirm a new host key.
+                        # Only a user-triggered connect may open this prompt;
+                        # polling stays silent and strict verification stays on.
+                        if exc.detail.get("gateway_code") not in {
+                                "host_key_failed", "host_key_unknown"}:
+                            raise
+                        result = client.open_login_terminal(name)
+                        result.update(
+                            automatic=False, host_key_confirmation=True,
+                            note="请在新窗口核对服务器指纹，再完成登录；"
+                                 "如果提示指纹已变化，请先向管理员核对。")
                 else:
                     # Missing/expired credentials still use a VISIBLE terminal.
                     result = client.open_login_terminal(name)
@@ -474,8 +517,10 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._add_server(body)
             elif action == "server.edit":
                 self._edit_server(body)
+            elif action == "server.remove":
+                self._send_json(client.server_remove(str(body.get("server") or "")))
             elif action == "server.status":
-                self._send_json(client.status(str(body.get("server") or "")))
+                self._send_json(client.status(str(body.get("server") or ""), reconnect=False))
             elif action == "remote.list":
                 self._send_json(client.list_dir(str(body.get("path") or ""),
                                                 server=body.get("server"),
@@ -545,6 +590,41 @@ class UiHandler(BaseHTTPRequestHandler):
                     confirm=str(body.get("confirm") or "")))
             elif action == "vscode.open":
                 self._open_vscode(body)
+            elif action in {"job.center", "job.details", "job.associate", "job.logs", "job.diagnosis"}:
+                from ..hpc.center import RemoteCenter
+                center = RemoteCenter(app.config, client, app.audit)
+                server = str(body.get("server") or "")
+                job_id = str(body.get("job_id") or "")
+                if action == "job.center":
+                    result = center.overview(server, refresh=bool(body.get("refresh", True)))
+                elif action == "job.details":
+                    result = center.details(server, job_id)
+                elif action == "job.associate":
+                    result = center.associate(server, job_id, str(body.get("project") or ""))
+                elif action == "job.logs":
+                    result = center.text(server, job_id, str(body.get("path") or ""))
+                else:
+                    result = center.diagnose(server, job_id)
+                self._send_json(result)
+            elif action.startswith("collection."):
+                from ..hpc.collections import Collections, launch
+                queue = Collections(app.config, client, app.audit)
+                task_id = str(body.get("task_id") or "")
+                if action == "collection.list":
+                    result = queue.list()
+                elif action == "collection.get":
+                    result = queue.view(queue.load(task_id))
+                elif action == "collection.enqueue":
+                    saved = queue.enqueue(str(body.get("server") or ""),
+                                          str(body.get("job_id") or ""), body.get("paths"))
+                    result = launch(queue, saved["task_id"])
+                elif action == "collection.resume":
+                    result = queue.resume(task_id)
+                elif action == "collection.cancel":
+                    result = queue.cancel(task_id)
+                else:
+                    raise ValidationError("未知回收操作")
+                self._send_json(result)
             elif action == "job.list":
                 document = client.jobs(server=body.get("server"))
                 self._job_ledger().observe(_server_name(body),
@@ -672,17 +752,6 @@ class UiHandler(BaseHTTPRequestHandler):
                     else:
                         app.config.update_settings(default_provider="")
                 self._send_json({"deleted": pid})
-            elif action == "vlab.save":
-                saved = app.config.set_vlab(
-                    identity_file=str(body.get("identity_file") or "").strip(),
-                    host=str(body.get("host") or "").strip() or None,
-                    user=str(body.get("user") or "").strip() or None,
-                    port=(int(body.get("port"))
-                          if body.get("port") is not None else None),
-                    auto_deploy_gateway=(bool(body.get("auto_deploy_gateway"))
-                                         if "auto_deploy_gateway" in body
-                                         else None))
-                self._send_json({"saved": {k: v for k, v in saved.items()}})
             elif action == "agent.submit_mode":
                 mode = app.config.set_agent_submit_mode(
                     str(body.get("mode") or "confirm"))
@@ -742,17 +811,21 @@ class UiHandler(BaseHTTPRequestHandler):
             self._send_json({"ok": False, "error": _ui_exception(exc)},
                             status=200)
 
-    def _state_payload(self) -> dict:
+    def _state_payload(self, *, refresh: bool = True) -> dict:
         app = self.state.app
         servers = []
         for entry in app.config.load_servers():
-            try:
-                connected = bool(app.client().status(entry.name).get("connected"))
-            except Exception:
-                connected = False
+            connected = None
+            status_error = ""
+            if refresh:
+                try:
+                    connected = bool(app.client().status(entry.name).get("connected"))
+                except Exception as exc:
+                    status_error = str(exc)
             credential = app.config.server_credentials_status(entry.name)
             servers.append({**entry.to_dict(),
                             "connected": connected,
+                            "status_error": status_error,
                             "is_default": entry.name == app.config.default_server(),
                             "credential_saved": bool(credential.get("saved")),
                             "credential_confirmation_due": bool(
@@ -945,10 +1018,6 @@ class UiHandler(BaseHTTPRequestHandler):
         old = str(body.get("id") or "").strip()
         new_name = str(body.get("new_name") or "").strip()
         entry = client.server_entry(old)
-        try:
-            connected = bool(client.status(old).get("connected"))
-        except Exception:
-            connected = False
         fields = dict(
             target=str(body.get("target") or "").strip() or entry.target,
             port=int(body.get("port") or 0) or entry.port,
@@ -973,13 +1042,28 @@ class UiHandler(BaseHTTPRequestHandler):
                     totp_seed=credential_totp_seed or None,
                     confirm_days=credential_days)
 
-        identity_changed = (new_name and new_name != old) or \
-            fields["target"] != entry.target or fields["port"] != entry.port or \
-            fields["route"] != getattr(entry, "route", "vlab")
-        if connected and identity_changed:
-            raise ValidationError(
-                f"{old} 已连接：改名、修改地址/端口或切换连接方式前请先断开该服务器；"
-                "根路径与保持时长可随时修改")
+        endpoint_changed = (new_name and new_name != old) or \
+            fields["target"] != entry.target or fields["port"] != entry.port
+        route_changed = fields["route"] != getattr(entry, "route", "vlab")
+        identity_changed = endpoint_changed or route_changed
+        if endpoint_changed:
+            # Protect an active target when renaming/changing its endpoint,
+            # but never log in just to save metadata or change the route to
+            # the same target. Plain credential edits are local-only.
+            try:
+                connected = bool(client.status(old, reconnect=False).get("connected"))
+            except Exception:
+                connected = False
+            if connected:
+                raise ValidationError(
+                    f"{old} 已连接：改名、修改地址/端口前请先断开该服务器；"
+                    "根路径与保持时长可随时修改")
+
+        metadata_changed = any(fields[key] != getattr(entry, key) for key in fields)
+        if not identity_changed and not metadata_changed:
+            save_credentials(old)
+            self._send_json({"edited": old, "local_only": True})
+            return
 
         if not identity_changed:
             edited = client.server_edit(
@@ -1212,7 +1296,8 @@ class UiHandler(BaseHTTPRequestHandler):
         elif action == "project.list":
             self._send_json({"projects": store.list()})
         elif action == "project.files":
-            self._send_json({"name": name, "kind": store.kind(name), "files": store.files(name)})
+            self._send_json({"name": name, "kind": store.kind(name),
+                             "path": str(store._project_dir(name).resolve()), "files": store.files(name)})
         elif action == "project.literature_search":
             from ..workflow.knowledge import literature_search
             self._send_json(literature_search(str(body.get("query") or "")))
@@ -1447,7 +1532,7 @@ class UiHandler(BaseHTTPRequestHandler):
             "vasp.out", "vasp.err", "stdout", "stderr", "job.out", "job.err",
             f"slurm-{job_id}.out", f"slurm-{job_id}.err",
             f"rsci-{job_id}.out", f"rsci-{job_id}.err",
-            "OSZICAR", "OUTCAR",
+            "OSZICAR", "OUTCAR", "job_info.log", "summary.log",
         }
         for row in found.get("files") or []:
             path = str(row.get("path") or "")
@@ -1455,7 +1540,7 @@ class UiHandler(BaseHTTPRequestHandler):
             if parsed.parent.as_posix() != directory.rstrip("/"):
                 continue
             name = parsed.name
-            if name not in wanted_names and not name.endswith((".out", ".err")):
+            if name not in wanted_names and not name.endswith((".out", ".err", ".pbsout")):
                 continue
             if name.startswith(("slurm-", "rsci-")) and name not in wanted_names:
                 continue
@@ -1656,10 +1741,23 @@ class UiHandler(BaseHTTPRequestHandler):
             if not isinstance(result, dict) or not result.get("job_id"):
                 raise RemoteError("scheduler did not return a job id")
         except Exception as exc:
-            store.finish_submission(entry_id, error=f"{type(exc).__name__}: {exc}")
+            settled = store.finish_submission(
+                entry_id, error=f"{type(exc).__name__}: {exc}",
+                execution=getattr(exc, "detail", {}).get("submission"))
+            self._note_session(app, settled,
+                "[提交已获人工确认，执行结果待核对] "
+                f"id={entry_id}；{entry['server']}:{entry['directory']}/"
+                f"{entry['script']}；提交开始于 {entry.get('submission_started_at', '')}；"
+                f"原始错误：{settled['error']}。"
+                "这不是等待审批或卡片过期。请用 job_submission_status 核对，"
+                "保留防重提保护，不能仅凭队列为空再次提交。")
             raise RemoteError(
                 "提交结果待核对：请求可能已被调度器接收，已阻止重复提交；"
-                "请先检查服务器队列和计算目录。") from exc
+                f"请先检查服务器队列和计算目录。原始错误：{settled['error']}",
+                detail={"submission_id": entry_id,
+                        "submission_started_at": entry.get("submission_started_at", ""),
+                        "submission_error": settled["error"],
+                        "submission": settled.get("execution", {})}) from exc
         settled = store.finish_submission(entry_id, result=result)
         job_id = str((result or {}).get("job_id") or "")
         if job_id:
@@ -2147,7 +2245,8 @@ class UiHandler(BaseHTTPRequestHandler):
             system_extra_parts.append(
                 f"agent_submit_mode={submit_mode}: " + (
                     "job_submit pauses for human confirmation — tell the user "
-                    "to click the approval card, then verify next turn."
+                    "to click the approval card, then use job_submission_status "
+                    "to read the actual approval, submission and error state."
                     if submit_mode == "confirm" else
                     "job_submit submits directly (audit-only)."))
             def emit_agent_event(kind: str, payload: dict) -> None:
@@ -2267,6 +2366,8 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
     state.workflow_recovery = recover(app.engine())
     from ..research.tasks import recover as recover_research
     recover_research(app.config)
+    from ..hpc.collections import recover as recover_collections
+    state.collection_recovery = recover_collections(app.config, app.client())
     state.start_campaign_ticker()
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
@@ -2284,7 +2385,7 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
         home.mkdir(parents=True, exist_ok=True)
         (home / "ui.json").write_text(_json.dumps(
             {"url": f"http://{host}:{bound_port}", "token": state.token,
-             "pid": os.getpid()}),
+             "pid": os.getpid(), "source_fingerprint": state.source_fingerprint}),
             encoding="utf-8")
     except OSError:
         pass

@@ -38,7 +38,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SERVER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 TARGET_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@"

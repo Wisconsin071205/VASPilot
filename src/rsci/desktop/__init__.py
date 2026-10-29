@@ -153,6 +153,12 @@ def read_running_instance(home: Path) -> str | None:
         return None
     if pid == os.getpid() or not _pid_alive(pid):
         return None
+    from ..core.runtime import source_fingerprint
+    if data.get("source_fingerprint") != source_fingerprint():
+        # A fresh window must not silently reuse a Python backend with old
+        # code in memory. Start the current version on the next free port;
+        # leave other windows and their in-flight work untouched.
+        return None
     if not _healthz_ok(base):
         return None
     return f"{base}/t/{token}"
@@ -233,6 +239,10 @@ def _run(app, *, port: int, home: Path, log, platform: str) -> int:
         return 0
     finally:
         if httpd is not None:
+            state = getattr(getattr(httpd, "RequestHandlerClass", None), "state", None)
+            if state is not None:
+                state.stopped.set()
+                state.kick_campaigns()
             httpd.shutdown()
             httpd.server_close()
             _remove_own_ui_json(home)

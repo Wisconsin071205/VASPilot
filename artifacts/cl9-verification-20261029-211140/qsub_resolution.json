@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": "qsub 是 /public/software/torque-6.1.0/bin/qsub\n",
+  "stderr": "",
+  "truncated": false,
+  "command": "type -a qsub"
+}

@@ -114,6 +114,7 @@ input::placeholder,textarea::placeholder{color:var(--fg2);opacity:1}
 .srv:hover{background:var(--bg3)}
 .srv .dot{width:9px;height:9px;border-radius:50%;background:var(--err);flex-shrink:0}
 .srv.on .dot{background:var(--ok)}
+.srv.unknown .dot{background:var(--warn)}
 .srv .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srv .nm small{color:var(--fg2);margin-left:6px;font-size:11px}
 .srv button{background:var(--bg3);border:1px solid var(--line);color:var(--fg2);border-radius:6px;padding:2px 7px;font-size:11px;cursor:pointer}
@@ -178,6 +179,13 @@ pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:
 .modal .note{font-size:12px;color:var(--warn);border:1px solid var(--line);
   background:var(--bg3);border-radius:7px;padding:8px 10px;margin-top:14px}
 .modal .mbtns{display:flex;justify-content:flex-end;gap:10px;margin-top:18px}
+#modalback .mbtns{flex-wrap:wrap}
+#server-actions[hidden]{display:none}
+#server-delete{margin-inline-end:auto}
+#server-delete:not(:disabled){color:var(--err)}
+.server-delete-confirm{margin-top:18px;padding:12px;border:1px solid var(--line);border-radius:7px;background:var(--bg3)}
+.server-delete-confirm h3{margin:0 0 8px;font-size:14px;color:var(--err);overflow-wrap:anywhere}
+.server-delete-confirm p{margin:0;color:var(--fg2);font-size:12px;line-height:1.7}
 .srv button.mini{padding:1px 6px;font-size:11px;margin-left:4px}
 .toast{background:var(--bg3);border:1px solid var(--acc);border-radius:8px;padding:10px 14px;max-width:420px;font-size:13px;animation:in .2s}
 .toast.err{border-color:var(--err)} .toast.ok{border-color:var(--ok)}
@@ -466,6 +474,21 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .cfgitem.on{outline:2px solid var(--acc);background:var(--bg3)}
 #cfgbody{flex:1;overflow-y:auto;padding:16px 22px;min-width:0}
 .cfghan .desc{color:var(--fg2);font-size:13px;margin:-6px 0 14px;max-width:640px}
+.vlab-status{display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--line)}
+.vlab-light{width:10px;height:10px;border-radius:50%;background:var(--fg2);flex-shrink:0;margin-top:6px}
+.vlab-status[data-state="connected"] .vlab-light{background:var(--ok)}
+.vlab-status[data-state="error"] .vlab-light{background:var(--err)}
+.vlab-status[data-state="checking"] .vlab-light,.vlab-status[data-state="dirty"] .vlab-light{background:var(--warn)}
+.vlab-detail{font-size:12px;color:var(--fg2);overflow-wrap:anywhere;margin-top:3px}
+#c-conn .connection-actions{margin-top:16px}
+#c-conn .connection-key{flex:1;min-width:180px}
+#c-conn .connection-path{flex:1.4;min-width:0;flex-basis:280px}
+@media(max-width:700px){
+  #v-cfg.on{flex-direction:column;overflow-y:auto}
+  #cfgnav{width:100%;display:flex;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}
+  #cfgbody{overflow:visible;padding:16px;flex-shrink:0}
+  #c-conn .connection-path{flex-basis:100%}
+}
 .pcard{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:12px}
 .pcard .pc-h{display:flex;align-items:center;gap:10px;margin-bottom:8px}
 .pcard .pc-h b{font-size:15px}
@@ -493,6 +516,14 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .gpurow .gval{margin-left:auto;color:var(--fg2)}
 .msrvfoot{display:flex;justify-content:space-between;font-size:11.5px;color:var(--fg2);
   border-top:1px dashed var(--line);margin-top:8px;padding-top:6px}
+#idlegrid{grid-template-columns:repeat(auto-fill,minmax(min(330px,100%),1fr))}
+#idlegrid .msrv{cursor:default;min-width:0}
+#idlegrid .msrv h3{flex-wrap:wrap;overflow-wrap:anywhere}
+#idlegrid .msrvfoot{flex-wrap:wrap;gap:4px 12px}
+#idlegrid .msrvfoot b{color:var(--fg)}
+.idle-note{font-size:12px;color:var(--fg2)}
+.idle-reason{margin-top:8px}
+.idle-actions{margin-top:8px;display:flex;justify-content:flex-end}
 .dot.err{background:var(--err)!important}
 .dot.warn{background:var(--warn)!important}
 .gpuwrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:14px}
@@ -570,7 +601,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
   <div class="side-h">服务器
     <span>
       <button title="添加服务器" onclick="openServerModal(null)">＋</button>
-      <button onclick="refreshServers()">刷新</button>
+      <button id="servers-refresh" onclick="toggleServerRefresh()">刷新</button>
     </span></div>
   <div id="servers" style="flex:1"><div class="empty">加载中…</div></div>
   <div id="appearance">
@@ -658,7 +689,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <!-- Existing Operate surface extension: inherit the four token palettes and compact controls.
          Files lead to editable code, immutable approval, then separately reported execution and results. -->
     <h2>项目文件</h2>
-    <p class="research-note">数据、脚本、笔记、结果与参考文献保存在同一项目。写入文件不会自动执行代码。</p>
+    <p class="research-note">数据、脚本、笔记、结果与参考文献保存在本机项目目录。保存文件不会自动上传到服务器或执行代码。</p>
     <div class="row">
       <div class="fg"><label for="researchproject">通用科研项目</label><select id="researchproject" onchange="selectResearchProject()"></select></div>
       <button class="btn ghost" onclick="openProjectModal()">新建项目</button>
@@ -667,12 +698,14 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <input id="researchimport" type="file" hidden onchange="importResearchFile(this)">
     </div>
     <p id="researchstatus" class="research-note" role="status" aria-live="polite">选择项目后导入 CSV，或创建脚本和研究笔记。</p>
+    <p id="researchlocation" class="research-note wrap" aria-live="polite"></p>
     <div class="research-layout">
       <div class="research-files" id="researchfiles" aria-label="项目文件列表"></div>
       <div class="research-editor">
         <div class="row"><label for="researchfilename">文件路径</label><input id="researchfilename" placeholder="notes/method.md" style="flex:1;min-width:160px">
           <button class="btn ghost" onclick="newResearchFile()">新文件</button></div>
         <p id="researchfilemeta" class="research-note">使用 data/、scripts/、notes/、results/ 或 references/ 目录。</p>
+        <p id="researchfilepath" class="research-note wrap"></p>
         <textarea id="researchcontent" aria-label="项目文件内容" spellcheck="false" oninput="RESEARCH_DIRTY=true"></textarea>
         <div class="row" style="margin-top:10px">
           <button class="btn" id="researchsave" onclick="saveResearchFile()">保存文件</button>
@@ -751,19 +784,25 @@ results/means.svg</textarea>
     <div id="m-idle" style="display:none">
       <div class="card">
         <div class="row">
-          <div class="fg"><label>GPU 空闲显存 ≥ (GB)</label><input id="idleVram" type="number" min="0" value="0" style="width:110px"></div>
-          <div class="fg"><label>利用率 ≤ (%)</label><input id="idleUtil" type="number" min="0" max="100" value="10" style="width:90px"></div>
-          <div class="fg"><label>持续 ≥ (分钟)</label><input id="idleMin" type="number" min="0" max="2880" value="0" style="width:90px"></div>
-          <div class="fg"><label>排序</label>
+          <div class="fg"><label for="idleType">资源类型</label>
+            <select id="idleType" onchange="idleTypeChanged()" style="width:130px">
+              <option value="all">CPU + GPU</option><option value="cpu">仅 CPU</option><option value="gpu">仅 GPU</option>
+            </select></div>
+          <div class="fg"><label for="idleVram">GPU 空闲显存 ≥ (GB)</label><input id="idleVram" type="number" min="0" value="0" style="width:110px"></div>
+          <div class="fg"><label for="idleUtil">GPU 利用率 ≤ (%)</label><input id="idleUtil" type="number" min="0" max="100" value="10" style="width:110px"></div>
+          <div class="fg"><label for="idleCores">CPU 估算空闲核数 ≥</label><input id="idleCores" type="number" min="0" value="0" style="width:110px"></div>
+          <div class="fg"><label for="idleCpuUtil">CPU 利用率 ≤ (%)</label><input id="idleCpuUtil" type="number" min="0" max="100" value="100" style="width:110px"></div>
+          <div class="fg"><label for="idleMin">低利用率持续 ≥ (分钟)</label><input id="idleMin" type="number" min="0" max="2880" value="0" style="width:110px"></div>
+          <div class="fg"><label for="idleSort">排序</label>
             <select id="idleSort" style="width:130px">
-              <option value="vram">按空闲显存</option><option value="util">按利用率低</option><option value="name">按服务器名</option>
+              <option value="vram">按空闲显存</option><option value="cores">按空闲核数</option><option value="util">按利用率低</option><option value="name">按服务器名</option>
             </select></div>
           <button class="btn" onclick="renderIdlePool()">筛选</button>
           <button class="btn ghost" onclick="loadAllMetrics().then(renderIdlePool)">重扫资源</button>
         </div>
-        <div style="font-size:12px;color:var(--fg2)">
-          持续时长依据本机缓存的历史分钟桶（在单机详情里打开过「趋势」或开启离线采集后数据更完整）；无历史时标注 "?"。
-          这里只做纯观测，不代任何计算任务入口。
+        <div class="idle-note">
+          CPU 空闲核数按总逻辑核数 × (1 − 利用率) 估算，不代表调度器可分配核数。CPU 与 GPU 的利用率条件分别设置，卡片状态表示是否符合筛选条件。
+          持续时长依据本机缓存的历史分钟桶（打开「趋势」或开启离线采集后数据更完整）；历史不足时标注“待确认”。
         </div>
       </div>
       <div class="msrvgrid" id="idlegrid"></div>
@@ -840,9 +879,16 @@ results/means.svg</textarea>
       </div>
 
       <div id="d-sched" style="display:none">
-        <div class="card"><h2 style="margin-top:0">调度器队列实时概况</h2>
-          <table id="schedtable"><thead><tr id="schead"></tr></thead>
+        <div class="card">
+          <div class="row" style="justify-content:space-between"><h2 style="margin:0">调度器队列概况</h2>
+            <button class="btn ghost" id="sched-refresh" onclick="refreshQueue()">刷新队列</button></div>
+          <p id="schedmeta" class="research-note"></p>
+          <div style="overflow-x:auto"><table id="schedtable"><thead><tr id="schead"></tr></thead>
             <tbody><tr><td colspan="5" class="empty">无数据</td></tr></tbody></table></div>
+          <p id="schednote" class="research-note"></p>
+          <details id="schedsource"><summary>查看采集命令与原始输出</summary>
+            <p id="schedcommand" class="mono wrap"></p><pre id="schedraw" style="white-space:pre;overflow:auto;max-height:360px"></pre></details>
+        </div>
       </div>
     </div>
   </section>
@@ -874,7 +920,9 @@ results/means.svg</textarea>
       <tbody><tr><td colspan="5" class="empty">输入路径后点击浏览</td></tr></tbody></table></div>
     <div class="card" id="workspacecard">
       <div class="row" style="justify-content:space-between"><h2 style="margin:0">Vlab 工作区空间</h2>
-        <button class="btn ghost" onclick="refreshWorkspacePanel()">刷新</button></div>
+        <button class="btn ghost" id="workspace-refresh" onclick="refreshWorkspacePanel()">刷新</button></div>
+      <div id="workspace-status" class="vlab-detail" role="status"></div>
+      <div id="workspace-checks" class="research-note" role="status"></div>
       <div id="workspaceout" class="empty" style="margin-top:10px">尚未检测。完整工作区只在 Vlab 挂载当前选定目录。</div>
     </div>
     <div class="card" id="reader" style="display:none">
@@ -886,6 +934,20 @@ results/means.svg</textarea>
 
   <!-- ============ 作业 ============ -->
   <section class="view" id="v-jobs">
+    <div class="card remote-center">
+      <div class="row" style="justify-content:space-between"><h2>远端任务中心</h2>
+        <button class="btn" id="fleet-refresh" onclick="loadRemoteJobs()">刷新所有服务器</button></div>
+      <p class="desc">汇总当前用户的作业，包括在终端提交的计算。关联项目后可查看日志、诊断问题和回收结果。</p>
+      <div class="row"><div class="fg"><label for="fleet-server">服务器筛选</label><select id="fleet-server"><option value="">全部服务器</option></select></div>
+        <div class="fg"><label for="fleet-state">作业筛选</label><select id="fleet-state"><option value="all">全部作业</option><option value="active">活动作业</option><option value="attention">待处理 / 待核对</option><option value="finished">已结束</option></select></div></div>
+      <div id="fleet-status" role="status" aria-live="polite" class="desc">进入页面后读取作业；查询失败时保留最后已知状态。</div>
+      <div style="overflow-x:auto"><table id="fleet-table"><thead><tr><th>服务器 / 作业</th><th>状态</th><th>名称 / 目录</th><th>关联项目</th><th>最后观察</th><th>操作</th></tr></thead><tbody><tr><td colspan="6" class="empty">尚未读取作业</td></tr></tbody></table></div>
+      <section id="fleet-detail" hidden aria-label="远端作业详情"></section>
+    </div>
+    <div class="card"><div class="row" style="justify-content:space-between"><h2>结果回收</h2><button class="btn ghost" onclick="loadCollections()">刷新回收状态</button></div>
+      <p class="desc">关闭窗口不会取消远端任务，本机后台会继续回收。电脑关机期间暂停回收，再次打开应用后接续。停止回收不会取消远端作业。</p>
+      <div id="collection-list" aria-live="polite" class="desc">尚无回收记录</div></div>
+    <details><summary>单台服务器记录与专业计算</summary>
     <div class="card" data-domain-only="vasp"><div class="row" style="justify-content:space-between">
       <h2 style="margin:0">我的计算 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（VASPKIT 计算链：一次批准，每个阶段自检通过才提交）</span></h2>
       <button class="btn ghost" onclick="loadCampaigns()">刷新</button></div>
@@ -914,6 +976,7 @@ results/means.svg</textarea>
       </div>
       <div id="progout"></div>
     </div>
+    </details>
   </section>
 
   <!-- ============ 工作流 ============ -->
@@ -1041,12 +1104,18 @@ results/means.svg</textarea>
       <!-- ---- 连接设置 ---- -->
       <div class="cfghan" id="c-conn" style="display:none">
         <h2>连接设置</h2>
-        <div class="card"><div class="row">
-          <div style="flex:1;min-width:260px">
+        <div class="card">
+        <div id="vlab-status" class="vlab-status" data-state="unknown" role="status" aria-live="polite">
+          <span class="vlab-light" aria-hidden="true"></span>
+          <div><b id="vlab-label">Vlab · 尚未检测</b>
+            <div id="vlab-detail" class="vlab-detail">检测已保存配置的 SSH 连接。</div></div>
+        </div>
+        <div class="row">
+          <div class="connection-key">
             <b>Vlab PEM 私钥路径</b>
             <div style="font-size:12px;color:var(--fg2)">SSH 连接 Vlab 计算集群（vlab.ustc.edu.cn）用</div>
           </div>
-            <div class="path-actions" style="flex:1.4;min-width:300px"><input id="cfgidentity" class="path-input" style="font-family:var(--mono)" readonly
+            <div class="path-actions connection-path"><input id="cfgidentity" class="path-input" style="font-family:var(--mono)" readonly
               placeholder="请选择 PEM 私钥文件" title="通过系统弹窗选择 PEM 私钥文件"
               onclick="pickLocalPath('cfgidentity','file','选择 Vlab PEM 私钥文件')">
               <button class="btn ghost path-btn" onclick="pickLocalPath('cfgidentity','file','选择 Vlab PEM 私钥文件')">选择文件</button></div>
@@ -1064,7 +1133,12 @@ results/means.svg</textarea>
           </label>
           <span style="font-size:12px;color:var(--fg2)">首次使用 Vlab 时自动上传、校验并安装受限网关；关闭后需手动运行部署脚本。</span>
         </div>
-        <div class="row" style="margin-top:10px"><button class="btn" onclick="saveConn()">保存连接设置</button></div>
+        <div class="row connection-actions">
+          <button class="btn" id="vlab-save" onclick="saveConn()">保存连接设置</button>
+          <button class="btn ghost" id="vlab-check" onclick="checkVlabConnection()">检测连接</button>
+          <button class="btn ghost" id="vlab-terminal" onclick="openVlabTerminal()">进入 Vlab 终端</button>
+        </div>
+        <div id="vlab-terminal-note" class="vlab-detail" role="status">终端会在独立窗口中打开，使用上方已保存的配置。</div>
         </div>
         <div class="card"><div class="row">
           <div style="flex:1">
@@ -1227,10 +1301,22 @@ results/means.svg</textarea>
       title="新服务器首次添加请先保存；已有服务器可通过弹窗选择">
       <button class="btn ghost path-btn" onclick="pickServerRoot()">选择目录</button></div>
     <div class="note">直连要求目标服务器可从本机访问并提供 Python 3；Vlab 中转要求已配置可用的 Vlab PEM。两种方式都可使用本机加密凭据自动恢复目标服务器连接。新服务器可先留空保存，连接后再编辑并通过弹窗选择根路径。</div>
-    <div class="mbtns">
+    <div class="mbtns" id="server-actions">
+      <button class="btn ghost" id="server-delete" type="button" onclick="requestServerDelete()"
+        aria-controls="server-delete-confirm" aria-expanded="false" hidden>删除服务器</button>
       <button class="btn ghost" onclick="document.getElementById('modalback').classList.remove('on')">取消</button>
-      <button class="btn" onclick="saveServerModal()">保存修改</button>
+      <button class="btn" id="server-save" onclick="saveServerModal()">保存修改</button>
     </div>
+    <div id="server-delete-confirm" class="server-delete-confirm" role="group"
+      aria-labelledby="server-delete-title" aria-describedby="server-delete-description" hidden>
+      <h3 id="server-delete-title"></h3>
+      <p id="server-delete-description">将移除连接配置和本机保存的登录凭据。远端文件和正在运行的作业会保留。再次使用需要重新添加服务器。</p>
+      <div class="mbtns">
+        <button class="btn ghost" id="server-delete-cancel" type="button" onclick="cancelServerDelete()">取消删除</button>
+        <button class="btn danger" id="server-delete-confirm-button" type="button" onclick="deleteServerModal()">确认删除</button>
+      </div>
+    </div>
+    <div id="server-save-status" class="vlab-detail" role="status" aria-live="polite"></div>
   </div>
 </div>
 
@@ -1370,12 +1456,15 @@ let CHAT_ACTIVE = false, CHAT_REQUEST_ID = "";
 let LAST_CHAT_DRAFT = null;
 let contextUsageTimer = null;
 
-async function api(action, body = {}, silent = false) {
+async function api(action, body = {}, silent = false, timeoutMs = 60000, signal = null) {
   const route = action === "workflow.status"
     ? "/api/workflow/status?plan_id=" + encodeURIComponent(body.plan_id || "")
     : "/api/" + action;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const cancel = () => controller.abort();
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener("abort", cancel, {once:true});
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let data;
   try {
   const res = await fetch(route, {
@@ -1386,10 +1475,11 @@ async function api(action, body = {}, silent = false) {
   });
   data = await res.json().catch(() => ({ok:false, error:{message:"响应解析失败，请刷新状态后再操作"}}));
   } catch (error) {
-    data = {ok:false, error:{code:"connection_error", message: error.name === "AbortError"
+    data = {ok:false, error:{code:signal?.aborted ? "cancelled" : error.name === "AbortError" ? "request_timeout" : "connection_error", message: signal?.aborted
+      ? "已停止检测" : error.name === "AbortError"
       ? "等待响应超时，操作结果尚未确认，请刷新状态后再操作"
       : "无法连接本机服务，请确认应用仍在运行后刷新状态"}};
-  } finally { clearTimeout(timeout); }
+  } finally { clearTimeout(timeout); signal?.removeEventListener("abort", cancel); }
   if (!data.ok && data.error && !silent) toast(data.error.message, "err");
   return data;
 }
@@ -1666,7 +1756,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   if (t.dataset.v === "chat") loadSessions();
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
-  if (t.dataset.v === "jobs") { if (activeProjectKind() === "vasp") loadCampaigns(true); loadJobs(true); }
+  if (t.dataset.v === "jobs") { if (activeProjectKind() === "vasp") loadCampaigns(true); loadRemoteJobs(true); }
   if (t.dataset.v === "research" && !RESEARCH_PROJECT) refreshProjects();
   if (t.dataset.v === "flow") {
     refreshProjects();
@@ -1683,9 +1773,81 @@ document.getElementById("chatinput").addEventListener("keydown", e => {
 });
 document.getElementById("chatinput").addEventListener("input", () => { saveChatDraft(true); queueContextUsage(); });
 
-async function refreshServers() {
-  const st = await api("state");
-  if (!st.ok) return;
+let serverRefreshRun = null;
+let serverRefreshControl = null;
+function toggleServerRefresh() {
+  if (serverRefreshControl) stopServerRefresh();
+  else refreshServers();
+}
+function stopServerRefresh(reason = "已停止检测") {
+  const run = serverRefreshControl;
+  if (!run || !run.active) return;
+  run.active = false;
+  run.controller.abort();
+  if (run.state) {
+    for (const s of run.state.servers) if (run.pending.has(s.name)) {
+      s.status_label = reason;
+      s.status_error = reason === "检测超时" ? "本轮检测已在 20 秒后停止；可单独连接服务器或重试刷新。" : reason;
+    }
+    renderServerState(run.state);
+  }
+  run.stop();
+}
+function refreshServers(afterChange = false) {
+  if (serverRefreshRun) return afterChange
+    ? serverRefreshRun.then(() => refreshServers()) : serverRefreshRun;
+  const button = document.getElementById("servers-refresh");
+  button.disabled = false;
+  button.textContent = "停止检测";
+  const run = {active:true, controller:new AbortController(), state:null, pending:new Set()};
+  serverRefreshControl = run;
+  const stopped = new Promise(resolve => {run.stop = resolve;});
+  const deadline = setTimeout(() => stopServerRefresh("检测超时"), 20000);
+  const work = (async () => {
+    // Local configuration must render even when a remote host is unreachable.
+    const st = await api("state", {refresh:false}, true, 5000, run.controller.signal);
+    if (!run.active) return;
+    if (!st.ok) { toast(st.error?.message || "读取服务器配置失败", "err"); return; }
+    run.state = st;
+    st.servers.forEach(s => {
+      s.connected = null; s.status_error = "等待检测"; s.status_label = "等待检测";
+      run.pending.add(s.name);
+    });
+    renderServerState(st);
+    let next = 0;
+    const progress = () => {button.textContent = `停止检测 ${st.servers.length - run.pending.size}/${st.servers.length}`;};
+    progress();
+    const worker = async () => {
+      while (run.active && next < st.servers.length) {
+        const s = st.servers[next++];
+        s.status_label = "正在检测…"; s.status_error = "正在检测连接…";
+        renderServerState(st);
+        const r = await api("server.status", {server:s.name}, true, 18000, run.controller.signal);
+        if (!run.active) return;
+        run.pending.delete(s.name);
+        s.connected = r.ok ? !!r.connected : r.error?.code === "auth_required" ? false : null;
+        s.status_error = r.ok ? "" : (r.error?.message || "连接状态检测失败，请重试");
+        s.status_label = /超时|timeout/i.test(s.status_error) ? "检测超时" : "检测失败，悬停查看原因";
+        renderServerState(st);
+        progress();
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(4, st.servers.length)}, worker));
+    if (run.active) connFlips();
+  })();
+  serverRefreshRun = Promise.race([work, stopped]).finally(() => {
+    clearTimeout(deadline);
+    run.active = false;
+    if (serverRefreshControl === run) {
+      serverRefreshControl = null;
+      serverRefreshRun = null;
+      button.disabled = false;
+      button.textContent = "刷新";
+    }
+  });
+  return serverRefreshRun;
+}
+function renderServerState(st) {
   STATE = st;
   document.getElementById("ver").textContent = "v" + st.version;
   // sidebar servers
@@ -1693,17 +1855,18 @@ async function refreshServers() {
   box.innerHTML = st.servers.length ? "" : `<div class="empty">未注册服务器<br><span style="font-size:11px">运行 rsci server add …</span></div>`;
   for (const s of st.servers) {
     const div = document.createElement("div");
-    div.className = "srv" + (s.connected ? " on" : "");
-    const statusTitle = s.connected ? "后台连接可用" :
+    div.className = "srv" + (s.connected === null ? " unknown" : s.connected ? " on" : "");
+    const statusTitle = s.status_error || (s.connected ? "后台连接可用" :
       (s.credential_confirmation_due
         ? "已到凭据复核时间，请先确认仍保留密码"
         : (!s.credential_saved
           ? "未连接：请配置 SSH 密钥/代理，或在编辑窗口保存加密凭据"
-          : "未连接"));
-    div.innerHTML = `<span class="dot" title="${statusTitle}"></span>
+          : "未连接")));
+    div.innerHTML = `<span class="dot" title="${esc(statusTitle)}"></span>
       <span class="nm">${esc(s.name)}${s.is_default ? "<small>默认</small>" : ""}
         <small>${s.route === "direct" ? "直连" : "Vlab 中转"} · ${esc(s.scheduler)}${
-          s.credential_saved ? (s.credential_confirmation_due ? " · 凭据待确认" : " · 凭据已保存") : ""}</small></span>`;
+          s.credential_saved ? (s.credential_confirmation_due ? " · 凭据待确认" : " · 凭据已保存") : ""}</small>
+        ${s.connected === null ? `<small title="${esc(statusTitle)}">${esc(s.status_label || "状态未知")}</small>` : ""}</span>`;
     const edit = document.createElement("button");
     edit.className = "mini"; edit.title = "编辑服务器";
     edit.textContent = "✎";
@@ -1711,17 +1874,17 @@ async function refreshServers() {
     const btn = document.createElement("button");
     btn.textContent = s.connected ? "断开" : "连接";
     btn.onclick = async () => {
-      if (s.connected) { await api("server.disconnect", {server: s.name}); refreshServers(); }
+      if (s.connected) { await api("server.disconnect", {server: s.name}); refreshServers(true); }
       else {
         const r = await api("server.connect", {server: s.name});
         if (r.ok) {
           if (r.automatic) {
             toast(`「${s.name}」已使用本机加密凭据自动连接`, "ok");
-            await refreshServers();
+            await refreshServers(true);
           } else {
             toast(`已弹出「${s.name}」的登录窗口：${r.note || "请按窗口提示完成登录"}`,
                   r.interactive_only ? "warn" : "ok");
-            refreshServers();
+            refreshServers(true);
             pollServerAfterLogin(s.name);
           }
         }
@@ -1756,7 +1919,6 @@ async function refreshServers() {
     }
     box.appendChild(div);
   }
-  connFlips();
   // providers —— 优先保持用户手动选的模型（本地记忆），否则跟随默认服务；
   // 否则任何一次重绘都会把下拉框顶回「设为默认」的那个
   const sel = document.getElementById("provsel");
@@ -1798,7 +1960,11 @@ async function probeProvider() {
 }
 
 /* ===================== 总览 ===================== */
+let snapshotRefreshBusy = false;
 async function loadSnapshot() {
+  if (snapshotRefreshBusy) return;
+  snapshotRefreshBusy = true;
+  try {
   const snap = await api("monitor.snapshot");
   if (!snap.ok) return;
   const on = snap.connected || 0;
@@ -1814,6 +1980,7 @@ async function loadSnapshot() {
     <td>${(s.states || []).map(x => badge(x, x === "RUNNING" ? "ok" : "info")).join(" ") || "—"}</td>
     <td class="wrap" style="color:var(--fg2)">${esc(s.error || s.jobs_error || "")}</td></tr>`).join("")
     || `<tr><td colspan="6" class="empty">无服务器</td></tr>`;
+  } finally { snapshotRefreshBusy = false; }
 }
 setInterval(() => {
   if (document.getElementById("autoref")?.checked &&
@@ -1979,19 +2146,30 @@ async function openFullWorkspace(path) {
   toast(`已创建 ${r.workspace_id}：VS Code 只会连接 Vlab，目标服务器不安装 VS Code Server。`, "ok");
   refreshWorkspacePanel();
 }
+let workspaceRefreshBusy = false;
 async function refreshWorkspacePanel() {
   const out = document.getElementById("workspaceout");
-  if (!out) return;
-  const r = await api("workspace.list", {}, true);
+  if (!out || workspaceRefreshBusy) return;
+  workspaceRefreshBusy = true;
+  const button = document.getElementById("workspace-refresh");
+  const status = document.getElementById("workspace-status");
+  button.disabled = true;
+  button.textContent = "刷新中…";
+  status.textContent = "正在读取 Vlab 工作区…";
+  try {
+  const r = await api("workspace.list", {}, true, 120000);
   if (!r.ok) {
-    out.innerHTML = `<div role="alert" style="color:var(--fg2);overflow-wrap:anywhere">
-      <b style="color:var(--fg)">Vlab Workspace Gateway 未就绪</b><br>
-      ${esc(r.error?.message || "工作区检测失败")}<br>
-      <button class="btn ghost" style="margin-top:10px" onclick="refreshWorkspacePanel()">重新部署并重试</button>
-      <span style="font-size:12px;margin-left:8px">仍失败时，请确认 Vlab 用户可写 <code>~/bin</code>。</span>
-    </div>`;
+    const code = r.error?.code;
+    const title = code === "connection_error" ? "无法连接本机服务" :
+      code === "request_timeout" ? "读取工作区超时" : "Vlab 工作区读取失败";
+    status.textContent = `${title}：${r.error?.message || "请重试"}${out.dataset.loaded ? "（保留上次结果）" : ""}`;
+    if (!out.dataset.loaded) out.textContent = code === "connection_error"
+      ? "请确认应用仍在运行；重新打开应用后再刷新。"
+      : "请先在「连接设置」检测 Vlab 的 SSH 连接，再重试刷新。";
     return;
   }
+  out.dataset.loaded = "1";
+  status.textContent = "已更新 · " + new Date().toLocaleTimeString();
   const space = r.space || {};
   const rows = r.workspaces || [];
   const level = Number(space.used_percent || 0) >= 90 ? "var(--err)" :
@@ -2007,14 +2185,27 @@ async function refreshWorkspacePanel() {
       `<tr><td class="mono">${esc(w.workspace_id)}</td><td class="mono">${esc(w.server)} · ${esc(w.remote_path)}</td>
        <td>${esc(w.status)}${w.mode === "read-only" ? " · 只读" : ""}</td><td>${fmtBytes(Number(w.cache_bytes))}</td>
        <td>${esc(w.pending_sync_files)}</td><td>${['open', 'recovering', 'sync_pending', 'sync_unknown'].includes(w.status) ? `<button class="mini" title="安全关闭" onclick="closeWorkspace('${esc(w.workspace_id)}')">关闭</button>` : '—'}</td></tr>`).join("")}</tbody></table>` :
-      `<div class="empty" style="margin-top:10px">暂无完整工作区；右击一个计算目录后选择“通过 Vlab 打开完整工作区”。</div>`);
+      `<div class="empty" style="margin-top:10px">尚未打开完整工作区。请在上方选择服务器和目录，再在目录列表中右击一个计算文件夹，选择“通过 Vlab 打开完整工作区”。<br>
+      VS Code 将连接 Vlab，并打开所选服务器目录；完整工作区需要预先配置 Vlab 专用密钥、rclone 和 FUSE。</div>`);
+  } finally {
+    workspaceRefreshBusy = false;
+    button.disabled = false;
+    button.textContent = "刷新";
+  }
 }
 async function workspaceDoctor() {
   const server = document.getElementById("fsrv").value;
   const path = document.getElementById("fpath").value.trim();
-  const r = await api("workspace.doctor", {server, path});
-  if (r.ok) toast(r.ok ? "Vlab 工作区检测完成" : "检测发现问题", r.ok ? "ok" : "err");
-  refreshWorkspacePanel();
+  const out = document.getElementById("workspace-checks");
+  out.textContent = "正在检查工作区条件…";
+  const r = await api("workspace.doctor", {server, path}, true, 95000);
+  if (server !== document.getElementById("fsrv").value || path !== document.getElementById("fpath").value.trim()) {
+    out.textContent = "目录已切换，请重新检测。"; return;
+  }
+  if (!Array.isArray(r.checks)) { out.textContent = r.error?.message || "工作区检测失败，请重试"; return; }
+  const labels = {vlab_os:"Vlab 系统", rclone:"目录同步工具", fuse:"目录挂载支持", vlab_space:"Vlab 空间", vscode_server_on_vlab:"VS Code 远端组件", target_sftp:"目标服务器密钥与文件连接", target_write:"目录写权限"};
+  out.innerHTML = `<b>${r.ok ? "工作区条件已满足" : "工作区尚未就绪"} · ${esc(server)}</b><ul>${r.checks.map(c =>
+    `<li>${esc(labels[c.name] || c.name)}：${c.ok ? "通过" : c.required === false ? "首次打开时配置" : "待处理"}${c.detail ? ` · ${esc(c.detail)}` : ""}</li>`).join("")}</ul>`;
 }
 async function closeWorkspace(workspaceId) {
   const r = await api("workspace.close", {workspace_id:workspaceId});
@@ -3806,10 +3997,12 @@ document.querySelectorAll(".cfgitem").forEach(t => t.onclick = () => {
       t.dataset.c === id ? "" : "none";
   if (t.dataset.c === "skills") loadSkills();
   if (t.dataset.c === "vaspkit") loadVaspkitCfg();
+  if (t.dataset.c === "conn") checkVlabConnection();
 });
 async function loadSettings() {
   const r = await api("settings");
   if (!r.ok) return;
+  if (JSON.stringify(CFG.vlab) !== JSON.stringify(r.vlab)) ++vlabRevision;
   CFG = r;
   document.getElementById("aboutver").textContent = "v" + STATE.version;
   renderProviderCards();
@@ -3823,6 +4016,7 @@ async function loadSettings() {
   document.getElementById("identbadge").innerHTML =
     v.identity_file_exists ? badge("密钥文件存在", "ok")
                            : badge("密钥文件缺失", "err");
+  if (document.querySelector('.cfgitem.on')?.dataset.c === "conn") checkVlabConnection();
   // agent / web / monitor tabs
   renderAgentMode(r.agent_submit_mode || "confirm");
   renderWebsearch(r.websearch);
@@ -3948,32 +4142,126 @@ async function saveProviders() {
     card.querySelector(".f-key").value = "";
   }
   toast(madeDefault ? `已保存；默认服务：${madeDefault}` : "设置已保存", "ok");
-  await Promise.all([refreshServers(), loadSettings()]);
+  await Promise.all([refreshServers(true), loadSettings()]);
 }
 function setDefaultsFromCards() {
   fetch("/api/settings", {headers: {"X-RSCI-Token": TOKEN}})
     .then(r => r.json())
     .then(() => location.reload());
 }
-async function saveConn() {
-  const r = await api("vlab.save", {
+// A check applies only to the saved configuration it started with.
+let vlabCheckRun = null, vlabRevision = 0, vlabSaving = false, vlabTerminalBusy = false;
+function vlabForm() {
+  return {
     identity_file: document.getElementById("cfgidentity").value.trim(),
     host: document.getElementById("cfghost").value.trim(),
     user: document.getElementById("cfguser").value.trim(),
     port: parseInt(document.getElementById("cfgport").value || "22"),
     auto_deploy_gateway: document.getElementById("cfgautodeploy").checked,
-  });
-  if (r.ok) { toast("连接设置已保存", "ok"); await loadSettings(); }
+  };
 }
+function vlabDirty() {
+  const form = vlabForm(), saved = CFG.vlab || {};
+  return Object.keys(form).some(k => form[k] !== saved[k]);
+}
+function showVlabStatus(state, label, detail) {
+  document.getElementById("vlab-status").dataset.state = state;
+  document.getElementById("vlab-label").textContent = "Vlab · " + label;
+  document.getElementById("vlab-detail").textContent = detail;
+}
+function vlabEdited() {
+  ++vlabRevision;
+  showVlabStatus(vlabDirty() ? "dirty" : "unknown", vlabDirty() ? "配置未保存" : "尚未检测",
+    vlabDirty() ? "请先保存连接设置，再检测或进入终端。" : "请重新检测当前连接。" );
+}
+for (const id of ["cfgidentity", "cfghost", "cfguser", "cfgport", "cfgautodeploy"]) {
+  document.getElementById(id).addEventListener("input", vlabEdited);
+  document.getElementById(id).addEventListener("change", vlabEdited);
+}
+function checkVlabConnection() {
+  if (vlabSaving) return;
+  if (vlabDirty()) { vlabEdited(); return; }
+  if (vlabCheckRun) return vlabCheckRun;
+  const revision = vlabRevision;
+  const button = document.getElementById("vlab-check");
+  button.disabled = true;
+  button.textContent = "检测中…";
+  showVlabStatus("checking", "检测中", "正在验证 Vlab SSH 登录…");
+  vlabCheckRun = (async () => {
+    const r = await api("vlab.check", {}, true, 20000);
+    if (revision !== vlabRevision || vlabDirty()) return;
+    const connected = r.ok && r.connected;
+    const time = r.checked_at ? new Date(r.checked_at).toLocaleTimeString() : new Date().toLocaleTimeString();
+    showVlabStatus(connected ? "connected" : "error", connected ? "连接成功" : "连接失败",
+      `${r.message || r.error?.message || "未能确认 SSH 连接，请重试。"} · 检测于 ${time}`);
+  })().finally(() => {
+    vlabCheckRun = null;
+    button.disabled = false;
+    button.textContent = "检测连接";
+  });
+  return vlabCheckRun;
+}
+async function openVlabTerminal() {
+  if (vlabTerminalBusy || vlabSaving) return;
+  if (vlabDirty()) { vlabEdited(); return; }
+  vlabTerminalBusy = true;
+  const button = document.getElementById("vlab-terminal");
+  button.disabled = true;
+  button.textContent = "正在打开…";
+  try {
+    const r = await api("vlab.terminal", {}, true);
+    document.getElementById("vlab-terminal-note").textContent = r.ok
+      ? "已打开 Vlab 终端窗口，请在窗口中查看登录结果。"
+      : (r.error?.message || "终端打开失败，请重试。");
+  } finally {
+    vlabTerminalBusy = false;
+    button.disabled = false;
+    button.textContent = "进入 Vlab 终端";
+  }
+}
+async function saveConn() {
+  if (vlabSaving) return;
+  const body = vlabForm();
+  if (!body.host || !body.user || !Number.isInteger(body.port) || body.port < 1 || body.port > 65535)
+    return toast("请填写主机、用户和有效端口（1–65535）", "err");
+  vlabSaving = true;
+  ++vlabRevision;
+  const controls = [...document.querySelectorAll("#c-conn input, #c-conn button")];
+  controls.forEach(el => el.disabled = true);
+  try {
+    const r = await api("vlab.save", body);
+    if (r.ok) {
+      toast("连接设置已保存", "ok");
+      await loadSettings();
+      if (vlabCheckRun) await vlabCheckRun;
+    }
+    else return;
+  } finally {
+    vlabSaving = false;
+    controls.forEach(el => el.disabled = false);
+  }
+  checkVlabConnection();
+}
+setInterval(() => {
+  if (!document.hidden && document.getElementById("v-cfg").classList.contains("on") &&
+      document.querySelector('.cfgitem.on')?.dataset.c === "conn" && !vlabDirty()) checkVlabConnection();
+}, 60000);
 
 /* ===================== 服务器 添加/编辑 ===================== */
 function openServerModal(entry) {
+  if (serverSaveBusy) return;
+  document.getElementById("server-save-status").textContent = "";
   const back = document.getElementById("modalback");
   document.getElementById("mtitle").textContent =
     entry ? `编辑服务器：${entry.name}` : "添加服务器";
   document.getElementById("mname").value = entry ? entry.name : "";
   document.getElementById("mname").dataset.orig =
     entry ? entry.name : "";
+  serverDeleteTarget = "";
+  document.getElementById("server-actions").hidden = false;
+  document.getElementById("server-delete-confirm").hidden = true;
+  document.getElementById("server-delete").hidden = !entry;
+  document.getElementById("server-delete").setAttribute("aria-expanded", "false");
   document.getElementById("mtarget").value = entry ? entry.target : "";
   document.getElementById("mport").value = entry ? entry.port : 22;
   document.getElementById("mpersist").value = entry?.persist || "8h";
@@ -4005,7 +4293,10 @@ function toggleCredentialFields() {
     : "凭据和 TOTP 种子使用 Windows DPAPI 加密并只保存在本机。自动连接时，密码和当期 6 位验证码通过已验证的 Vlab SSH 通道临时发送；TOTP 种子不会上传或保存在 Vlab。首次主机指纹仍须人工核对。";
 }
 document.getElementById("mroute").addEventListener("change", toggleCredentialFields);
+let serverSaveBusy = false;
+let serverDeleteTarget = "";
 async function saveServerModal() {
+  if (serverSaveBusy) return;
   const orig = document.getElementById("mname").dataset.orig;
   const body = {
     id: orig,
@@ -4021,20 +4312,97 @@ async function saveServerModal() {
     credential_confirm_days: parseInt(document.getElementById("mcredentialdays").value || "3"),
     clear_credentials: document.getElementById("mcredentialclear").checked,
   };
+  if (!orig && (!body.new_name || !body.target)) return toast("名称与目标地址必填", "err");
+  serverSaveBusy = true;
+  const save = document.getElementById("server-save");
+  const status = document.getElementById("server-save-status");
+  const controls = [...document.querySelectorAll("#modalback input, #modalback select, #modalback button")];
+  const disabled = controls.map(el => el.disabled);
+  controls.forEach(el => el.disabled = true);
+  save.textContent = "保存中…";
+  status.textContent = body.route === "vlab"
+    ? "正在保存配置到 Vlab；保存后可单独连接服务器。"
+    : "正在保存连接配置…";
+  try {
   let r;
   if (!orig) {
-    if (!body.new_name || !body.target) return toast("名称与目标地址必填", "err");
-    r = await api("server.add", {...body, name: body.new_name});
-    if (!r.ok) return;
+    r = await api("server.add", {...body, name: body.new_name}, true);
+    if (!r.ok) { status.textContent = r.error?.message || "保存失败，请重试。"; return; }
     toast(`已添加 ${body.new_name}（${body.route === "direct" ? "直连" : "Vlab 中转"}）。点其「连接」完成登录`, "ok");
   } else {
-    r = await api("server.edit", body);
-    if (!r.ok) return;
+    r = await api("server.edit", body, true);
+    if (!r.ok) { status.textContent = r.error?.message || "保存失败，请重试。"; return; }
     toast(body.new_name !== orig ? `已改名 ${orig} → ${body.new_name}`
                                  : `已保存修改：${orig}`, "ok");
   }
   document.getElementById("modalback").classList.remove("on");
-  await Promise.all([refreshServers(), loadSettings()]);
+  // Saving is complete; connection status refresh must not hold the dialog.
+  refreshServers(true);
+  } finally {
+    serverSaveBusy = false;
+    controls.forEach((el, i) => el.disabled = disabled[i]);
+    save.textContent = "保存修改";
+  }
+}
+
+function requestServerDelete() {
+  if (serverSaveBusy) return;
+  // Use the saved name even if the edit form contains an unsaved rename.
+  const name = document.getElementById("mname").dataset.orig;
+  if (!name) return;
+  serverDeleteTarget = name;
+  document.getElementById("server-delete-title").textContent = `删除服务器「${name}」？`;
+  document.getElementById("server-actions").hidden = true;
+  document.getElementById("server-delete-confirm").hidden = false;
+  document.getElementById("server-delete").setAttribute("aria-expanded", "true");
+  document.getElementById("server-delete-cancel").focus();
+}
+function cancelServerDelete() {
+  if (serverSaveBusy) return;
+  serverDeleteTarget = "";
+  document.getElementById("server-delete-confirm").hidden = true;
+  document.getElementById("server-actions").hidden = false;
+  document.getElementById("server-delete").setAttribute("aria-expanded", "false");
+  document.getElementById("server-delete").focus();
+}
+async function deleteServerModal() {
+  if (serverSaveBusy || !serverDeleteTarget ||
+      document.getElementById("server-delete-confirm").hidden) return;
+  const name = serverDeleteTarget;
+  if (name !== document.getElementById("mname").dataset.orig) return;
+  serverSaveBusy = true;
+  const button = document.getElementById("server-delete-confirm-button");
+  const status = document.getElementById("server-save-status");
+  const controls = [...document.querySelectorAll("#modalback input, #modalback select, #modalback button")];
+  const disabled = controls.map(el => el.disabled);
+  controls.forEach(el => el.disabled = true);
+  button.textContent = "删除中…";
+  status.textContent = `正在删除服务器「${name}」的连接配置…`;
+  try {
+    const r = await api("server.remove", {server:name}, true);
+    if (!r.ok) { status.textContent = r.error?.message || "删除失败，请重试。"; return; }
+    serverDeleteTarget = "";
+    document.getElementById("modalback").classList.remove("on");
+    // Stop older status requests before they can repaint the removed entry.
+    stopServerRefresh();
+    const wasFileServer = document.getElementById("fsrv").value === name;
+    renderServerState({...STATE, servers:STATE.servers.filter(s => s.name !== name)});
+    PREV_CONN?.delete(name);
+    if (wasFileServer) {
+      document.getElementById("fpath").value = "";
+      document.getElementById("fup").disabled = true;
+      const tbody = document.querySelector("#filetable tbody");
+      delete tbody.dataset.loaded;
+      tbody.innerHTML = `<tr><td colspan="5" class="empty">请选择服务器并浏览目录</td></tr>`;
+      if (document.getElementById("fsrv").value) pickFileServer(true);
+    }
+    toast(`已删除服务器：${name}`, "ok");
+    refreshServers(true);
+  } finally {
+    serverSaveBusy = false;
+    controls.forEach((el, i) => el.disabled = disabled[i]);
+    button.textContent = "确认删除";
+  }
 }
 
 /* ===================== 会话（记忆） ===================== */
@@ -4527,6 +4895,7 @@ function resetResearchEditor() {
   document.getElementById("researchcontent").value = "";
   document.getElementById("researchcontent").readOnly = false;
   document.getElementById("researchfilemeta").textContent = "使用 data/、scripts/、notes/、results/ 或 references/ 目录。";
+  document.getElementById("researchfilepath").textContent = "";
   document.getElementById("researchsave").disabled = !RESEARCH_PROJECT;
   document.getElementById("researchdownload").disabled = true;
   document.getElementById("researchtemplate").disabled = true;
@@ -4536,11 +4905,14 @@ async function loadResearchFiles(openFile = "") {
   const name = document.getElementById("researchproject").value;
   const version = ++RESEARCH_VERSION;
   const box = document.getElementById("researchfiles");
+  document.getElementById("researchlocation").textContent = "";
   if (!name) { box.textContent = "尚未选择项目"; return; }
   if (!RESEARCH_PROJECT) RESEARCH_PROJECT = name;
   const r = await api("project.files", {name});
   if (version !== RESEARCH_VERSION || !r.ok) return;
   const project = PROJECTS.find(p => p.name === name);
+  const localPath = r.path || project?.path;
+  document.getElementById("researchlocation").textContent = localPath ? `本机项目目录：${localPath}` : "";
   if (project) { project.files = Object.fromEntries((r.files || []).map(f => [f.name,true])); renderProjectSidebar(lastSessions); }
   box.innerHTML = "";
   for (const file of r.files || []) {
@@ -4565,6 +4937,7 @@ async function openResearchFile(file) {
   document.getElementById("researchcontent").value = r.content ?? (r.binary ? "二进制文件，请下载后查看。" : r.note || "无法预览");
   document.getElementById("researchcontent").readOnly = !Object.hasOwn(r, "content");
   document.getElementById("researchfilemeta").textContent = `${r.size} B · SHA-256 ${r.sha256}`;
+  document.getElementById("researchfilepath").textContent = r.path ? `本机文件：${r.path}` : "";
   document.getElementById("researchsave").disabled = !Object.hasOwn(r, "content");
   document.getElementById("researchdownload").disabled = false;
   document.getElementById("researchtemplate").disabled = !/\.(csv|tsv)$/i.test(file);
@@ -4589,6 +4962,7 @@ async function saveResearchFile() {
     RESEARCH_DIRTY = document.getElementById("researchcontent").value !== content;
     document.getElementById("researchfilename").readOnly = true;
     document.getElementById("researchfilemeta").textContent = `${r.size} B · SHA-256 ${r.sha256}`;
+    document.getElementById("researchfilepath").textContent = r.path ? `本机文件：${r.path}` : "";
     document.getElementById("researchdownload").disabled = false;
     document.getElementById("researchtemplate").disabled = !/\.(csv|tsv)$/i.test(file);
     toast("文件已保存，尚未执行", "ok"); await loadResearchFiles();
@@ -4755,7 +5129,8 @@ function showDtab(id) {
 
 /* ---- 告警：掉线翻转 + 高温冷却 ---- */
 function connFlips() {
-  const now = new Set(STATE.servers.filter(s => s.connected).map(s => s.name));
+  const now = new Set(STATE.servers.filter(s => s.connected ||
+    (s.connected === null && PREV_CONN?.has(s.name))).map(s => s.name));
   if (PREV_CONN) {
     for (const n of PREV_CONN)
       if (!now.has(n)) toast(`服务器 ${n} 连接已断开`, "err");
@@ -4775,24 +5150,31 @@ function checkTemps(server, gpus) {
 }
 
 /* ---- 资源拉取与总览渲染 ---- */
+let metricsRefreshBusy = false;
 async function loadAllMetrics() {
+  if (metricsRefreshBusy) return;
   const grid = document.getElementById("msrvgrid");
   const connected = STATE.servers.filter(s => s.connected);
   if (!connected.length) {
     grid.innerHTML = `<div class="empty">没有已连接的服务器——连接后才能读取资源</div>`;
     return;
   }
-  grid.innerHTML = `<div class="empty">读取中…</div>`;
-  const parts = [];
-  for (const s of connected) {
-    const r = await api("server.metrics", {server: s.name});
-    CURRENT_METRICS[s.name] = r.ok ? r : null;
-    parts.push(renderServerCard(s, r));
-    if (r.ok) checkTemps(s.name, r.gpus);
-  }
+  metricsRefreshBusy = true;
+  const parts = connected.map(s => CURRENT_METRICS[s.name]
+    ? renderServerCard(s, CURRENT_METRICS[s.name])
+    : `<div class="empty">${esc(s.name)} · 读取中…</div>`);
   grid.innerHTML = parts.join("");
+  try {
+  await Promise.all(connected.map(async (s, i) => {
+    const r = await api("server.metrics", {server: s.name}, true, 120000);
+    CURRENT_METRICS[s.name] = r.ok ? r : null;
+    parts[i] = renderServerCard(s, r);
+    grid.innerHTML = parts.join("");
+    if (r.ok) checkTemps(s.name, r.gpus);
+  }));
   renderDetailSnapshotIfOpen();
   if (MVIEW === "idle") { renderIdlePool(); ensureIdleHistory(); }
+  } finally { metricsRefreshBusy = false; }
 }
 function gpuColor(p) {
   return p >= 90 ? "var(--err)" : p >= 70 ? "var(--warn)" : "var(--acc)";
@@ -4845,6 +5227,7 @@ function renderDetail(reloadTrendToo) {
   const kpis = document.getElementById("dkpis");
   if (!r || !r.ok) {
     kpis.innerHTML = `<div class="empty">暂无快照数据——返回总览刷新资源后重试</div>`;
+    renderSched({}, r || {});
     return;
   }
   const gpus = r.gpus || [];
@@ -4891,7 +5274,7 @@ function renderDetail(reloadTrendToo) {
         <span class="gval" style="color:${gpuColor(d.used_pct)}">${d.used_pct}%</span></div>`).join("")
         || '<div class="empty">无磁盘数据</div>'}</div>`;
   renderProcs(r);
-  renderSched(r.queue || {});
+  renderSched(r.queue || {}, r);
   if (reloadTrendToo) reloadTrend();
 }
 function renderProcs(r) {
@@ -4912,13 +5295,31 @@ function renderProcs(r) {
   document.querySelector("#proctable tbody").innerHTML = rows.join("")
     || `<tr><td colspan="5" class="empty">当前没有 GPU 进程</td></tr>`;
 }
-function renderSched(q) {
+let queueRefreshBusy = false;
+async function refreshQueue() {
+  if (!MSEL || queueRefreshBusy) return;
+  const server = MSEL, button = document.getElementById("sched-refresh");
+  queueRefreshBusy = true; button.disabled = true; button.textContent = "读取队列…";
+  try {
+    const r = await api("server.metrics", {server}, true, 25000);
+    if (server !== MSEL) return;
+    if (!r.ok) { toast(r.error?.message || "队列读取失败，保留上次采集结果", "err"); return; }
+    CURRENT_METRICS[server] = r; renderDetail(false);
+  } finally { queueRefreshBusy = false; button.disabled = false; button.textContent = "刷新队列"; }
+}
+function renderSched(q, snapshot = {}) {
   const head = document.getElementById("schead");
   const tbody = document.querySelector("#schedtable tbody");
   const parts = q.partitions || [];
+  const time = snapshot.collected_at ? new Date(snapshot.collected_at).toLocaleString() : "未采集";
+  document.getElementById("schedmeta").textContent = `数据来自 ${snapshot.server || MSEL || "所选服务器"} 的${q.kind === "pbs" ? " PBS 队列" : q.kind === "slurm" ? " Slurm 分区" : "调度器"} · 采集时间：${time}`;
+  document.getElementById("schednote").textContent = q.parse_warning || q.source_note || "";
+  document.getElementById("schedsource").hidden = !q.raw;
+  document.getElementById("schedcommand").textContent = q.source_command || "";
+  document.getElementById("schedraw").textContent = q.raw || "";
   if (!parts.length) {
     head.innerHTML = "<th>队列</th>";
-    tbody.innerHTML = `<tr><td class="empty">未检测到调度器（或该节点不跑调度器）</td></tr>`;
+    tbody.innerHTML = `<tr><td class="empty">${q.parse_warning ? "队列格式未识别，可查看下方原始输出" : "尚无队列数据，请刷新后查看"}</td></tr>`;
     return;
   }
   if (q.kind === "slurm") {
@@ -4928,10 +5329,15 @@ function renderSched(q) {
       <td>${p.nodes}</td>
       <td>${p.cpus_alloc ?? "?"} / ${p.cpus_idle ?? "?"} / ${p.cpus_total ?? "?"}</td></tr>`).join("");
   } else {
-    head.innerHTML = ["队列", "状态", "运行", "排队"].map(h => `<th>${h}</th>`).join("");
-    tbody.innerHTML = parts.map(p => `<tr><td>${esc(p.queue)}</td>
-      <td>${badge(p.state, p.state === "open" ? "ok" : "warn")}</td>
-      <td>${p.run ?? "?"}</td><td>${p.queued ?? "?"}</td></tr>`).join("");
+    head.innerHTML = ["队列", "状态", "运行", "等待（Que）", "单作业节点上限", "并发上限（Lm）", "最长运行时间"].map(h => `<th>${h}</th>`).join("");
+    tbody.innerHTML = parts.map(p => {
+      const state = String(p.state || "").replace(/\s+/g, "");
+      const label = ({ER:"接收作业 · 已启动", ES:"接收作业 · 已停止", DR:"停止接收 · 已启动", DS:"停止接收 · 已停止"})[state] || p.state || "未知";
+      return `<tr><td>${esc(p.queue)}</td>
+      <td title="${esc(p.state || "")}">${badge(label, state === "ER" || state === "open" ? "ok" : "warn")}</td>
+      <td>${esc(p.run ?? "—")}</td><td>${esc(p.queued ?? "—")}</td>
+      <td>${esc(p.nodes_limit ?? "—")}</td><td>${esc(p.lm ?? "—")}</td><td>${esc(p.walltime_limit ?? "—")}</td></tr>`;
+    }).join("");
   }
 }
 function renderDetailSnapshotIfOpen() {
@@ -5070,53 +5476,82 @@ async function daemonToggle(on) {
 
 /* ---- 空闲算力（纯观测筛选，不接入任何任务入口） ---- */
 function idleCfg() {
-  const def = localStorage.getItem("vp_idle_cfg");
-  if (def) { try { return JSON.parse(def); } catch (_) {} }
-  return {vram: 0, util: 10, min: 0, sort: "vram"};
+  // Legacy util remains the GPU threshold; CPU defaults to any observed spare capacity.
+  const defaults = {type: "all", vram: 0, cores: 0, util: 10, cpuUtil: 100, min: 0, sort: "vram"};
+  try { return {...defaults, ...JSON.parse(localStorage.getItem("vp_idle_cfg") || "{}")}; }
+  catch (_) { return defaults; }
 }
 function saveIdleCfgFromInputs() {
-  const cfg = {vram: +document.getElementById("idleVram").value || 0,
-               util: +document.getElementById("idleUtil").value || 0,
-               min: +document.getElementById("idleMin").value || 0,
+  const value = (id, max = Infinity) => Math.max(0, Math.min(max, +document.getElementById(id).value || 0));
+  const cfg = {type: document.getElementById("idleType").value,
+               vram: value("idleVram"), cores: value("idleCores"),
+               util: value("idleUtil", 100), cpuUtil: value("idleCpuUtil", 100),
+               min: Math.ceil(value("idleMin", 2880)),
                sort: document.getElementById("idleSort").value};
   localStorage.setItem("vp_idle_cfg", JSON.stringify(cfg));
   return cfg;
 }
 function restoreIdleInputs() {
   const c = idleCfg();
+  document.getElementById("idleType").value = ["all", "cpu", "gpu"].includes(c.type) ? c.type : "all";
   document.getElementById("idleVram").value = c.vram;
+  document.getElementById("idleCores").value = c.cores;
   document.getElementById("idleUtil").value = c.util;
+  document.getElementById("idleCpuUtil").value = c.cpuUtil;
   document.getElementById("idleMin").value = c.min;
-  document.getElementById("idleSort").value = c.sort;
+  document.getElementById("idleSort").value = ["vram", "cores", "util", "name"].includes(c.sort) ? c.sort : "vram";
+  syncIdleInputs();
 }
-function gpuPersistMinutes(server, gpuIdx, utilMax, wantMin) {
-  /* 用缓存的分钟桶判断“持续空闲”；返回 minutes 计数 / null(数据不足) / "snap"(仅快照) */
+function syncIdleInputs() {
+  const type = document.getElementById("idleType").value;
+  document.getElementById("idleVram").disabled = type === "cpu";
+  document.getElementById("idleUtil").disabled = type === "cpu";
+  document.getElementById("idleCores").disabled = type === "gpu";
+  document.getElementById("idleCpuUtil").disabled = type === "gpu";
+}
+function idleTypeChanged() {
+  const type = document.getElementById("idleType").value;
+  const sort = document.getElementById("idleSort");
+  if (type === "cpu" && sort.value === "vram") sort.value = "cores";
+  if (type === "gpu" && sort.value === "cores") sort.value = "vram";
+  syncIdleInputs();
+  renderIdlePool();
+}
+function idlePersistMinutes(server, spanOf, utilMax, wantMin) {
+  /* 连续分钟桶的最高利用率都需达标；断档、缺测或过期不算空闲。 */
   if (!wantMin) return "snap";
   const raw = TREND[server]?.buckets || [];
   if (!raw.length) return null;
-  const latest = raw[raw.length - 1].t;
-  const from = latest - wantMin * 60;
-  let okMin = 0, seen = 0;
-  for (const b of raw) {
-    if (b.t < from) continue;
-    const span = (b.g || {})[String(gpuIdx)];
-    if (!span) continue;
-    seen++;
-    const worst = span[1] ?? span[0] ?? 999;
-    if (worst <= utilMax) okMin++;
+  const now = Math.floor(Date.now() / 60000) * 60;
+  const buckets = new Map(raw.filter(b => Number.isFinite(b.t) && b.t <= now).map(b => [b.t, b]));
+  const latest = Math.max(...buckets.keys());
+  if (now - latest > 120) return null;
+  for (let i = 0; i < wantMin; i++) {
+    const b = buckets.get(latest - i * 60);
+    const span = b && spanOf(b);
+    const worst = span?.[1] ?? span?.[0];
+    if (!Number.isFinite(worst)) return null;
+    if (worst > utilMax) return i;
   }
-  return seen >= Math.ceil(wantMin * 0.6) ? Math.round(okMin) : null;
+  return wantMin;
+}
+function gpuPersistMinutes(server, gpuIdx, utilMax, wantMin) {
+  return idlePersistMinutes(server, b => (b.g || {})[String(gpuIdx)], utilMax, wantMin);
+}
+function cpuPersistMinutes(server, utilMax, wantMin) {
+  return idlePersistMinutes(server, b => b.c, utilMax, wantMin);
 }
 let IDLE_HIST_BUSY = false;
 function ensureIdleHistory() {
-  /* 空闲页需要的分钟桶逐台补取（只打一次，失败不重试直到下次进入页面） */
+  /* 随资源快照补取分钟桶，同一份历史在一分钟内复用。 */
   if (IDLE_HIST_BUSY) return;
   IDLE_HIST_BUSY = true;
-  const pending = STATE.servers.filter(s => s.connected && !TREND[s.name]);
+  const pending = STATE.servers.filter(s => s.connected &&
+    (!TREND[s.name] || Date.now() - (TREND[s.name]._idleFetchedAt || 0) >= 60000));
   Promise.all(pending.map(s =>
     api("monitor.history", {server: s.name, days: 2, bucket_hours: 48,
                             with_buckets: true})
-      .then(r => { if (r.ok) { TREND[s.name] = r; } })
+      .then(r => { if (r.ok) { TREND[s.name] = {...r, _idleFetchedAt: Date.now()}; } })
       .catch(() => {}))).then(() => {
     IDLE_HIST_BUSY = false;
     if (MVIEW === "idle") renderIdlePool();
@@ -5129,38 +5564,74 @@ function renderIdlePool() {
   for (const s of STATE.servers.filter(x => x.connected)) {
     const r = CURRENT_METRICS[s.name];
     if (!r || !r.ok) continue;
+    if (cfg.type !== "gpu") {
+      const cpu = r.cpu || {}, mem = r.mem || {};
+      const util = Number.isFinite(cpu.usage_pct) && cpu.usage_pct >= 0 && cpu.usage_pct <= 100 ? cpu.usage_pct : null;
+      const cores = Number.isFinite(cpu.cores) && cpu.cores > 0 ? cpu.cores : null;
+      const free = util !== null && cores !== null ? cores * (1 - util / 100) : null;
+      const persist = cpuPersistMinutes(s.name, cfg.cpuUtil, cfg.min);
+      cards.push({srv: s.name, type: "cpu", util, free, cores, mem, load: r.load || {}, persist,
+                  avail: free === null ? null : free > 0 && free >= cfg.cores && util <= cfg.cpuUtil});
+    }
+    if (cfg.type === "cpu") continue;
     for (const g of r.gpus || []) {
-      const free = +(g.mem_total_gb - g.mem_used_gb).toFixed(1);
-      const okVram = free >= cfg.vram;
-      const okUtil = g.util_pct <= cfg.util;
-      const avail = okVram && okUtil;
-      cards.push({srv: s.name, g, free,
+      const free = Number.isFinite(g.mem_total_gb) && Number.isFinite(g.mem_used_gb)
+        ? Math.max(0, g.mem_total_gb - g.mem_used_gb) : null;
+      const util = Number.isFinite(g.util_pct) && g.util_pct >= 0 && g.util_pct <= 100 ? g.util_pct : null;
+      const avail = free === null || util === null ? null : free >= cfg.vram && util <= cfg.util;
+      cards.push({srv: s.name, type: "gpu", g, free, util,
                   persist: gpuPersistMinutes(s.name, g.index, cfg.util, cfg.min),
                   avail});
     }
   }
+  const capacity = (c, type) => c.type === type ? c.free ?? -1 : -2;
   cards.sort((a, b) => cfg.sort === "util"
-    ? a.g.util_pct - b.g.util_pct
-    : cfg.sort === "name" ? a.srv.localeCompare(b.srv) || b.free - a.free
-                          : b.free - a.free);
+    ? (a.util ?? Infinity) - (b.util ?? Infinity)
+    : cfg.sort === "name" ? a.srv.localeCompare(b.srv) || a.type.localeCompare(b.type)
+    : capacity(b, cfg.sort === "cores" ? "cpu" : "gpu") - capacity(a, cfg.sort === "cores" ? "cpu" : "gpu"));
   grid.innerHTML = cards.length ? cards.map(c => {
-    const bad = !c.avail;
-    const persistTxt = c.persist === null ? "?" :
+    const durationOk = !cfg.min || (typeof c.persist === "number" && c.persist >= cfg.min);
+    const unknown = c.avail === null || (c.avail && cfg.min > 0 && c.persist === null);
+    const good = c.avail && durationOk;
+    const status = unknown ? "待确认" : good ? "符合条件" : "未达条件";
+    const tone = good ? "ok" : "warn";
+    const fmt = value => Number.isFinite(value) ? +value.toFixed(1) : "?";
+    const persistTxt = c.persist === null ? "待确认（历史不足）" :
                        c.persist === "snap" ? "仅当前快照" : `≥ ${c.persist} 分`;
-    return `<div class="msrv" style="cursor:default">
-      <h3><span class="dot ${bad ? "err" : ""}" style="${bad ? "" : "background:var(--ok)"}"></span>
-        ${esc(c.srv)} · GPU ${c.g.index}
-        <span style="margin-left:auto">${badge(bad ? "不可用" : "可用", bad ? "err" : "ok")}</span></h3>
-      <div style="font-size:12px;color:var(--fg2)">${esc(c.g.name)}</div>
-      <div class="msrvfoot"><span>空闲显存 <b style="color:var(--fg)">${c.free} GB</b></span>
-        <span>利用率 <b style="color:var(--fg)">${c.g.util_pct}%</b></span>
-        <span>温度 <b style="color:${c.g.temp_c >= (CFG.temperature_alert_c ?? 85) ? "var(--err)" : "var(--fg)"}">${c.g.temp_c}°C</b></span>
+    const isCpu = c.type === "cpu";
+    const label = isCpu ? "CPU" : `GPU ${c.g.index}`;
+    const utilMax = isCpu ? cfg.cpuUtil : cfg.util;
+    const reasons = [];
+    if (c.avail === null) reasons.push(`${isCpu ? "CPU" : "GPU"} 数据不完整，请重扫资源`);
+    if (c.util !== null && c.util > utilMax)
+      reasons.push(`利用率 ${fmt(c.util)}% 超过上限 ${utilMax}%`);
+    if (isCpu && c.free === 0) reasons.push("当前没有估算空闲核数");
+    else if (c.free !== null && c.free < (isCpu ? cfg.cores : cfg.vram))
+      reasons.push(isCpu ? `估算空闲 ${fmt(c.free)} 核，低于要求的 ${cfg.cores} 核`
+                         : `空闲显存 ${fmt(c.free)} GB，低于要求的 ${cfg.vram} GB`);
+    if (cfg.min && c.persist === null) reasons.push("历史不足或已过期，持续时长待确认");
+    else if (!durationOk) reasons.push(`连续低利用率仅 ${c.persist} 分钟，少于要求的 ${cfg.min} 分钟`);
+    const desc = isCpu
+      ? `${c.srv} CPU：估算空闲 ${fmt(c.free)} / ${fmt(c.cores)} 核，利用率 ${fmt(c.util)}%，可用内存 ${fmt(c.mem.available_gb)} GB`
+      : `${c.srv} GPU${c.g.index}：空闲显存 ${fmt(c.free)} GB，利用率 ${fmt(c.util)}%`;
+    return `<div class="msrv">
+      <h3><span class="dot ${good ? "" : tone}" style="background:var(--${tone})"></span>
+        ${esc(c.srv)} · ${esc(label)}
+        <span style="margin-left:auto">${badge(status, tone)}</span></h3>
+      <div class="idle-note">${isCpu ? `${fmt(c.cores)} 逻辑核 · 1 分钟负载 ${fmt(c.load.one)}` : esc(c.g.name)}</div>
+      <div class="msrvfoot">${isCpu
+        ? `<span>估算空闲 <b>${fmt(c.free)} / ${fmt(c.cores)} 核</b></span>
+           <span>可用内存 <b>${fmt(c.mem.available_gb)} / ${fmt(c.mem.total_gb)} GB</b></span>`
+        : `<span>空闲显存 <b>${fmt(c.free)} GB</b></span>
+           <span>温度 <b style="color:${c.g.temp_c >= (CFG.temperature_alert_c ?? 85) ? "var(--err)" : "var(--fg)"}">${fmt(c.g.temp_c)}°C</b></span>`}
+        <span>利用率 <b>${fmt(c.util)}%</b></span>
         <span>持续 ${persistTxt}</span></div>
-      <div style="margin-top:8px;display:flex;justify-content:flex-end;gap:8px">
+      ${reasons.length ? `<div class="idle-note idle-reason">${esc(reasons.join("；"))}</div>` : ""}
+      <div class="idle-actions">
         <button class="btn ghost" onclick="copyIdle(this)"
-          data-desc="${esc(c.srv)} GPU${c.g.index}：空闲显存 ${c.free} GB，利用率 ${c.g.util_pct}%">复制资源描述</button>
+          data-desc="${esc(desc)}">复制资源描述</button>
       </div></div>`;
-  }).join("") : `<div class="empty">没有匹配的 GPU——放宽条件或在总览页点「刷新资源」</div>`;
+  }).join("") : `<div class="empty">暂无${cfg.type === "cpu" ? " CPU" : cfg.type === "gpu" ? " GPU" : " CPU / GPU"}资源数据——连接服务器后点击「重扫资源」</div>`;
 }
 function copyIdle(btn) {
   navigator.clipboard.writeText(btn.dataset.desc).then(
@@ -5270,11 +5741,12 @@ async function saveSkillModal() {
 }
 
 /* ===================== 启动 ===================== */
-refreshServers().then(() => Promise.all([
-  loadSnapshot(), loadSettings(), loadSessions(true), refreshProjects(),
+restoreIdleInputs();
+refreshServers().then(() => { pickFileServer(); });
+Promise.all([
+  loadSettings(), loadSessions(true), refreshProjects(),
   refreshWorkflowCenter(),
-])).then(() => {
-  pickFileServer();  // 启动即为文件页预填默认服务器的根目录
+]).then(() => {
   // 恢复最近会话的历史气泡
   if (CURRENT_SESSION) openSession(CURRENT_SESSION);
   else restoreChatDraft();

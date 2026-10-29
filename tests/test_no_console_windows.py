@@ -34,6 +34,19 @@ class TestGatewayRunner:
                                                  timeout=30)
         assert (rc, stdout) == (0, "out")
         assert seen.get("creationflags") == NO_WINDOW
+        assert seen.get("stdin") == subprocess.DEVNULL
+
+    def test_explicit_input_is_kept_for_gateway_credentials(self, monkeypatch):
+        from rsci.gateway import transport
+        seen = {}
+        def fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return subprocess.CompletedProcess(cmd, 0, "{}", "")
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        transport.default_runner(["ssh", "host", "credential-connect"],
+                                 timeout=30, input_data='{"test":"payload"}')
+        assert seen["input"] == '{"test":"payload"}'
+        assert "stdin" not in seen
 
     def test_interactive_run_keeps_the_current_console(self, monkeypatch):
         """capture=False is the CLI login: the user types the password there."""

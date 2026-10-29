@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": "",
+  "stderr": "",
+  "truncated": false,
+  "command": "qstat -u wuhong"
+}

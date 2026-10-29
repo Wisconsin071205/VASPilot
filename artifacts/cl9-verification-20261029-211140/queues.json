@@ -1,0 +1,6 @@
+{
+  "diagnostic": "queues",
+  "ok": true,
+  "output": "Queue              Max    Tot   Ena   Str   Que   Run   Hld   Wat   Trn   Ext T   Cpt\n----------------   ---   ----    --    --   ---   ---   ---   ---   ---   --- -   ---\nshort               20      5   yes   yes     2     1     2     0     0     0 E     0\nlong                20      0   yes   yes     0     0     0     0     0     0 E     0\natk                  2      0   yes   yes     0     0     0     0     0     0 E     0\nnew                100      0   yes   yes     0     0     0     0     0     0 E     0\natk2                 3      0   yes   yes     0     0     0     0     0     0 E     0\nnormal              20      3   yes   yes     2     1     0     0     0     0 E     0\ncheck              100      0   yes   yes     0     0     0     0     0     0 E     0\n",
+  "server": "cl9"
+}

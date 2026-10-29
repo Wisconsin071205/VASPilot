@@ -79,17 +79,20 @@ class GatewayClient:
 
     # ---------------------------------------------------------------- helpers
     def _call(self, event: str, args: list[str], *, timeout: int = 180,
+              reconnect: bool = True, prepare: bool = True,
               **audit_fields) -> dict:
         server = self._server_from_args(args, audit_fields)
         try:
-            document = self._transport_for(server).run_gateway(
-                args, timeout=timeout)
+            options = {"timeout": timeout}
+            if not prepare:
+                options["prepare"] = False
+            document = self._transport_for(server).run_gateway(args, **options)
         except AuthRequiredError:
             # A Vlab-routed target may have lost its ControlMaster while the
             # outer Vlab connection remains healthy.  If the user explicitly
             # saved a current local credential, establish a new target
             # session through the encrypted outer channel and retry once.
-            if not server:
+            if not server or not reconnect:
                 raise
             entry = self.server_entry(server)
             if getattr(entry, "route", "vlab") == "direct":
@@ -237,7 +240,8 @@ class GatewayClient:
             "--root", remote_root, "--persist", persist,
             "--scheduler", scheduler,
             "--auth-mode", auth_mode]
-            + (["--auto-connect"] if auto_connect else []))
+            + (["--auto-connect"] if auto_connect else []),
+            timeout=15, reconnect=False)
         # keep the local mirror in sync (metadata only)
         self.config.upsert_server(entry)
         if credential_password:
@@ -248,7 +252,7 @@ class GatewayClient:
         if set_default:
             self.config.set_default_server(name)
             self.transport.run_gateway(
-                ["server-set-default", name])
+                ["server-set-default", name], timeout=15)
         return result
 
     def server_edit(self, name: str, *, target: str | None = None,
@@ -306,20 +310,17 @@ class GatewayClient:
             persist_value = persist or entry.persist or "8h"
             scheduler_value = scheduler or entry.scheduler or "auto"
             auth_value = auth_mode or entry.auth_mode
-            try:
-                result = self._call("server.edit", [
-                    "server-edit", name, "--target", target_value,
-                    "--port", str(port_value), "--root", root_value,
-                    "--persist", persist_value, "--scheduler", scheduler_value,
-                    "--auth-mode", auth_value]
-                    + (["--auto-connect"] if auto_connect else []))
-            except RemoteError:
-                result = self._call("server.add", [
-                    "server-add", name, "--target", target_value,
-                    "--port", str(port_value), "--root", root_value,
-                    "--persist", persist_value, "--scheduler", scheduler_value,
-                    "--auth-mode", auth_value]
-                    + (["--auto-connect"] if auto_connect else []))
+            # server-add is an upsert on the gateway. A single registration
+            # works for both existing and new names; network failure must not
+            # trigger a second, equally slow attempt through server-add.
+            auto_value = entry.auto_connect if auto_connect is None else auto_connect
+            result = self._call("server.add", [
+                "server-add", name, "--target", target_value,
+                "--port", str(port_value), "--root", root_value,
+                "--persist", persist_value, "--scheduler", scheduler_value,
+                "--auth-mode", auth_value]
+                + (["--auto-connect"] if auto_value else []),
+                timeout=15, reconnect=False)
             if target is not None:
                 entry.target = target
             if port is not None:
@@ -356,7 +357,7 @@ class GatewayClient:
             args += ["--auth-mode", auth_mode]
         if auto_connect is not None and auto_connect:
             args += ["--auto-connect"]
-        result = self._call("server.edit", args)
+        result = self._call("server.edit", args, timeout=15, reconnect=False)
         # refresh the mirror entry
         if target is not None:
             entry.target = target
@@ -459,9 +460,10 @@ class GatewayClient:
         self.config.save_servers(entries, default=default)
         return entries
 
-    def status(self, server: str | None = None) -> dict:
+    def status(self, server: str | None = None, *, reconnect: bool = True) -> dict:
         name = self._require(server)
-        return self._call("server.status", ["status", "--server", name])
+        return self._call("server.status", ["status", "--server", name],
+                          timeout=15, reconnect=reconnect)
 
     def connect_interactive(self, server: str | None = None) -> dict:
         name = self._require(server)
@@ -942,34 +944,74 @@ class GatewayClient:
                 "sha256": local_sha, "size": local.stat().st_size}
 
     # ------------------------------------------------------------- job ops
-    def jobs(self, *, server: str | None = None) -> dict:
-        return self._call("job.list", ["jobs", "--server", self._require(server)])
+    def jobs(self, *, server: str | None = None, timeout: int = 180) -> dict:
+        return self._call("job.list", ["jobs", "--server", self._require(server)], timeout=timeout)
 
-    def recent_jobs(self, *, server: str | None = None) -> dict:
-        return self._call("job.recent", ["recent", "--server", self._require(server)])
+    def recent_jobs(self, *, server: str | None = None, timeout: int = 180) -> dict:
+        return self._call("job.recent", ["recent", "--server", self._require(server)], timeout=timeout)
+
+    def inspect_submission(self, directory: str, script: str, *,
+                           server: str | None = None) -> dict:
+        """Observe the deployed submit path without upgrading or submitting."""
+        from datetime import datetime, timezone
+        name = self._require(server)
+        resolved = self._resolve(name, directory)
+        script = valid_filename(script)
+        version = self._call("job.submit_inspect.version", ["version"],
+                             server=name, timeout=20, reconnect=False, prepare=False)
+        if not version.get("submission_inspection"):
+            return {"available": False, "reason": "inspection_unsupported",
+                    "gateway_version": version.get("gateway_version"),
+                    "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "error": "The deployed gateway lacks read-only submit inspection. "
+                    "Update the application gateway, then inspect again; its actual "
+                    "command is not yet verified. No cluster queue change is justified."}
+        result = self._call("job.submit_inspect",
+                            ["submit-inspect", "--server", name, resolved, script],
+                            timeout=90, reconnect=False, prepare=False,
+                            server=name, directory=resolved, script=script)
+        if (result.get("kind") != "current_path_inspection"
+                or result.get("submission_performed") is not False
+                or not isinstance(result.get("command"), str)
+                or result.get("scheduler") not in {"pbs", "slurm"}):
+            raise RemoteError("gateway returned invalid submit-inspection evidence")
+        return {**result, "available": True}
 
     def submit(self, directory: str, script: str, *,
                approval_ref: str = "", server: str | None = None) -> dict:
+        from ..hpc.center import RemoteCenter, stamp
         name = self._require(server)
         resolved_directory = self._resolve(name, directory)
+        center = RemoteCenter(self.config, self, self.audit)
+        identity, submitted_at = center.identity(name), stamp()
         args = ["submit", "--server", name, resolved_directory,
                 valid_filename(script)]
         if approval_ref:
             args += ["--approval-ref", approval_ref[:120]]
         result = self._call("job.submit", args, directory=directory, script=script)
         result.setdefault("directory", resolved_directory)
+        result.update(server_identity=identity, submitted_at=submitted_at)
+        result.setdefault("script", script)
         job_id = str(result.get("job_id") or "")
         if job_id:
+            try:
+                center.record_submission(name, result)
+            except Exception as exc:
+                # A failed local save must never turn acceptance into a retry.
+                # The persisted approval receipt can repair this view later.
+                result.setdefault("record_warnings", []).append(
+                    f"作业已提交，任务中心登记待恢复：{str(exc)[:200]}")
             try:
                 from ..core.jobhistory import JobLedger
                 JobLedger(self.config.jobs_dir).seed_submitted(
                     name, job_id, name=script,
                     partition=str(result.get("partition") or ""),
                     directory=resolved_directory)
-            except Exception:
+            except Exception as exc:
                 # Submission succeeded remotely; local bookkeeping must not
                 # turn that success into a misleading retry/double-submit.
-                pass
+                result.setdefault("record_warnings", []).append(
+                    f"作业已提交，本机历史登记待恢复：{str(exc)[:200]}")
         if self.audit:
             self.audit.record("job.submit", outcome="ok", server=name,
                               job_id=str(result.get("job_id", "")),
@@ -1306,6 +1348,11 @@ def _parse_metric_sections(sections: dict) -> dict:
     if sched_lines:
         kind = sched_lines[0].strip()
         queue["kind"] = kind
+        queue["raw"] = "\n".join(str(sections.get("sched", "")).splitlines()[1:]).strip()
+        queue["source_command"] = ("sinfo -h -o '%R|%a|%D|%C'" if kind == "slurm"
+                                   else "qstat -q" if kind == "pbs" else "")
+        if kind == "pbs":
+            queue["source_note"] = "队列汇总包含该队列所有用户；原始采集最多返回 20 行。Que 可能包含暂挂等尚未运行的作业。"
         partitions = []
         if kind == "slurm":
             for line in sched_lines[1:]:
@@ -1322,16 +1369,36 @@ def _parse_metric_sections(sections: dict) -> dict:
                     "cpus_total": int(match.group(4)) if match else None,
                 })
         elif kind == "pbs":
-            # qstat -q columns: Queue Memory CPU_Time Time_In_Q Run Que Lm State
+            # Torque adds a Node column; PBS variants omit it. CPU Time is
+            # a single heading even when printed with a space. Map the real
+            # header so Node/Lm can never be mistaken for Run/State.
+            columns = {}
             for line in sched_lines[1:]:
+                if line.lstrip().startswith("Queue "):
+                    header = _re.sub(r"CPU\s+Time", "CPU_Time", line, flags=_re.I)
+                    columns = {word.lower(): i for i, word in enumerate(header.split())}
+                    continue
                 parts = line.split()
-                if len(parts) >= 8 and not parts[0].startswith("-") \
-                        and parts[0] != "Queue":
-                    partitions.append({
-                        "queue": parts[0][:32], "state": parts[7][:16],
-                        "run": _float(parts[4]), "queued": _float(parts[5]),
-                        "lm": parts[6],
-                    })
+                if not {"queue", "run", "que", "lm", "state"} <= columns.keys():
+                    continue
+                if len(parts) <= max(columns.values()) or parts[0].startswith("-"):
+                    continue
+                def cell(*names):
+                    index = next((columns[n] for n in names if n in columns), None)
+                    return parts[index] if index is not None else None
+                def count(value):
+                    return int(value) if value is not None and value.isdigit() else None
+                if cell("run") not in ("--", "-") and count(cell("run")) is None:
+                    continue
+                partitions.append({
+                    "queue": parts[0][:64], "state": " ".join(parts[columns["state"]:])[:32],
+                    "run": count(cell("run")), "queued": count(cell("que")),
+                    "lm": cell("lm"), "nodes_limit": count(cell("node", "nodes")),
+                    "memory_limit": cell("memory"), "cpu_time_limit": cell("cpu_time"),
+                    "walltime_limit": cell("walltime", "time_in_q"),
+                })
+            if not partitions and queue["raw"]:
+                queue["parse_warning"] = "未能识别队列表头，请展开原始输出核对。"
         queue["partitions"] = partitions
 
     return {"cpu": cpu, "load": load, "mem": mem, "disks": disks,

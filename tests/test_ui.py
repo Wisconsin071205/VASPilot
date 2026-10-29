@@ -667,6 +667,51 @@ class TestServerAdminApi:
         raw = json.dumps(ui["app"].config.load_settings(), ensure_ascii=False)
         assert password not in raw and seed not in raw
 
+    @pytest.mark.parametrize("code", ["host_key_failed", "host_key_unknown"])
+    def test_saved_credentials_host_key_opens_confirmation_terminal(self, ui, monkeypatch, code):
+        from rsci.core.errors import RemoteError
+
+        app = ui["app"]
+        app.config.save_server_credentials("cl9", password="test-password")
+        opened = []
+
+        def connect(*args, **kwargs):
+            raise RemoteError("host fingerprint needs confirmation",
+                              detail={"gateway_code": code})
+
+        def terminal(name):
+            opened.append(name)
+            return {"opened": True, "server": name, "route": "vlab"}
+
+        monkeypatch.setattr(app.client(), "connect", connect)
+        monkeypatch.setattr(app.client(), "open_login_terminal", terminal)
+        result = call(ui, "server.connect", {"server": "cl9"})
+        assert result["ok"] and result["opened"]
+        assert result["automatic"] is False
+        assert result["host_key_confirmation"] is True
+        assert "指纹" in result["note"]
+        assert opened == ["cl9"]
+        assert not result.get("connected"), "opening a terminal is not a successful login"
+
+    @pytest.mark.parametrize("code", ["credential_rejected", "connect_failed", "host_key_changed", None])
+    def test_other_connection_errors_do_not_open_confirmation(self, ui, monkeypatch, code):
+        from rsci.core.errors import RemoteError
+
+        app = ui["app"]
+        app.config.save_server_credentials("cl9", password="test-password")
+
+        def connect(*args, **kwargs):
+            raise RemoteError("original error", detail={"gateway_code": code})
+
+        def terminal(name):
+            pytest.fail("must not open a host confirmation for unrelated errors")
+
+        monkeypatch.setattr(app.client(), "connect", connect)
+        monkeypatch.setattr(app.client(), "open_login_terminal", terminal)
+        result = call(ui, "server.connect", {"server": "cl9"})
+        assert not result["ok"]
+        assert result["error"]["message"] == "original error"
+
 
 def sse_chat(ui, body):
     req = urllib.request.Request(

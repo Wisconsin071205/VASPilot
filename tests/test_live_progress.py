@@ -294,7 +294,8 @@ class TestLedgerRemembersWhereJobsRan:
         # the record survives the job finishing and the state changing
         ledger.observe("cl9", [], infer_missing=True)
         row = next(r for r in ledger.merged("cl9") if r["job_id"] == "7")
-        assert row["state"] == "COMPLETED" and row["workdir"] == RUN
+        assert row["state"] == "UNKNOWN" and row["workdir"] == RUN
+        assert row["last_known_state"] == "RUNNING"
 
     def test_relative_paths_are_not_recorded(self, tmp_path):
         from rsci.core.jobhistory import JobLedger
@@ -327,7 +328,7 @@ class TestFinishedJobsInTheConsole:
         state.workdirs = {}
         recent = call(ui, "job.recent", {"server": "cl9"})
         row = next(j for j in recent["jobs"] if j["job_id"] == "5601")
-        assert row["state"] == "COMPLETED" and row["workdir"] == RUN
+        assert row["state"] == "UNKNOWN" and row["workdir"] == RUN
 
         where = call(ui, "job.workdir", {"server": "cl9", "job_id": "5601"})
         assert where["workdir"] == RUN and where["source"] == "record"
@@ -457,7 +458,7 @@ class TestRealStartAndEnd:
         assert job["started_at"].startswith("2026-09-23T19:49:28")
         assert job["completed_at"].startswith("2026-09-23T20:30:01")
 
-    def test_the_console_settles_a_vanished_job(self, ui):
+    def test_file_times_do_not_prove_a_vanished_job_completed(self, ui):
         from datetime import datetime
         from tests.test_ui import call
         state = ui["state"]
@@ -471,8 +472,8 @@ class TestRealStartAndEnd:
         state.timings = {"5701": (now - 600, now - 1)}
         first = call(ui, "job.recent", {"server": "cl9"})
         row = next(j for j in first["jobs"] if j["job_id"] == "5701")
-        assert row["assumed_end"] is False and row["completion_source"] == "files"
-        assert 590 <= row["duration_seconds"] <= 600
-        asked = len(state.timing_asks)
+        assert row["state"] == "UNKNOWN" and row["completed_at"] is None
+        assert row["duration_seconds"] is None
+        asked = len(getattr(state, "timing_asks", []))
         call(ui, "job.recent", {"server": "cl9"})
-        assert len(state.timing_asks) == asked  # settled once
+        assert len(getattr(state, "timing_asks", [])) == asked

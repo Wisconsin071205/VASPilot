@@ -144,7 +144,7 @@ def parse_qstat(raw: str) -> list[dict[str, Any]]:
 def merge_job_state(rows: list[dict[str, Any]]) -> str:
     """Collapse normalized rows into one lifecycle state."""
     if not rows:
-        return "COMPLETED"
+        return "UNKNOWN"
     states = [r.get("state", "UNKNOWN") for r in rows]
     for state in states:
         if state in RUNNING_STATES:

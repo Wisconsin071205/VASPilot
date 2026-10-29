@@ -52,6 +52,11 @@ def test_ui_import_edit_plan_approval_and_safe_download(ui):
     assert not refused["ok"]
     doc = call(ui, "project.read", {"name": "csv-project", "file": "data/data.csv"})
     assert doc["sha256"] == imported["sha256"]
+    from pathlib import Path
+    assert Path(doc["path"]) == Path(created["path"]) / "data" / "data.csv"
+    assert Path(doc["path"]).read_bytes() == data
+    listing = call(ui, "project.files", {"name": "csv-project"})
+    assert Path(listing["path"]) == Path(created["path"])
     assert not call(ui, "project.write", {"name": "csv-project", "file": "data/data.csv",
                                           "content": "overwrite", "expected_sha256": "missing"})["ok"]
     request = urllib.request.Request(ui["base"] + "/api/project.download",

@@ -17,11 +17,14 @@ Failure classification (fail closed everywhere):
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+import math
 import os
 import re
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -47,7 +50,8 @@ _AUTH_HINTS = (
 # The value is used in a remote shell command; rejecting metacharacters keeps
 # the convenience path from becoming an arbitrary shell command sink.
 _SAFE_GATEWAY_PATH = re.compile(r"^(?:~/|/)[A-Za-z0-9._/-]+$")
-_MIN_GATEWAY_VERSION = (1, 5, 1)
+_MIN_GATEWAY_VERSION = (1, 5, 3)
+_MIN_WORKSPACE_GATEWAY_VERSION = (0, 1, 1)
 
 
 def default_runner(cmd: list[str], *, timeout: int, capture: bool = True,
@@ -57,9 +61,11 @@ def default_runner(cmd: list[str], *, timeout: int, capture: bool = True,
     kwargs: dict = {"timeout": timeout}
     if input_data is not None:
         kwargs["input"] = input_data
-    elif env and env.get("SSH_ASKPASS_REQUIRE") == "force":
-        # Force OpenSSH to consult SSH_ASKPASS instead of attempting to read a
-        # password from the hosting process' console/stdin.
+    elif capture or (env and env.get("SSH_ASKPASS_REQUIRE") == "force"):
+        # Background commands must never inherit the desktop's console input
+        # handle: Windows OpenSSH can wait on it even in BatchMode. Explicit
+        # JSON input above remains available for credential-connect/uploads.
+        # Interactive CLI sessions (capture=False) keep their real terminal.
         kwargs["stdin"] = subprocess.DEVNULL
     if capture:
         kwargs.update(capture_output=True, text=True,
@@ -99,6 +105,29 @@ class SshTransport:
         self._gateway_lock = threading.Lock()
         self._workspace_gateway_ready = False
         self._workspace_gateway_lock = threading.Lock()
+        self._request_budget = threading.local()
+
+    @contextmanager
+    def _catalog_budget(self, timeout: int, label: str = "保存服务器配置"):
+        """Bound the complete save, including helper preparation and locks."""
+        prior = getattr(self._request_budget, "deadline", None)
+        prior_label = getattr(self._request_budget, "label", "")
+        self._request_budget.deadline = time.monotonic() + timeout
+        self._request_budget.label = label
+        try:
+            yield
+        finally:
+            self._request_budget.deadline = prior
+            self._request_budget.label = prior_label
+
+    def _remaining_budget(self) -> float | None:
+        deadline = getattr(self._request_budget, "deadline", None)
+        if deadline is None:
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RemoteError(f"{self._request_budget.label}超时，请检测 Vlab 连接后重试。")
+        return remaining
 
     # -- command construction -----------------------------------------------
     def _base(self, *, batch: bool = True, tty: bool = False) -> list[str]:
@@ -110,7 +139,8 @@ class SshTransport:
         if tty:
             cmd += ["-tt"]
         # heartbeat keepalives so idle NAT/firewall sessions survive
-        cmd += ["-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"]
+        cmd += ["-o", "ConnectTimeout=10", "-o", "ConnectionAttempts=1",
+                "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4"]
         cmd += ["-o", "StrictHostKeyChecking=yes", "-o", "UpdateHostKeys=no",
                 f"{self.user}@{self.host}"]
         return cmd
@@ -120,6 +150,11 @@ class SshTransport:
         if rc == 0:
             return
         low = (stderr or "").lower()
+        if any(hint in low for hint in ("connection timed out", "connection refused",
+                                        "could not resolve hostname", "no route to host")):
+            raise RemoteError(
+                "无法连接 Vlab SSH；请检查校园网/VPN、主机地址和端口，然后重新检测",
+                detail={"stderr": stderr.strip()[:300]})
         if "host key verification failed" in low or "host key has changed" in low:
             raise RemoteError(
                 "Vlab host key verification failed; the gateway fails closed "
@@ -142,6 +177,9 @@ class SshTransport:
              capture: bool = True, tty: bool = False,
              input_data: str | None = None):
         """Run one outer Vlab command and turn hangs into a useful error."""
+        remaining = self._remaining_budget()
+        if remaining is not None:
+            timeout = min(timeout, math.ceil(remaining))
         try:
             kwargs = {"timeout": timeout, "capture": capture, "tty": tty}
             if input_data is not None:
@@ -251,7 +289,13 @@ class SshTransport:
         """Check the Vlab helper and deploy it once when it is missing."""
         if not self.auto_deploy_gateway:
             return False
-        with self._gateway_lock:
+        remaining = self._remaining_budget()
+        acquired = (self._gateway_lock.acquire(timeout=remaining) if remaining is not None
+                    else self._gateway_lock.acquire())
+        if not acquired:
+            action = "检测" if getattr(self._request_budget, "label", "").startswith("检测") else "保存"
+            raise RemoteError(f"Vlab 网关正在处理其他请求，{action}等待超时，请稍后重试。")
+        try:
             if self._gateway_ready:
                 return False
             if self._probe_gateway(timeout=min(30, max(5, timeout))):
@@ -260,6 +304,8 @@ class SshTransport:
             self._deploy_gateway(timeout=timeout)
             self._gateway_ready = True
             return True
+        finally:
+            self._gateway_lock.release()
 
     def _probe_workspace_gateway(self, *, timeout: int = 30) -> bool:
         path = self._workspace_gateway_path()
@@ -272,9 +318,13 @@ class SshTransport:
                 return False
             try:
                 document = self.parse_gateway_document(stdout, stderr)
-            except RemoteError:
+                version = tuple(int(part) for part in str(
+                    document.get("version") or "0.0.0").split(".")[:3])
+            except (RemoteError, TypeError, ValueError):
                 return False
-            return bool(document.get("version"))
+            # 0.1.0 reads the retired ~/.config/vaspilot catalog. It may
+            # report a valid path as invalid because its old root is blank.
+            return version >= _MIN_WORKSPACE_GATEWAY_VERSION
         if rc in (1, 127):
             return False
         self._classify(rc, stdout, stderr)
@@ -332,9 +382,23 @@ class SshTransport:
     # -- gateway JSON protocol -------------------------------------------------
     def run_gateway(self, args: list[str], *, timeout: int = 180,
                     tty: bool = False, capture: bool = True,
-                    input_data: str | None = None) -> dict:
+                    input_data: str | None = None, prepare: bool = True) -> dict:
         """Invoke one gateway operation; return its parsed JSON document."""
-        self._ensure_gateway(timeout=timeout)
+        if args and args[0] in {"server-add", "server-edit", "server-set-default", "status"}:
+            label = "检测服务器状态" if args[0] == "status" else "保存服务器配置"
+            with self._catalog_budget(min(timeout, 15), label):
+                return self._run_gateway(args, timeout=timeout, tty=tty,
+                                         capture=capture, input_data=input_data,
+                                         prepare=prepare)
+        return self._run_gateway(args, timeout=timeout, tty=tty,
+                                 capture=capture, input_data=input_data,
+                                 prepare=prepare)
+
+    def _run_gateway(self, args: list[str], *, timeout: int, tty: bool,
+                     capture: bool, input_data: str | None,
+                     prepare: bool = True) -> dict:
+        if prepare:
+            self._ensure_gateway(timeout=timeout)
         import shlex
         quoted = " ".join(shlex.quote(str(a)) for a in args)
         cmd = self._base(batch=not tty, tty=tty) + [
@@ -416,7 +480,10 @@ class SshTransport:
             if code == "disconnected":
                 raise AuthRequiredError(
                     f"server session required: {message}")
-            raise RemoteError(message, detail={"gateway_code": code})
+            detail = {"gateway_code": code}
+            if isinstance(document["error"].get("submission"), dict):
+                detail["submission"] = document["error"]["submission"]
+            raise RemoteError(message, detail=detail)
         return document
 
     # -- interactive terminal ----------------------------------------------------
@@ -706,8 +773,10 @@ class DirectSshTransport(SshTransport):
         return f"{env} python3 {self.helper_path} {quoted}".strip()
 
     def run_gateway(self, args: list[str], *, timeout: int = 180,
-                    tty: bool = False, capture: bool = True) -> dict:
-        self._ensure_helper(timeout=timeout)
+                    tty: bool = False, capture: bool = True,
+                    prepare: bool = True) -> dict:
+        if prepare:
+            self._ensure_helper(timeout=timeout)
         cmd = self._base(batch=not tty, tty=tty) + [self._direct_command(args)]
         rc, stdout, stderr = self._run(cmd, timeout=timeout,
                                        capture=capture, tty=tty)

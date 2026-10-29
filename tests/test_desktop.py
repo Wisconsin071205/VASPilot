@@ -190,12 +190,29 @@ class TestPythonnetRuntime:
 
 
 def _write_ui_json(home: Path, pid: int) -> None:
+    from rsci.core.runtime import source_fingerprint
     (home / "ui.json").write_text(json.dumps(
-        {"url": "http://127.0.0.1:8931", "token": "live-token", "pid": pid}),
+        {"url": "http://127.0.0.1:8931", "token": "live-token", "pid": pid,
+         "source_fingerprint": source_fingerprint()}),
         encoding="utf-8")
 
 
 class TestReuse:
+    @pytest.mark.parametrize("fingerprint", [None, "old-source"])
+    def test_old_backend_is_not_reused(self, config_home, fake_webview,
+                                      fake_serve, monkeypatch, fingerprint):
+        from rsci import desktop
+        _write_ui_json(config_home, pid=4242)
+        path = config_home / "ui.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["source_fingerprint"] = fingerprint
+        path.write_text(json.dumps(data), encoding="utf-8")
+        monkeypatch.setattr(desktop, "_pid_alive", lambda pid: True)
+        monkeypatch.setattr(desktop, "_healthz_ok", lambda base: True)
+        desktop.main(app=None, platform="win32")
+        assert len(fake_serve["calls"]) == 1
+        assert fake_webview["windows"][0]["url"] == fake_serve["url"]
+
     def test_reuses_live_console_without_starting_or_stopping(
             self, config_home, fake_webview, fake_serve, monkeypatch):
         from rsci import desktop

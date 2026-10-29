@@ -1,0 +1,98 @@
+{
+  "ok": true,
+  "attempt": {
+    "id": "ps-iieCDa1jERV_",
+    "server": "cl9",
+    "directory": "/public/home/wuhong/NaOH_opt/rerun_20261025",
+    "script": "run.job.sh",
+    "status": "uncertain",
+    "created_at": "2026-10-29T13:11:35+00:00",
+    "expires_at": "2026-10-29T13:41:35+00:00",
+    "submission_started_at": "2026-10-29T13:12:18.986910+00:00",
+    "settled_at": "2026-10-29T13:12:20+00:00",
+    "approval_received": true,
+    "submission_attempted": true,
+    "awaiting_approval": false,
+    "scheduler_accepted": null,
+    "job_id": "",
+    "requires_remote_reconciliation": true,
+    "error": "RemoteError: remote command failed (rc=191): qsub: submit error (No default queue specified MSG=requested queue not found)"
+  },
+  "current": {
+    "command": "cd -- /public/home/wuhong/NaOH_opt/rerun_20261025 && qsub ./run.job.sh",
+    "default_queue": "batch",
+    "directive_prefix": "#PBS",
+    "directory": "/public/home/wuhong/NaOH_opt/rerun_20261025",
+    "gateway_version": "1.5.3",
+    "kind": "current_path_inspection",
+    "observed_at": "2026-10-29T15:42:03+00:00",
+    "ok": true,
+    "queue_list": "Queue              Max    Tot   Ena   Str   Que   Run   Hld   Wat   Trn   Ext T   Cpt\n----------------   ---   ----    --    --   ---   ---   ---   ---   ---   --- -   ---\nshort               20      6   yes   yes     2     1     3     0     0     0 E     0\nlong                20      0   yes   yes     0     0     0     0     0     0 E     0\natk                  2      0   yes   yes     0     0     0     0     0     0 E     0\nnew                100      0   yes   yes     0     0     0     0     0     0 E     0\natk2                 3      0   yes   yes     0     0     0     0     0     0 E     0\nnormal              20      3   yes   yes     2     1     0     0     0     0 E     0\ncheck              100      0   yes   yes     0     0     0     0     0     0 E     0\n",
+    "queue_list_truncated": false,
+    "scheduler": "pbs",
+    "scheduler_executable": "/public/software/torque-6.1.0/bin/qsub\n",
+    "scheduler_version": "Version: 6.1.0\nCommit: 1d115c5454b46ac0b4a6eb800665c7012bce6639\n",
+    "script": "run.job.sh",
+    "script_directives": [
+      "#PBS -N NaOH_opt",
+      "#PBS -q short",
+      "#PBS -l nodes=1:ppn=12",
+      "#PBS -l walltime=02:00:00",
+      "#PBS -j oe",
+      "#PBS -o NaOH_opt.pbsout"
+    ],
+    "script_directives_complete": true,
+    "server": "cl9",
+    "submission_performed": false,
+    "available": true
+  },
+  "historical_execution_gaps": [
+    "command",
+    "gateway_version",
+    "returncode"
+  ],
+  "findings": [
+    {
+      "code": "historical_execution_incomplete",
+      "scope": "historical",
+      "confidence": "unknown",
+      "message": "This old record lacks some execution facts. Current probe values must not be presented as the command or version used by that old attempt."
+    },
+    {
+      "code": "pbs_path_operand_present",
+      "scope": "current",
+      "confidence": "observed",
+      "message": "The currently deployed command passes ./<script> without the known Torque -- issue. Old failures do not establish that this path will fail."
+    },
+    {
+      "code": "explicit_queue_available",
+      "scope": "current",
+      "confidence": "observed",
+      "message": "The script/command selects a queue that is enabled and started. The default queue is not used when this explicit selection is honored."
+    },
+    {
+      "code": "invalid_default_not_a_prerequisite",
+      "scope": "current",
+      "confidence": "observed",
+      "message": "The server default queue is missing, but correcting that global setting is not a prerequisite for this explicit-queue submission."
+    }
+  ],
+  "repair_plan": [
+    {
+      "target": "verification",
+      "action": "No current configuration change is established by this inspection. Reconcile old attempts and use a newly approved attempt to check whether an error remains; do not promise success or certain failure.",
+      "requires_cluster_admin": false
+    }
+  ],
+  "can_auto_resubmit": false,
+  "verification": "Reconcile any unresolved attempt first. A new submission needs human approval; verify the returned job ID and scheduler state. A read-only inspection does not prove a future job will succeed.",
+  "current_explicit_queue": "short",
+  "current_explicit_queue_enabled": true,
+  "current_default_queue_exists": false,
+  "known_compatibility": {
+    "issue": "torque_6_1_double_dash_script_scanner",
+    "application_fix": "qsub ./<script> instead of qsub -- <script>",
+    "fixed_gateway_release": "1.5.2",
+    "historical_cause_requires": "the command/version actually recorded for that attempt"
+  }
+}

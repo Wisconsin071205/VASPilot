@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": "Server: admin\n    server_state = Active\n    scheduling = True\n    total_jobs = 8\n    state_count = Transit:0 Queued:4 Held:2 Waiting:0 Running:2 Exiting:0 Comp\n\tlete:0 \n    acl_hosts = admin\n    managers = root@admin\n    operators = root@admin\n    default_queue = batch\n    log_events = 2047\n    mail_from = adm\n    query_other_jobs = True\n    resources_assigned.nodect = 5\n    resources_assigned.mem = 25769803776b\n    node_check_rate = 150\n    tcp_timeout = 300\n    job_stat_rate = 300\n    poll_jobs = True\n    down_on_error = True\n    mom_job_sync = True\n    pbs_version = 6.1.0\n    keep_completed = 300\n    next_job_number = 129361\n    net_counter = 0 0 0\n    moab_array_compatible = True\n    nppcu = 1\n    timeout_for_job_delete = 120\n    timeout_for_job_requeue = 120\n    note_append_on_error = True\n\n",
+  "stderr": "",
+  "truncated": false,
+  "command": "qstat -Bf"
+}

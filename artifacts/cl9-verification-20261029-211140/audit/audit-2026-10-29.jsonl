@@ -1,0 +1,21 @@
+{"event": "job.recent", "outcome": "ok", "row_sha256": "e0d9d598a92968b8c9dcf0e44ba84efbf1a5ed324cb0919aafde50bb61ec44f3", "ts": "2026-10-29T13:11:40+00:00"}
+{"event": "job.list", "outcome": "ok", "row_sha256": "85add68ae5ea80dea797094de938863c076f0d5982d7192ca8bde872738e5b03", "ts": "2026-10-29T13:11:40+00:00"}
+{"diagnostic": "queues", "event": "server.diagnostic", "outcome": "ok", "row_sha256": "d5268d6e2aba8bb7555ee859a14256fc93fb20fa42dfff6c6ab972ff81c90ce4", "ts": "2026-10-29T13:11:40+00:00"}
+{"event": "remote.list", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025", "row_sha256": "dc6bec7b796fce2a8450d4e62ed9d65cc8f663daafe07653ab821bf7439609c0", "ts": "2026-10-29T13:11:42+00:00"}
+{"event": "remote.read", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/run.job.sh", "row_sha256": "0807dd9ff64d93ff0b6d7a1251d8da2f1c7f54aa0224dd4bdaeac2797084938b", "ts": "2026-10-29T13:11:42+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "6f6734cc606f74d229bc74bfbd17ea443bcae6d909e3b410828c84cbbc1b2bad", "ts": "2026-10-29T13:12:49+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "6f6734cc606f74d229bc74bfbd17ea443bcae6d909e3b410828c84cbbc1b2bad", "ts": "2026-10-29T13:12:49+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "6f6734cc606f74d229bc74bfbd17ea443bcae6d909e3b410828c84cbbc1b2bad", "ts": "2026-10-29T13:12:49+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "6f6734cc606f74d229bc74bfbd17ea443bcae6d909e3b410828c84cbbc1b2bad", "ts": "2026-10-29T13:12:49+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "6f6734cc606f74d229bc74bfbd17ea443bcae6d909e3b410828c84cbbc1b2bad", "ts": "2026-10-29T13:12:49+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "919065cc0be3c70800ba543b6738eeb5d910dc92695f7176476aa16ec2dfecd6", "ts": "2026-10-29T13:12:50+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "919065cc0be3c70800ba543b6738eeb5d910dc92695f7176476aa16ec2dfecd6", "ts": "2026-10-29T13:12:50+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "919065cc0be3c70800ba543b6738eeb5d910dc92695f7176476aa16ec2dfecd6", "ts": "2026-10-29T13:12:50+00:00"}
+{"event": "gateway.inspect_source", "operation": "read op_submit", "outcome": "ok", "row_sha256": "5f01bd7f6b022ed46e90fdd4ad00dfc86c2c550f4e9809520d271b33cad4ecb9", "ts": "2026-10-29T13:15:53+00:00"}
+{"event": "job.list", "outcome": "ok", "row_sha256": "b56912a2e8f5d690cecf8a9c0060f91061327045677cd0792fdccabd74153319", "ts": "2026-10-29T15:19:27+00:00"}
+{"diagnostic": "queues", "event": "server.diagnostic", "outcome": "ok", "row_sha256": "14daed3e6398de543b53c13cd5932806435e7cfce3d3a1dc82d122dea4bd7443", "ts": "2026-10-29T15:19:27+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "925120dd84274a698bdb0f5ce0f77efac3bef3b419cecb29972dd8f6210e68e7", "ts": "2026-10-29T15:19:28+00:00"}
+{"event": "job.submit_inspect.version", "outcome": "ok", "row_sha256": "4b4e563a2e0698d676bbab762d310a2a6f59ec0ef7c1a89f92d3e3e772a31313", "server": "cl9", "ts": "2026-10-29T15:38:57+00:00"}
+{"event": "gateway.submission_diagnostics", "gateway_version": "1.5.3", "outcome": "ok", "row_sha256": "3dc5ae4d908fc41771889e5b6578db9f13f01528fa5458b6923c0257c66b1474", "ts": "2026-10-29T15:42:02+00:00"}
+{"event": "job.submit_inspect.version", "outcome": "ok", "row_sha256": "32902ee83c13474faed911131733bc6b968169065d9004b5cf2672771cf7e7bd", "server": "cl9", "ts": "2026-10-29T15:42:03+00:00"}
+{"directory": "/public/home/wuhong/NaOH_opt/rerun_20261025", "event": "job.submit_inspect", "outcome": "ok", "row_sha256": "2d1e0ff3200f92f654f1f2cf4c57556596e8c09fbabca80a3a46b14729ebe3a3", "script": "run.job.sh", "server": "cl9", "ts": "2026-10-29T15:42:05+00:00"}

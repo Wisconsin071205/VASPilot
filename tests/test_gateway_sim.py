@@ -292,7 +292,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.5.1"
+        assert result["gateway_version"] == "1.5.3"
 
     def test_transient_credential_connect_is_not_persisted(self, gateway_env):
         password = "transient-password!"
