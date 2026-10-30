@@ -1115,6 +1115,7 @@ results/means.svg</textarea>
     <aside id="cfgnav">
       <div class="cfgitem on" data-c="providers">模型服务</div>
       <div class="cfgitem" data-c="conn">连接设置</div>
+      <div class="cfgitem" data-c="sync">WebDAV 同步</div>
       <div class="cfgitem" data-c="agent">智能体</div>
       <div class="cfgitem" data-c="web">联网搜索</div>
       <div class="cfgitem" data-c="vaspkit" data-domain-only="vasp">VASPKIT</div>
@@ -1128,11 +1129,11 @@ results/means.svg</textarea>
       <div class="cfghan" id="c-providers">
         <h2>模型服务</h2>
         <p class="desc">每个服务商有自己的 API 地址（可含端口）和密钥。密钥以
-          Windows 凭据加密保存在本机（不明文落盘），保存后即可直接对话；切换模型用左侧下拉框。</p>
+          凭据加密保存在本机（不明文落盘；Windows 用 DPAPI，Linux/macOS 用本机密钥 AES-GCM），保存后即可直接对话；切换模型用左侧下拉框。</p>
         <div class="model-advice">
           <h3>模型调用策略</h3>
           <ul>
-            <li><b>密钥留在本机服务端：</b>保存值不回填前端，并使用 Windows DPAPI 加密。</li>
+            <li><b>密钥留在本机服务端：</b>保存值不回填前端，并使用本机凭据加密（Windows DPAPI / Linux-macOS AES-GCM）。</li>
             <li><b>项目隔离：</b>敏感度或计费不同的项目，建立独立服务商条目并使用不同 API Key。</li>
             <li><b>并发保护：</b>最多同时运行 4 个模型请求；429、超时及 5xx 最多重试 3 次并指数退避。</li>
             <li><b>长文本流式返回：</b>对话默认开启 stream，可随时点击“中止回答”。</li>
@@ -1195,6 +1196,68 @@ results/means.svg</textarea>
         </div></div>
       </div>
 
+      <!-- ---- WebDAV 同步 ---- -->
+      <div class="cfghan" id="c-sync" style="display:none">
+        <h2>WebDAV 同步</h2>
+        <p class="desc">把配置、服务器连接信息、项目索引和对话日志同步到 WebDAV。
+          适用于中国科大 <b>pan.ustc.edu.cn</b> 的 Seafile/WebDAV 服务。
+          密码使用本机密钥加密保存，不会写入同步文件，也不会回填到页面。</p>
+        <div class="card">
+          <div class="row" style="margin-top:0">
+            <div class="fg" style="flex:1">
+              <label for="davurl">WebDAV 地址</label>
+              <input id="davurl" placeholder="https://pan.ustc.edu.cn/seafdav" spellcheck="false">
+            </div>
+            <div class="fg">
+              <label for="davuser">用户名</label>
+              <input id="davuser" placeholder="Seafile 登录名" autocomplete="username">
+            </div>
+          </div>
+          <div class="row">
+            <div class="fg" style="flex:1">
+              <label for="davpass">密码（留空保持已保存密码）</label>
+              <input id="davpass" type="password" autocomplete="new-password"
+                     placeholder="输入后加密保存；已保存的密码不会显示">
+            </div>
+            <div class="fg">
+              <label for="davdir">远端目录</label>
+              <input id="davdir" placeholder="RSCI-sync" spellcheck="false">
+            </div>
+            <div class="fg">
+              <label for="davinterval">自动同步间隔（分钟）</label>
+              <input id="davinterval" type="number" min="1" max="1440" style="width:120px">
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px;flex-wrap:wrap">
+            <label style="display:flex;gap:8px;align-items:center">
+              <input id="davenabled" type="checkbox">
+              <span>启用 WebDAV 同步</span>
+            </label>
+            <label style="display:flex;gap:8px;align-items:center">
+              <input id="davauto" type="checkbox">
+              <span>自动同步</span>
+            </label>
+          </div>
+          <div class="row connection-actions" style="margin-top:12px">
+            <button class="btn" id="davsave" onclick="saveWebdav()">保存 WebDAV 设置</button>
+            <button class="btn ghost" id="davtest" onclick="testWebdav()">测试连接</button>
+            <button class="btn ghost" id="davsync" onclick="syncWebdavNow()">立即同步</button>
+            <button class="btn ghost" onclick="showWebdavConflicts()">查看冲突副本</button>
+            <button class="btn ghost" id="davclear" onclick="clearWebdavPassword()">清除密码</button>
+          </div>
+          <div id="davstatus" class="vlab-detail" role="status" aria-live="polite"
+               style="margin-top:10px">尚未配置 WebDAV。</div>
+          <div id="davresult" style="margin-top:8px;font-size:12px;color:var(--fg2)"></div>
+        </div>
+        <div class="card"><div style="font-size:12px;color:var(--fg2);line-height:1.7">
+          <b>同步范围：</b>非敏感配置（模型服务、Vlab、联网搜索、智能体策略）、
+          <code>servers.json</code> 连接信息、<code>projects.json</code>、<code>chat/*.json</code>
+          对话日志、技能文件和作业台账。<br>
+          <b>不同步：</b>API Key、SSH 密码/TOTP 种子、WebDAV 密码、审批密钥、审计日志和运行中的工作流状态。
+          冲突时会自动合并 JSON 并保留原始副本，删除只对对话和技能文件生效，避免误删本机配置。
+        </div></div>
+      </div>
+
       <!-- ---- 智能体 ---- -->
       <div class="cfghan" id="c-agent" style="display:none">
         <h2>智能体执行策略</h2>
@@ -1214,7 +1277,7 @@ results/means.svg</textarea>
       <!-- ---- 联网搜索 ---- -->
       <div class="cfghan" id="c-web" style="display:none">
         <h2>联网搜索</h2>
-        <p class="desc">允许智能体搜索文献值、数据库参考与报错解法。API Key 用 Windows 凭据加密保存（界面不回显）。关闭后 web_search 工具不可用。</p>
+        <p class="desc">允许智能体搜索文献值、数据库参考与报错解法。API Key 用本机凭据加密保存（界面不回显）。关闭后 web_search 工具不可用。</p>
         <div class="card">
           <div class="row">
             <div class="fg"><label>搜索服务商</label>
@@ -1340,7 +1403,7 @@ results/means.svg</textarea>
           清除已保存凭据
         </label>
       </div>
-      <div class="note" id="mcredentialnote">凭据使用 Windows DPAPI 按当前用户加密。每到复核周期会要求你点击“确认仍保留”，确认前不会使用保存的密码。</div>
+      <div class="note" id="mcredentialnote">凭据使用本机密钥按当前用户加密（Windows DPAPI / Linux-macOS AES-GCM）。每到复核周期会要求你点击“确认仍保留”，确认前不会使用保存的密码。</div>
     </div>
     <label>远端根路径（留空 = 登录用户主目录；工具只能在此边界内操作）</label>
     <div class="path-actions"><input id="mroot" class="path-input" placeholder="保存服务器后通过弹窗选择"
@@ -4135,12 +4198,13 @@ function addMsg(role, text, meta = {}) {
 let CFG = {providers: [], vlab: {}};
 document.querySelectorAll(".cfgitem").forEach(t => t.onclick = () => {
   document.querySelectorAll(".cfgitem").forEach(x => x.classList.toggle("on", x === t));
-  for (const id of ["providers", "conn", "agent", "web", "vaspkit", "skills", "monitor", "about"])
+  for (const id of ["providers", "conn", "sync", "agent", "web", "vaspkit", "skills", "monitor", "about"])
     document.getElementById("c-" + id).style.display =
       t.dataset.c === id ? "" : "none";
   if (t.dataset.c === "skills") loadSkills();
   if (t.dataset.c === "vaspkit") loadVaspkitCfg();
   if (t.dataset.c === "conn") checkVlabConnection();
+  if (t.dataset.c === "sync") renderWebdav(CFG.webdav || {});
 });
 async function loadSettings() {
   const r = await api("settings");
@@ -4163,6 +4227,7 @@ async function loadSettings() {
   // agent / web / monitor tabs
   renderAgentMode(r.agent_submit_mode || "confirm");
   renderWebsearch(r.websearch);
+  renderWebdav(r.webdav || {});
   const th = document.getElementById("tempth");
   if (th) th.value = r.temperature_alert_c ?? 85;
 }
@@ -4171,6 +4236,160 @@ async function saveMonitorCfg() {
   const r = await api("monitor.save", {temperature_alert_c: v});
   if (r.ok) { CFG.temperature_alert_c = r.temperature_alert_c;
     toast(`已保存：GPU 高温告警阈值 ${r.temperature_alert_c} °C`, "ok"); }
+}
+/* ---------- WebDAV 同步 ---------- */
+function webdavForm() {
+  const pw = document.getElementById("davpass").value;
+  return {
+    url: document.getElementById("davurl").value.trim(),
+    username: document.getElementById("davuser").value.trim(),
+    password: pw,
+    remote_dir: document.getElementById("davdir").value.trim() || "RSCI-sync",
+    interval_minutes: parseInt(document.getElementById("davinterval").value || "15"),
+    enabled: document.getElementById("davenabled").checked,
+    auto_sync: document.getElementById("davauto").checked,
+  };
+}
+function webdavSavedLabel(w) {
+  if (w.password_from_env) return "密码来自环境变量";
+  if (w.password_saved) return "密码已加密保存";
+  return "未保存密码";
+}
+function webdavLastResult(w) {
+  const r = w.last_result || {};
+  if (!r.finished_at) return "尚未同步。";
+  const bits = [`${r.finished_at}：`];
+  if (r.busy) bits.push("同步正在进行");
+  else if (r.ok) bits.push("成功");
+  else bits.push("有错误");
+  bits.push(` 上传 ${(r.uploaded || []).length}，下载 ${(r.downloaded || []).length}`);
+  if ((r.deleted_local || []).length || (r.deleted_remote || []).length)
+    bits.push(`，删除 ${(r.deleted_local || []).length + (r.deleted_remote || []).length}`);
+  if ((r.conflicts || []).length) bits.push(`，冲突 ${r.conflicts.length}`);
+  if (r.message) bits.push(` · ${r.message}`);
+  return bits.join("");
+}
+function renderWebdav(w = {}) {
+  const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ""; };
+  set("davurl", w.url || "https://pan.ustc.edu.cn/seafdav");
+  set("davuser", w.username || "");
+  set("davdir", w.remote_dir || "RSCI-sync");
+  set("davinterval", w.interval_minutes || 15);
+  const pass = document.getElementById("davpass");
+  if (pass) {
+    pass.value = "";
+    pass.placeholder = w.password_saved
+      ? "已保存（留空保持不变）"
+      : "输入 WebDAV 密码后保存";
+  }
+  const enabled = document.getElementById("davenabled");
+  const auto = document.getElementById("davauto");
+  if (enabled) enabled.checked = !!w.enabled;
+  if (auto) auto.checked = !!w.auto_sync;
+  const status = document.getElementById("davstatus");
+  if (status) {
+    if (!w.url || !w.username) {
+      status.textContent = "尚未配置 WebDAV。填写地址和用户名，保存密码后即可测试连接。";
+    } else if (!w.encryption_available && !w.password_from_env) {
+      status.textContent = "当前系统缺少本机加密组件（cryptography），暂时无法保存密码；"
+        + "可设置 RSCI_WEBDAV_PASSWORD 环境变量。";
+    } else {
+      status.textContent = `服务：${w.url} · 用户：${w.username} · ${webdavSavedLabel(w)}`
+        + ` · ${w.enabled ? "已启用" : "未启用"}`
+        + ` · ${w.auto_sync ? `每 ${w.interval_minutes} 分钟自动同步` : "仅手动同步"}`
+        + ` · 上次成功：${w.last_sync_at || "无"}`;
+    }
+  }
+  const result = document.getElementById("davresult");
+  if (result) result.textContent = webdavLastResult(w);
+}
+async function saveWebdav() {
+  const button = document.getElementById("davsave");
+  const form = webdavForm();
+  if (!form.url) { toast("请填写 WebDAV 地址", "err"); return; }
+  if (!form.username) { toast("请填写 WebDAV 用户名", "err"); return; }
+  button.disabled = true;
+  try {
+    const r = await api("webdav.save", form);
+    if (!r.ok) { toast(r.error?.message || "保存 WebDAV 设置失败", "err"); return; }
+    CFG.webdav = r.webdav;
+    renderWebdav(r.webdav);
+    document.getElementById("davpass").value = "";
+    toast(r.note || "WebDAV 设置已保存", "ok");
+  } finally {
+    button.disabled = false;
+  }
+}
+async function testWebdav() {
+  const button = document.getElementById("davtest");
+  const form = webdavForm();
+  const status = document.getElementById("davstatus");
+  button.disabled = true;
+  status.textContent = "正在连接 WebDAV…";
+  try {
+    const r = await api("webdav.test", form);
+    if (!r.ok) {
+      status.textContent = "连接失败：" + (r.error?.message || "未知错误");
+      toast(status.textContent, "err");
+      return;
+    }
+    status.textContent = `连接成功：${r.url} · 用户 ${r.username}`
+      + (r.remote_dir_exists ? ` · 远端目录 ${r.remote_dir} 已存在`
+         : ` · 远端目录 ${r.remote_dir} 将在首次同步时创建`);
+    if (!r.remote_dir_exists && r.suggested_remote_dir) {
+      status.textContent += ` · 根目录下已有资料库：${(r.top_level || []).slice(0, 6).join("、")}`
+        + `；Seafile 建议改用 ${r.suggested_remote_dir}`;
+    }
+    toast("WebDAV 连接正常", "ok");
+  } finally {
+    button.disabled = false;
+  }
+}
+async function syncWebdavNow() {
+  const button = document.getElementById("davsync");
+  const status = document.getElementById("davstatus");
+  button.disabled = true;
+  status.textContent = "正在同步，请稍候…";
+  try {
+    const r = await api("webdav.sync", {});
+    if (!r.ok) {
+      status.textContent = "同步失败：" + (r.message || r.error?.message || "未知错误");
+      const result = document.getElementById("davresult");
+      if (r.errors?.length) result.textContent = r.errors.map(e => `${e.path || "服务"}：${e.message}`).join("；");
+      toast("WebDAV 同步失败", "err");
+      return;
+    }
+    CFG.webdav = await api("webdav.status");
+    renderWebdav(CFG.webdav);
+    status.textContent = r.message || "同步完成";
+    const detail = [`上传 ${(r.uploaded || []).length}，下载 ${(r.downloaded || []).length}`];
+    if ((r.deleted_local || []).length) detail.push(`本机删除 ${r.deleted_local.length}`);
+    if ((r.deleted_remote || []).length) detail.push(`远端删除 ${r.deleted_remote.length}`);
+    if ((r.conflicts || []).length) detail.push(`冲突 ${r.conflicts.length}`);
+    document.getElementById("davresult").textContent = detail.join(" · ");
+    toast("WebDAV 同步完成", "ok");
+  } finally {
+    button.disabled = false;
+  }
+}
+async function clearWebdavPassword() {
+  if (!confirm("清除本机保存的 WebDAV 密码？之后需要重新输入才能同步。")) return;
+  const r = await api("webdav.clear_password", {});
+  if (!r.ok) { toast(r.error?.message || "清除失败", "err"); return; }
+  CFG.webdav = r.webdav;
+  renderWebdav(r.webdav);
+  toast("已清除 WebDAV 密码", "ok");
+}
+async function showWebdavConflicts() {
+  const r = await api("webdav.conflicts", {});
+  const box = document.getElementById("davresult");
+  if (!r.ok) { toast(r.error?.message || "读取冲突副本失败", "err"); return; }
+  if (!r.conflicts?.length) {
+    box.textContent = `没有冲突副本。目录：${r.directory}`;
+    return;
+  }
+  box.innerHTML = `冲突副本目录：<code>${esc(r.directory)}</code><br>` +
+    r.conflicts.map(f => `${esc(f.name)} · ${f.size} B · ${esc(f.modified_at)}`).join("<br>");
 }
 function renderProviderCards() {
   const box = document.getElementById("provcards");
@@ -4185,7 +4404,7 @@ function providerCard(p = null, isNew = false) {
                   key_saved: false, is_default: false};
   card.dataset.id = p.id;
   const keyPh = p.key_saved
-    ? "已保存（Windows 凭据加密），留空则保持不变"
+    ? "已保存（本机凭据加密），留空则保持不变"
     : "尚未保存——输入后将随「保存设置」加密保存";
   card.innerHTML = `
     <div class="pc-h"><b>${esc(p.name || "新服务商")}</b>
@@ -4432,8 +4651,8 @@ async function copyCode(button) {
 function toggleCredentialFields() {
   const direct = document.getElementById("mroute").value === "direct";
   document.getElementById("mcredentialnote").textContent = direct
-    ? "凭据使用 Windows DPAPI 按当前用户加密；自动连接时只在本机 OpenSSH 子进程内短暂解密。目标 SSH 服务需允许密码/keyboard-interactive 认证。到复核日期后必须再次确认。"
-    : "凭据和 TOTP 种子使用 Windows DPAPI 加密并只保存在本机。自动连接时，密码和当期 6 位验证码通过已验证的 Vlab SSH 通道临时发送；TOTP 种子不会上传或保存在 Vlab。首次主机指纹仍须人工核对。";
+    ? "凭据使用本机密钥按当前用户加密（Windows DPAPI / Linux-macOS AES-GCM）；自动连接时只在本机 OpenSSH 子进程内短暂解密。目标 SSH 服务需允许密码/keyboard-interactive 认证。到复核日期后必须再次确认。"
+    : "凭据和 TOTP 种子使用本机密钥加密并只保存在本机。自动连接时，密码和当期 6 位验证码通过已验证的 Vlab SSH 通道临时发送；TOTP 种子不会上传或保存在 Vlab。首次主机指纹仍须人工核对。";
 }
 document.getElementById("mroute").addEventListener("change", toggleCredentialFields);
 let serverSaveBusy = false;

@@ -27,12 +27,21 @@ def migrate(source: Path, target: Path, source_entropy_prefix: str) -> dict:
     settings = copy.deepcopy(original)
     prefix = source_entropy_prefix.encode("utf-8")
     count = 0
+    # POSIX secrets are bound to a per-configuration master key; Windows
+    # DPAPI ignores these paths.  Older POSIX installs may not have a key
+    # file, in which case the secretbox default key is the legacy source.
+    source_key = source / "secret.key"
+    source_key_arg = source_key if source_key.is_file() else None
+    target_key = target / "secret.key"
 
     def reencrypt(blob: str, old_entropy: bytes, new_entropy: bytes) -> str:
         nonlocal count
-        plaintext = secretbox.unprotect_b64(blob, entropy=old_entropy)
-        encrypted = secretbox.protect_b64(plaintext, entropy=new_entropy)
-        if secretbox.unprotect_b64(encrypted, entropy=new_entropy) != plaintext:
+        plaintext = secretbox.unprotect_b64(
+            blob, entropy=old_entropy, key_file=source_key_arg)
+        encrypted = secretbox.protect_b64(
+            plaintext, entropy=new_entropy, key_file=target_key)
+        if secretbox.unprotect_b64(
+                encrypted, entropy=new_entropy, key_file=target_key) != plaintext:
             raise ValueError("Credential verification failed")
         count += 1
         return encrypted
@@ -57,7 +66,8 @@ def migrate(source: Path, target: Path, source_entropy_prefix: str) -> dict:
         if not path.is_file():
             continue
         relative = path.relative_to(source)
-        if relative.as_posix() in ("settings.json", "ui.json") or path.suffix == ".lock":
+        if relative.as_posix() in ("settings.json", "ui.json", "secret.key") \
+                or path.suffix == ".lock":
             continue
         destination = target / relative
         if destination.exists():

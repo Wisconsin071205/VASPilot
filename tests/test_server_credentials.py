@@ -10,7 +10,7 @@ from rsci.core import secretbox
 from rsci.core.credentials import normalize_totp_seed, totp_code
 
 pytestmark = pytest.mark.skipif(
-    not secretbox.available(), reason="server credential vault uses Windows DPAPI")
+    not secretbox.available(), reason="server credential vault needs a local encryption backend")
 
 
 def test_totp_normalization_and_rfc_vector():

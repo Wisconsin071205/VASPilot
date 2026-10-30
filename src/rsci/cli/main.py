@@ -114,6 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
     from .monitor import register as register_monitor
     from .agent import register as register_agent
     from .workspace import register as register_workspace
+    from .sync import register as register_sync
     register_server(sub)
     register_remote(sub)
     register_job(sub)
@@ -121,6 +122,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_monitor(sub)
     register_agent(sub)
     register_workspace(sub)
+    register_sync(sub)
 
     ui = sub.add_parser("ui", help="local web console (chat + fleet + workflow)")
     ui.add_argument("--host", default="127.0.0.1")

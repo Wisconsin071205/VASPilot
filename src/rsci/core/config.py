@@ -4,7 +4,8 @@ Layout under ``~/.rsci`` (override with ``RSCI_HOME``):
 
   settings.json     vlab endpoint, identity-file path, default server,
                     provider list (id/name/protocol/base_url/model/api_key_env),
-                    optional DPAPI-encrypted per-server credentials
+                    optional platform-encrypted per-server credentials and
+                    WebDAV sync settings
   servers.json      local mirror of the gateway server catalog (metadata only)
   approval.key      HMAC signing key for approval tokens (0600, auto-created)
   approvals.json    issued approvals + consumed token ids
@@ -12,8 +13,9 @@ Layout under ``~/.rsci`` (override with ``RSCI_HOME``):
   audit/*.jsonl     append-only audit rows
 
 Invariants:
-  - API keys and optional server passwords/TOTP seeds are DPAPI-encrypted
-    before persistence; plaintext secrets are never serialized
+  - API keys, server passwords/TOTP seeds and WebDAV passwords are encrypted
+    before persistence (Windows DPAPI; AES-GCM on POSIX); plaintext secrets
+    are never serialized
   - ``api_key_env`` names an environment variable; the key itself is read
     from the process environment at call time only
   - writes are atomic (tempfile + os.replace)
@@ -76,7 +78,8 @@ class ServerEntry:
     terminal) or 'key' (per-server Ed25519 key on the gateway host, enabling
     unattended auto-reconnect). ``auto_connect`` gates that reconnect.
     ``route`` selects Vlab routing (the default) or direct workstation SSH.
-    Optional credentials for either route live separately in the local DPAPI vault.
+    Optional credentials for either route live separately in the local
+    platform-encrypted vault.
     """
 
     __slots__ = ("name", "target", "port", "remote_root", "persist",
@@ -222,6 +225,27 @@ class Config:
     def pending_submits_path(self) -> Path:
         return self.home / "pending_submits.json"
 
+    @property
+    def webdav_dir(self) -> Path:
+        return self.home / "webdav"
+
+    @property
+    def webdav_state_path(self) -> Path:
+        return self.webdav_dir / "state.json"
+
+    @property
+    def webdav_lock_path(self) -> Path:
+        return self.webdav_dir / "sync.lock"
+
+    @property
+    def webdav_conflicts_dir(self) -> Path:
+        return self.webdav_dir / "conflicts"
+
+    @property
+    def secret_key_path(self) -> Path:
+        """POSIX master key bound to this configuration directory."""
+        return self.home / "secret.key"
+
     # -- settings ------------------------------------------------------------
     def load_settings(self) -> dict:
         return _load_json(self.settings_path, {})
@@ -348,9 +372,185 @@ class Config:
         return self.websearch()
 
     def websearch_key(self) -> str:
-        """Env var beats the DPAPI vault; never logged."""
+        """Env var beats the local encrypted vault; never logged."""
         override = os.environ.get("RSCI_WEBSEARCH_KEY", "").strip()
         return override or self.get_provider_key("websearch")
+
+    # -- WebDAV synchronization ------------------------------------------------
+    WEBDAV_DEFAULT_REMOTE_DIR = "RSCI-sync"
+    WEBDAV_INTERVAL_DEFAULT = 15
+    WEBDAV_INTERVAL_MIN = 1
+    WEBDAV_INTERVAL_MAX = 1440
+
+    @classmethod
+    def _webdav_interval(cls, value) -> int:
+        try:
+            minutes = int(value)
+        except (TypeError, ValueError):
+            minutes = cls.WEBDAV_INTERVAL_DEFAULT
+        return max(cls.WEBDAV_INTERVAL_MIN,
+                   min(cls.WEBDAV_INTERVAL_MAX, minutes))
+
+    def webdav(self) -> dict:
+        """Return non-secret WebDAV state for the settings page.
+
+        The password blob is never returned; only ``password_saved`` and
+        whether an environment override is active.
+        """
+        from . import secretbox
+        data = self.load_settings().get("webdav") or {}
+        if not isinstance(data, dict):
+            data = {}
+        username = str(data.get("username", "") or "")
+        return {
+            "url": str(data.get("url", "") or ""),
+            "username": username,
+            "remote_dir": str(data.get("remote_dir", "") or
+                              self.WEBDAV_DEFAULT_REMOTE_DIR),
+            "enabled": bool(data.get("enabled", False)),
+            "auto_sync": bool(data.get("auto_sync", False)),
+            "interval_minutes": self._webdav_interval(
+                data.get("interval_minutes")),
+            "password_saved": bool(data.get("password")),
+            "password_from_env": bool(
+                os.environ.get("RSCI_WEBDAV_PASSWORD", "").strip()),
+            "encryption_available": secretbox.available(),
+            "last_sync_at": str(data.get("last_sync_at", "") or ""),
+            "last_attempt_at": str(data.get("last_attempt_at", "") or ""),
+            "last_result": data.get("last_result") if isinstance(
+                data.get("last_result"), dict) else {},
+            "conflict_count": int(data.get("conflict_count", 0) or 0),
+            "device_id": str(data.get("device_id", "") or ""),
+        }
+
+    def _webdav_data(self) -> dict:
+        data = self.load_settings().get("webdav")
+        return data if isinstance(data, dict) else {}
+
+    def _webdav_decrypt_password(self, username: str, blob: str) -> str:
+        from . import secretbox
+        if not blob:
+            return ""
+        try:
+            return secretbox.unprotect_b64(
+                blob, entropy=secretbox.webdav_credential_entropy(username),
+                key_file=self.secret_key_path)
+        except (OSError, ValueError) as exc:
+            raise ConfigError(
+                "无法解密本机保存的 WebDAV 密码；请重新输入并保存") from exc
+
+    def webdav_password(self) -> str:
+        """Environment override beats the local encrypted vault; never log."""
+        override = os.environ.get("RSCI_WEBDAV_PASSWORD", "").strip()
+        if override:
+            return override
+        data = self._webdav_data()
+        username = str(data.get("username", "") or "")
+        return self._webdav_decrypt_password(username,
+                                             str(data.get("password", "") or ""))
+
+    def set_webdav(self, *, url: str | None = None, username: str | None = None,
+                   password: str | None = None, enabled: bool | None = None,
+                   auto_sync: bool | None = None, remote_dir: str | None = None,
+                   interval_minutes: int | None = None,
+                   clear_password: bool = False) -> dict:
+        """Update WebDAV sync settings; ``password=None`` keeps the vault.
+
+        The URL must be a plain http(s) collection URL.  Credentials are
+        encrypted with the platform secret box before ``settings.json`` is
+        written; an empty password field from the UI means "keep existing".
+        """
+        from ..sync.webdav import normalize_url, validate_remote_dir
+        from . import secretbox
+
+        current = dict(self._webdav_data())
+        old_username = str(current.get("username", "") or "")
+        if url is not None:
+            current["url"] = normalize_url(url)
+        if username is not None:
+            current["username"] = str(username or "").strip()
+        if remote_dir is not None:
+            current["remote_dir"] = validate_remote_dir(remote_dir)
+        if enabled is not None:
+            current["enabled"] = bool(enabled)
+        if auto_sync is not None:
+            current["auto_sync"] = bool(auto_sync)
+        if interval_minutes is not None:
+            current["interval_minutes"] = self._webdav_interval(interval_minutes)
+
+        new_username = str(current.get("username", "") or "")
+        if clear_password:
+            current.pop("password", None)
+        else:
+            supplied = str(password or "")
+            if supplied.strip():
+                if not secretbox.available():
+                    raise ConfigError(
+                        "当前系统无法加密保存 WebDAV 密码；请安装 "
+                        "cryptography 或使用 RSCI_WEBDAV_PASSWORD 环境变量")
+                current["password"] = secretbox.protect_b64(
+                    supplied, entropy=secretbox.webdav_credential_entropy(
+                        new_username), key_file=self.secret_key_path)
+            elif current.get("password") and old_username != new_username:
+                # Username is part of the derived key: re-encrypt when it
+                # changes so a preserved password remains usable.
+                plaintext = self._webdav_decrypt_password(
+                    old_username, str(current.get("password", "")))
+                if plaintext:
+                    current["password"] = secretbox.protect_b64(
+                        plaintext, entropy=secretbox.webdav_credential_entropy(
+                            new_username), key_file=self.secret_key_path)
+
+        if not current.get("device_id"):
+            current["device_id"] = secrets.token_hex(8)
+        current["remote_dir"] = validate_remote_dir(
+            str(current.get("remote_dir") or self.WEBDAV_DEFAULT_REMOTE_DIR))
+        current["interval_minutes"] = self._webdav_interval(
+            current.get("interval_minutes"))
+        settings = self.load_settings()
+        settings["webdav"] = current
+        self.save_settings(settings)
+        return self.webdav()
+
+    def record_webdav_result(self, result: dict) -> dict:
+        """Persist the last sync result without leaking credentials."""
+        clean = {
+            "ok": bool(result.get("ok")),
+            "uploaded": list(result.get("uploaded") or [])[:200],
+            "downloaded": list(result.get("downloaded") or [])[:200],
+            "deleted_local": list(result.get("deleted_local") or [])[:200],
+            "deleted_remote": list(result.get("deleted_remote") or [])[:200],
+            "conflicts": list(result.get("conflicts") or [])[:50],
+            "errors": list(result.get("errors") or [])[:50],
+            "skipped": int(result.get("skipped") or 0),
+            "bytes_up": int(result.get("bytes_up") or 0),
+            "bytes_down": int(result.get("bytes_down") or 0),
+            "started_at": str(result.get("started_at") or ""),
+            "finished_at": str(result.get("finished_at") or self.now_iso()),
+            "busy": bool(result.get("busy")),
+            "message": str(result.get("message") or ""),
+        }
+        settings = self.load_settings()
+        data = settings.get("webdav")
+        if not isinstance(data, dict):
+            data = {}
+        data["last_result"] = clean
+        data["last_attempt_at"] = self.now_iso()
+        data["conflict_count"] = len(clean["conflicts"])
+        if clean["ok"]:
+            data["last_sync_at"] = clean["finished_at"]
+        settings["webdav"] = data
+        self.save_settings(settings)
+        return self.webdav()
+
+    def clear_webdav_password(self) -> dict:
+        settings = self.load_settings()
+        data = settings.get("webdav")
+        if isinstance(data, dict):
+            data.pop("password", None)
+            settings["webdav"] = data
+            self.save_settings(settings)
+        return self.webdav()
 
     # -- servers (local mirror) ----------------------------------------------
     def load_servers(self) -> list[ServerEntry]:
@@ -398,7 +598,7 @@ class Config:
             data["default"] = ""
             _atomic_write_json(self.servers_path, data)
 
-    # -- server credential vault (DPAPI ciphertext, never plaintext) ---------
+    # -- server credential vault (encrypted ciphertext, never plaintext) -----
     CREDENTIAL_CONFIRM_DAYS_DEFAULT = 3
     CREDENTIAL_CONFIRM_DAYS_MIN = 1
     CREDENTIAL_CONFIRM_DAYS_MAX = 30
@@ -457,7 +657,8 @@ class Config:
             return ""
         try:
             return secretbox.unprotect_b64(
-                blob, entropy=secretbox.server_credential_entropy(name))
+                blob, entropy=secretbox.server_credential_entropy(name),
+                key_file=self.secret_key_path)
         except (OSError, ValueError) as exc:
             raise ConfigError(
                 f"无法解密服务器 {name!r} 的本机凭据；请重新输入并保存") from exc
@@ -477,7 +678,7 @@ class Config:
     def save_server_credentials(self, name: str, *, password: str | None = None,
                                 totp_seed: str | None = None,
                                 confirm_interval_days: int | None = None) -> dict:
-        """Create/update credentials with Windows DPAPI protection.
+        """Create/update credentials with platform secret-box protection.
 
         ``None`` preserves an existing field. An empty password is rejected so
         a half-cleared entry can never become the automatic-auth source.
@@ -507,14 +708,16 @@ class Config:
         now = self.now_iso()
         try:
             password_blob = secretbox.protect_b64(
-                password, entropy=secretbox.server_credential_entropy(name))
+                password, entropy=secretbox.server_credential_entropy(name),
+                key_file=self.secret_key_path)
             totp_blob = (secretbox.protect_b64(
-                totp_seed, entropy=secretbox.server_credential_entropy(name))
+                totp_seed, entropy=secretbox.server_credential_entropy(name),
+                key_file=self.secret_key_path)
                          if totp_seed else "")
         except OSError as exc:
             raise ConfigError(
-                "当前系统不支持 Windows DPAPI，无法安全保存服务器凭据；"
-                "请改用 SSH 密钥/代理或环境变量") from exc
+                "当前系统没有可用的本机凭据加密后端，无法安全保存服务器"
+                "凭据；请安装 cryptography，或改用 SSH 密钥/代理") from exc
         stored[name] = {
             "password": password_blob,
             "totp_seed": totp_blob,
@@ -531,7 +734,7 @@ class Config:
         status = self.server_credentials_status(name)
         if not status.get("saved"):
             raise ValidationError("该服务器没有已保存的加密凭据")
-        # Validate the DPAPI blob before extending its trust window; a copied
+        # Validate the encrypted blob before extending its trust window; a copied
         # or corrupted settings file must never be confirmed blindly.
         if not self._decrypt_server_credential(name, "password"):
             raise ConfigError("服务器密码密文为空，请重新输入并保存")
@@ -606,15 +809,16 @@ class Config:
             settings.pop("default_provider", None)
             self.save_settings(settings)
 
-    # -- provider key vault (DPAPI ciphertext, never plaintext) ----------------
+    # -- provider key vault (encrypted ciphertext, never plaintext) -----------
     def set_provider_key(self, pid: str, plaintext: str) -> None:
-        """Encrypt with Windows DPAPI (CurrentUser) and store base64."""
+        """Encrypt with the platform secret box and store base64."""
         from . import secretbox
         if not plaintext or not plaintext.strip():
             raise ValidationError("provider key must be non-empty")
         if not PROVIDER_ID_RE.fullmatch(pid):
             raise ValidationError(f"provider id {pid!r} is invalid")
-        blob = secretbox.protect_b64(plaintext.strip())
+        blob = secretbox.protect_b64(plaintext.strip(),
+                                     key_file=self.secret_key_path)
         settings = self.load_settings()
         stored = settings.get("provider_keys")
         if not isinstance(stored, dict):
@@ -635,7 +839,7 @@ class Config:
         if not isinstance(blob, str) or not blob:
             return ""
         try:
-            return secretbox.unprotect_b64(blob)
+            return secretbox.unprotect_b64(blob, key_file=self.secret_key_path)
         except (OSError, ValueError):
             return ""
 
@@ -691,7 +895,7 @@ class Config:
 
         Legacy providers carried {id, name, base_url, model} without a
         protocol or api_key_env; they become openai-chat-compatible entries.
-        Secret-bearing fields (provider_keys DPAPI blobs, anything
+        Secret-bearing fields (provider_keys encrypted blobs, anything
         secret-looking) are dropped, never copied. Idempotent: already-known
         provider ids are skipped.
         """

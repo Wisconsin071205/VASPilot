@@ -26,7 +26,7 @@ audit log; they are refused to `analysis_only` providers. See
 模型调用 (3 协议)   SSH   Vlab 网关（默认）       mux  Slurm/PBS 查询/提交/取消
 工作流规划 + 审批   ───>   或目标服务器直连       ───> 文件与目录操作
 审计 / 多服务器监测       固定操作 + 根路径校验       VASP 验证/进度/解析
-                          可选凭据仅本机 DPAPI 加密
+                          可选凭据仅本机加密（DPAPI/AES-GCM）
 ```
 
 ## 作业自动分析：Slurm 集群运行证明
@@ -131,6 +131,24 @@ atomically replaces the destination only after validation. Disable it in
 manually. The separate Workspace Gateway (rclone/FUSE) remains a manual,
 explicit install because it has additional Vlab-side prerequisites.
 
+## WebDAV 同步（配置 / 连接信息 / 对话日志）
+
+控制台 **配置 → WebDAV 同步** 可接入任意 WebDAV 服务（默认面向中国科大
+`pan.ustc.edu.cn/seafdav`）。保存地址、用户名和密码后，可测试连接、手动同步，
+或按 1–1440 分钟的间隔自动同步非敏感配置、服务器连接信息、项目索引、对话日志、
+技能文件和作业台账。模型 API Key、SSH 密码/TOTP、WebDAV 密码、审批密钥和审计
+日志不会上传；JSON 冲突会自动合并并在本机保留原始副本。
+
+```bash
+python -m pip install -e ".[sync]"   # POSIX 上加密保存 WebDAV 密码需要 cryptography
+rsci sync status
+rsci sync test
+rsci sync now
+```
+
+详细字段、冲突策略、删除规则和安全边界见
+[`docs/webdav-sync.md`](docs/webdav-sync.md)。
+
 ## Command map
 
 | Group | Commands |
@@ -140,6 +158,7 @@ explicit install because it has additional Vlab-side prerequisites.
 | `job` | `list recent submit cancel progress diagnose` |
 | `workflow` | `prepare validate preview approve approve-submit run resume status` |
 | `monitor` | `snapshot watch` |
+| `sync` | `status test now` — WebDAV 配置/对话同步 |
 | `agent` | `provider list/add/remove/probe/set-default`, `chat --provider`, `run --provider --goal` |
 | `ui` | `rsci ui` — 统一 Web 控制台 |
 | `desktop` | `rsci desktop` — 控制台的独立桌面窗口（Windows / macOS） |
@@ -171,8 +190,8 @@ re-authenticate visibly via `server connect`.
   风险、执行尝试和失败恢复；高级用户仍可手动创建计划。
 
 安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
-必须携带。可选的服务器密码/TOTP 与模型 API Key 会用 Windows DPAPI
-（CurrentUser）加密后保存在 `~/.rsci`；Vlab 中转仅临时发送密码和当期验证码，
+必须携带。可选的服务器密码/TOTP 与模型 API Key 会用本机凭据加密
+（Windows DPAPI CurrentUser / Linux-macOS AES-GCM）后保存在 `~/.rsci`；Vlab 中转仅临时发送密码和当期验证码，
 TOTP 种子不离开本机。未保存凭据时，交互式登录通过「连接」按钮在**独立的可见
 系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
 命令行启动 `rsci ui`（仓库内包装器 `scripts\rsci.cmd ui` 固定使用本仓库代码）；
@@ -213,7 +232,7 @@ scripts/install-desktop.sh            # 或 scripts/install-desktop.sh /path/to/
 ## VS Code 安全编辑（单一最新版 VS Code）
 
 Vlab 中转和直连服务器都可以在编辑窗口保存登录密码和 Google Authenticator 的
-TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
+TOTP 种子；两者使用本机凭据加密（Windows DPAPI CurrentUser / Linux-macOS AES-GCM）后写入
 `~/.rsci/settings.json`。直连时仅在本机 SSH 子进程中短暂解密；Vlab
 中转只经已验证的 SSH 通道临时发送密码和当期六位码，TOTP 种子不会离开本机，
 Vlab 不会落盘保存凭据。密码和种子绝不进入审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
@@ -349,8 +368,8 @@ carries credentials or approval references through MCP.
 - strict validation of server names, paths (lexical + `realpath`), job ids,
   trash ids and local project roots
 - SSH host-key changes fail closed; `known_hosts` is never auto-modified
-- Per-server passwords and TOTP seeds are optional DPAPI-encrypted CurrentUser
-  blobs. Direct mode uses a short-lived local `SSH_ASKPASS`; Vlab mode sends
+- Per-server passwords and TOTP seeds are optional locally encrypted blobs
+  (DPAPI CurrentUser on Windows, AES-GCM with a 0600 key file on POSIX). Direct mode uses a short-lived local `SSH_ASKPASS`; Vlab mode sends
   only the password and current code over verified SSH stdin. Periodic
   retention confirmation (default 3 days) gates automatic use
 - SHA-256 recorded for every upload/download/analysis artifact

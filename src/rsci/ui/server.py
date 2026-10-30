@@ -5,8 +5,9 @@ Security model:
   - every page load gets a fresh random session token; all /api/* calls must
     carry it in the X-RSCI-Token header (blocks drive-by localhost pages)
   - API keys and optional per-server SSH credentials are accepted only over
-    the random-token localhost API and encrypted immediately with Windows
-    DPAPI. Vlab-routed connections transmit only the password and one current
+    the random-token localhost API and encrypted immediately with the
+    platform secret box (Windows DPAPI; AES-GCM on POSIX). Vlab-routed
+    connections transmit only the password and one current
     TOTP code through encrypted SSH stdin; reusable TOTP seeds stay local.
     Interactive fallback still opens a SEPARATE visible system terminal
   - workflow approval still requires the human to type the confirmation
@@ -103,6 +104,7 @@ class UiState:
         self.token = secrets.token_urlsafe(24)
         self.lock = threading.Lock()
         self._campaign_wake: threading.Event | None = None
+        self._sync_wake: threading.Event | None = None
         # run_id -> stop flag of each chat turn in flight
         self.chat_runs: dict[str, dict[str, Any]] = {}
         self.chat_slots = threading.BoundedSemaphore(4)
@@ -134,6 +136,53 @@ class UiState:
     def kick_campaigns(self) -> None:
         if self._campaign_wake is not None:
             self._campaign_wake.set()
+
+    def start_sync_ticker(self, interval: float = 60.0) -> None:
+        """Run WebDAV auto-sync when enabled and the interval is due.
+
+        The engine takes a non-blocking cross-process lock, so a manual sync
+        in another window or process is never displaced.
+        """
+        if self._sync_wake is not None:
+            return
+        from ..sync.engine import SyncEngine
+        self._sync_wake = threading.Event()
+
+        def loop() -> None:
+            while not self.stopped.is_set():
+                due = False
+                try:
+                    cfg = self.app.config.webdav()
+                    if cfg.get("enabled") and cfg.get("auto_sync"):
+                        from datetime import datetime, timezone
+                        interval_minutes = max(
+                            1, int(cfg.get("interval_minutes") or 15))
+                        stamp = str(cfg.get("last_attempt_at") or "")
+                        if not stamp:
+                            due = True
+                        else:
+                            try:
+                                moment = datetime.fromisoformat(
+                                    stamp.replace("Z", "+00:00"))
+                                if moment.tzinfo is None:
+                                    moment = moment.replace(tzinfo=timezone.utc)
+                                due = (datetime.now(timezone.utc) - moment
+                                       ).total_seconds() >= interval_minutes * 60
+                            except (TypeError, ValueError):
+                                due = True
+                    if due:
+                        SyncEngine(self.app.config).sync()
+                except Exception:
+                    pass  # a failed sync must never stop the console
+                self._sync_wake.wait(interval)
+                self._sync_wake.clear()
+
+        threading.Thread(target=loop, daemon=True,
+                         name="rsci-webdav-sync").start()
+
+    def kick_sync(self) -> None:
+        if self._sync_wake is not None:
+            self._sync_wake.set()
 
 
 def build_state(app) -> UiState:
@@ -713,6 +762,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._send_json(report.to_dict())
             elif action == "settings":
                 self._send_json(self._settings_payload())
+            elif action.startswith("webdav."):
+                self._webdav_action(action, body)
             elif action == "provider.save":
                 self._save_provider(body)
             elif action == "provider.delete":
@@ -1091,9 +1142,62 @@ class UiHandler(BaseHTTPRequestHandler):
             client.server_set_default(new_name)
         self._send_json({"renamed": [old, new_name], "result": result})
 
+    def _webdav_action(self, action: str, body: dict) -> None:
+        """Settings-page WebDAV actions; secrets never leave the server."""
+        from ..core.errors import ValidationError
+        from ..sync.engine import SyncEngine
+        app = self.state.app
+        if action == "webdav.save":
+            saved = app.config.set_webdav(
+                url=(str(body.get("url")) if body.get("url") is not None else None),
+                username=(str(body.get("username")) if body.get("username") is not None else None),
+                password=(str(body.get("password")) if body.get("password") is not None else None),
+                enabled=bool(body.get("enabled")),
+                auto_sync=bool(body.get("auto_sync")),
+                remote_dir=(str(body.get("remote_dir")) if body.get("remote_dir") is not None else None),
+                interval_minutes=body.get("interval_minutes"),
+                clear_password=bool(body.get("clear_password")))
+            if saved.get("enabled") and saved.get("auto_sync"):
+                self.state.kick_sync()
+            self._send_json({"webdav": saved,
+                             "note": "已保存；密码不会回填到页面"})
+        elif action == "webdav.test":
+            engine = SyncEngine(app.config)
+            result = engine.test(
+                url=str(body.get("url") or "") or None,
+                username=(str(body.get("username")) if body.get("username") is not None else None),
+                password=(str(body.get("password") or "") or None),
+                remote_dir=(str(body.get("remote_dir")) if body.get("remote_dir") is not None else None))
+            self._send_json(result)
+        elif action == "webdav.sync":
+            result = SyncEngine(app.config).sync()
+            self._send_json(result)
+        elif action == "webdav.status":
+            self._send_json(SyncEngine(app.config).status())
+        elif action == "webdav.clear_password":
+            self._send_json({"webdav": app.config.clear_webdav_password()})
+        elif action == "webdav.conflicts":
+            directory = app.config.webdav_conflicts_dir
+            rows = []
+            if directory.is_dir():
+                for path in sorted(directory.iterdir(), reverse=True)[:100]:
+                    if path.is_file():
+                        try:
+                            rows.append({"name": path.name,
+                                         "size": path.stat().st_size,
+                                         "modified_at": datetime.fromtimestamp(
+                                             path.stat().st_mtime, timezone.utc
+                                         ).isoformat(timespec="seconds")})
+                        except OSError:
+                            pass
+            self._send_json({"conflicts": rows,
+                             "directory": str(directory)})
+        else:
+            raise ValidationError(f"未知 WebDAV 操作：{action}")
+
     def _settings_payload(self) -> dict:
         """Full settings view for the console's 配置 page. Never includes key
-        material — only whether a DPAPI-protected key exists."""
+        material — only whether a locally encrypted key exists."""
         app = self.state.app
         providers = []
         for p in app.config.load_providers():
@@ -1114,7 +1218,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 "vlab": {**vlab, "identity_file_exists": identity_ok},
                 "agent_submit_mode": app.config.agent_submit_mode(),
                 "websearch": app.config.websearch(),
-                "temperature_alert_c": app.config.temperature_alert_c()}
+                "temperature_alert_c": app.config.temperature_alert_c(),
+                "webdav": app.config.webdav()}
 
     def _save_provider(self, body: dict) -> None:
         from ..core.config import ProviderEntry
@@ -2368,6 +2473,7 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
     from ..hpc.collections import recover as recover_collections
     state.collection_recovery = recover_collections(app.config, app.client())
     state.start_campaign_ticker()
+    state.start_sync_ticker()
     httpd.daemon_threads = True
     bound_port = httpd.server_address[1]
     if port and bound_port != port:
@@ -2398,6 +2504,7 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
         finally:
             state.stopped.set()
             state.kick_campaigns()
+            state.kick_sync()
             httpd.server_close()
         return httpd, url
     return httpd, url

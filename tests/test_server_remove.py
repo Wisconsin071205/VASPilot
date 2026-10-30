@@ -76,7 +76,7 @@ def test_failed_remove_preserves_local_configuration(ui, monkeypatch):
     assert "cl9" in ui["state"].servers
 
 
-@pytest.mark.skipif(not secretbox.available(), reason="credential vault uses Windows DPAPI")
+@pytest.mark.skipif(not secretbox.available(), reason="credential vault needs a local encryption backend")
 @pytest.mark.parametrize("route", ["vlab", "direct"])
 def test_remove_clears_saved_credentials(ui, route):
     config = ui["app"].config

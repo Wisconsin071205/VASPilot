@@ -1,4 +1,4 @@
-"""DPAPI secret box + provider key vault round trips."""
+"""Local secret box + provider key vault round trips."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pytest
 from rsci.core import secretbox
 
 pytestmark = pytest.mark.skipif(
-    not secretbox.available(), reason="DPAPI requires Windows")
+    not secretbox.available(), reason="No local credential-encryption backend")
 
 
 def test_protect_unprotect_roundtrip():

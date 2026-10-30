@@ -7,7 +7,7 @@ from rsci.core.config import Config
 from rsci.core.migration import migrate
 
 
-pytestmark = pytest.mark.skipif(not secretbox.available(), reason="Requires Windows DPAPI")
+pytestmark = pytest.mark.skipif(not secretbox.available(), reason="Requires a local credential-encryption backend")
 
 
 def test_migration_preserves_data_and_reencrypts_credentials(tmp_path):
@@ -38,7 +38,8 @@ def test_vaspilot_provider_key_migrates_to_rsci(tmp_path):
     source.mkdir()
     settings = {"provider_keys": {
         "model": secretbox.protect_b64(
-            "sample-key", entropy=b"VASPilot-provider-key/v1")}}
+            "sample-key", entropy=b"VASPilot-provider-key/v1",
+            key_file=source / "secret.key")}}
     (source / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
 
     result = migrate(source, target, "VASPilot")
@@ -51,7 +52,9 @@ def test_wrong_entropy_leaves_destination_unconfigured(tmp_path):
     source, target = tmp_path / "old", tmp_path / "new"
     source.mkdir()
     (source / "settings.json").write_text(json.dumps({"provider_keys": {
-        "model": secretbox.protect_b64("sample-key", entropy=b"DifferentApp")}}), encoding="utf-8")
+        "model": secretbox.protect_b64(
+            "sample-key", entropy=b"DifferentApp",
+            key_file=source / "secret.key")}}), encoding="utf-8")
     with pytest.raises(OSError):
         migrate(source, target, "OldApp")
     assert not target.exists()

@@ -161,6 +161,8 @@ class TestTokenGuard:
         assert "mcredentialpassword" in html and "mcredentialtotp" in html
         assert "server.credentials_confirm" in html
         assert "cfgautodeploy" in html and "网关缺失时自动部署" in html
+        assert 'data-c="sync"' in html and "WebDAV 同步" in html
+        assert "davurl" in html and "saveWebdav" in html and "syncWebdavNow" in html
         assert "chatfileinput" in html and "addChatFiles" in html
         assert "fsearch" in html and "filterFileRows" in html
         assert "project.update" in html and 'data-act="edit"' in html
@@ -523,6 +525,48 @@ import urllib.error  # noqa: E402  (used in exceptions above)
 
 class TestSettingsApi:
     """The 配置 page: providers CRUD + DPAPI key vault + vlab settings."""
+
+    def test_webdav_settings_are_encrypted_and_testable(self, ui, monkeypatch):
+        marker = "dav-secret-marker-123"
+        saved = call(ui, "webdav.save", {
+            "url": "https://pan.ustc.edu.cn/seafdav",
+            "username": "test-user@auth.local",
+            "password": marker,
+            "remote_dir": "RSCI-sync",
+            "enabled": True,
+            "auto_sync": False,
+            "interval_minutes": 15,
+        })
+        assert saved["ok"] is True
+        assert saved["webdav"]["password_saved"] is True
+        raw = ui["app"].config.settings_path.read_text(encoding="utf-8")
+        assert marker not in raw
+        assert marker not in json.dumps(call(ui, "settings"))
+        assert ui["app"].config.webdav_password() == marker
+
+        monkeypatch.setattr(
+            "rsci.sync.engine.SyncEngine.test",
+            lambda self, **kwargs: {"reachable": True, "url": "https://x",
+                                    "username": "u", "remote_dir": "RSCI-sync",
+                                    "remote_dir_exists": True,
+                                    "tested_at": "now"})
+        tested = call(ui, "webdav.test", {})
+        assert tested["ok"] is True and tested["reachable"] is True
+
+        monkeypatch.setattr(
+            "rsci.sync.engine.SyncEngine.sync",
+            lambda self: {"ok": True, "uploaded": ["settings.json"],
+                          "downloaded": [], "deleted_local": [],
+                          "deleted_remote": [], "conflicts": [],
+                          "errors": [], "skipped": 0, "bytes_up": 10,
+                          "bytes_down": 0, "started_at": "a",
+                          "finished_at": "b", "message": "ok"})
+        synced = call(ui, "webdav.sync", {})
+        assert synced["ok"] is True and synced["uploaded"] == ["settings.json"]
+
+        cleared = call(ui, "webdav.clear_password", {})
+        assert cleared["ok"] is True
+        assert cleared["webdav"]["password_saved"] is False
 
     def test_save_provider_with_key_roundtrip(self, ui, monkeypatch):
         monkeypatch.delenv("RSCI_API_KEY_WEB_X", raising=False)
