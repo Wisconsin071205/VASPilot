@@ -13,7 +13,7 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-ROOT = "/hpc/home/tester/vasploom-root"
+ROOT = "/hpc/home/tester/rsci-root"
 
 
 class FakeGatewayState:
@@ -52,6 +52,71 @@ class FakeGatewayState:
             self.default = name
 
 
+FAKE_PROBE_OK = (
+    "__VP_VK_CMD__\n/opt/vaspkit/bin/vaspkit\n__VP_VK_VERSION__\n"
+    "VASPKIT 1.4.1\n__VP_VK_POT__\nPBE_PATH|/data/pot/PBE|dir|320|yes\n"
+    "GGA_PATH||missing|0|no\nLDA_PATH||missing|0|no\n__VP_VK_TRY__\n"
+    "stdin|ok\ntask|fail\n__VP_VK_END__\n")
+
+# What the fake VASPKIT's task 101 writes. Deliberately not what the
+# campaign wants (ISIF = 2, LCHARG = .FALSE.), so the tests prove the
+# approved settings are what ends up in the file.
+FAKE_INCAR_TEMPLATES = {
+    "LR": "SYSTEM = fake-vaspkit\nISTART = 0\nENCUT = 520\n"
+          "IBRION = 2; ISIF = 2\nNSW = 300\nEDIFFG = -0.02\n",
+    "ST": "SYSTEM = fake-vaspkit\nISTART = 0; ICHARG = 2\nENCUT = 520\n"
+          "ISMEAR = 0; SIGMA = 0.05\nNSW = 0\n"
+          "LCHARG = .FALSE.  # template default\n",
+}
+
+
+def fake_vaspkit(state, server, script):
+    """Play VASPKIT for one generation script: copy, generate, check.
+
+    ``state.vaspkit_fail`` names tasks that silently produce nothing;
+    ``state.vaspkit_primcell`` overrides what task 303 writes as
+    PRIMCELL.vasp (default: the POSCAR itself, i.e. already primitive).
+    """
+    import re as _re
+    import shlex as _sh
+    files = state.files[server]
+    fail = getattr(state, "vaspkit_fail", set())
+    lines = script.splitlines()
+    where = _sh.split(lines[0].split("||")[0])[2]
+
+    def full(path):
+        return path if path.startswith("/") else f"{where}/{path}"
+
+    for line in lines[1:]:
+        if line.startswith("cp -- "):
+            _, _, src, dst = _sh.split(line.split("||")[0])
+            if full(src) not in files:
+                return 2, f"cp: cannot stat '{src}'\n"
+            files[full(dst)] = files[full(src)]
+            continue
+        match = _re.search(r"vaspkit-(\d+)\.log", line)
+        if not match or match.group(1) in fail:
+            continue
+        task = match.group(1)
+        if task == "103":
+            files[f"{where}/POTCAR"] = b"PAW_PBE Si 05Jan2001\n"
+        elif task == "101":
+            code = _sh.split(line.split("|")[0])[-1]
+            files[f"{where}/INCAR"] = FAKE_INCAR_TEMPLATES[code].encode()
+        elif task == "102":
+            files[f"{where}/KPOINTS"] = b"K-Spacing\n0\nGamma\n8 8 8\n0 0 0\n"
+        elif task == "303":
+            files[f"{where}/KPATH.in"] = (b"K-Path\n20\nLine-Mode\nReciprocal\n"
+                                          b"0 0 0 GAMMA\n0.5 0 0.5 X\n")
+            prim = getattr(state, "vaspkit_primcell", None)
+            files[f"{where}/PRIMCELL.vasp"] = prim if prim is not None \
+                else files[f"{where}/POSCAR"]
+    for name in ("INCAR", "KPOINTS", "POTCAR"):
+        if not files.get(f"{where}/{name}"):
+            return 3, f"__VP_GEN_MISSING__ {name}\n"
+    return 0, "__VP_GEN_OK__\n"
+
+
 class FakeTransport:
     """Drop-in SshTransport double speaking the gateway JSON protocol."""
 
@@ -61,7 +126,7 @@ class FakeTransport:
         self.credential_connects: list[dict] = []
 
     # -- transport surface ----------------------------------------------------
-    def run_gateway(self, args, *, timeout=180, tty=False, capture=True):
+    def run_gateway(self, args, *, timeout=180, tty=False, capture=True, prepare=True):
         self.calls.append(list(args))
         op = args[0]
         handler = getattr(self, "op_" + op.replace("-", "_"), None)
@@ -72,7 +137,7 @@ class FakeTransport:
         if isinstance(document, dict) and not document.get("ok") \
                 and isinstance(document.get("error"), dict) \
                 and document["error"].get("code") == "disconnected":
-            from vasploom.core.errors import AuthRequiredError
+            from rsci.core.errors import AuthRequiredError
             raise AuthRequiredError(document["error"]["message"])
         return document
 
@@ -120,7 +185,7 @@ class FakeTransport:
         return {"ok": False, "error": {"code": "unknown", "message": op}}
 
     def stage_path(self):
-        return "/tmp/vasploom-deadbeef"
+        return "/tmp/rsci-deadbeef"
 
     def scp_to_stage(self, local_path, stage, *, timeout=600):
         self._stage = Path(local_path).read_bytes()
@@ -219,7 +284,7 @@ class FakeTransport:
             return {"ok": False, "error": {
                 "code": "disconnected",
                 "message": f"{server} has no reusable SSH session; run "
-                           f"'vasploom server connect {server}' in a terminal"}}
+                           f"'rsci server connect {server}' in a terminal"}}
         entry = self.state.servers[server]
         return {"ok": True, "server": server, "connected": True,
                 "auth_mode": entry.get("auth_mode", "interactive"),
@@ -244,7 +309,7 @@ class FakeTransport:
             return {"ok": False, "error": {
                 "code": "disconnected",
                 "message": f"{server} has no reusable SSH session; run "
-                           f"'vasploom server connect {server}' in a terminal"}}
+                           f"'rsci server connect {server}' in a terminal"}}
         root = self.state.servers[server]["root"]
         return {"ok": True, "server": server, "root": root, "pwd": root}
 
@@ -255,9 +320,6 @@ class FakeTransport:
         limit = int(args[args.index("--limit") + 1]) \
             if "--limit" in args else 500
         limit = max(1, min(limit, 2000))
-        if not self._in_root(server, path):
-            return {"ok": False, "error": {"code": "outside_root",
-                                           "message": "path outside root"}}
         prefix = path.rstrip("/") + "/"
         explicit = set(self.state.files.get(server, {})) | \
             set(self.state.dirs.get(server, set()))
@@ -285,9 +347,6 @@ class FakeTransport:
     def op_read(self, args):
         server = self._server(args)
         path = args[-1]
-        if not self._in_root(server, path):
-            return {"ok": False, "error": {"code": "outside_root",
-                                           "message": "path outside root"}}
         content = self.state.files[server].get(path)
         if content is None:
             return {"ok": False, "error": {"code": "not_found",
@@ -296,16 +355,14 @@ class FakeTransport:
                 "content": content.decode("utf-8", "replace")}
 
     def op_tail(self, args):
-        server = self._server(args)
-        positionals = self._positionals(args)
-        path = positionals[0] if positionals else ""
-        content = self.state.files[server].get(path)
-        if content is None:
-            return {"ok": False, "error": {"code": "not_found",
-                                             "message": f"{path} missing"}}
-        lines = content.decode("utf-8", "replace").splitlines()
-        return {"ok": True, "path": path, "size": len(content),
-                "content": "\n".join(lines[-80:])}
+        count = int(args[args.index("--lines") + 1]) if "--lines" in args else 80
+        document = self.op_read([a for i, a in enumerate(args)
+                                 if a != "--lines" and
+                                 (i == 0 or args[i - 1] != "--lines")])
+        if document.get("ok"):
+            lines = document["content"].splitlines()
+            document["content"] = "\n".join(lines[-count:])
+        return document
 
     def op_find(self, args):
         server = self._server(args)
@@ -394,7 +451,7 @@ class FakeTransport:
         self.state.trash[server].append(meta)
         for store in (self.state.files[server], ):
             if path in store:
-                store[f"{ROOT}/.vasploom-trash/{trash_id}/payload"] = store.pop(path)
+                store[f"{ROOT}/.rsci-trash/{trash_id}/payload"] = store.pop(path)
         self.state.dirs[server].discard(path)
         return {"ok": True, "trash_id": trash_id, "moved": path}
 
@@ -410,7 +467,7 @@ class FakeTransport:
         if meta is None:
             return {"ok": False, "error": {"code": "not_found",
                                            "message": "no such trash entry"}}
-        payload = f"{ROOT}/.vasploom-trash/{trash_id}/payload"
+        payload = f"{ROOT}/.rsci-trash/{trash_id}/payload"
         if payload in self.state.files[server]:
             self.state.files[server][meta["original_path"]] = \
                 self.state.files[server].pop(payload)
@@ -487,7 +544,7 @@ class FakeTransport:
         positionals = self._positionals(args)
         directory = positionals[0] if positionals else ""
         self.state.jobs[server].append({"job_id": job_id, "state": "RUNNING",
-                                        "name": "vasploom",
+                                        "name": "rsci",
                                         "directory": directory})
         return {"ok": True, "job_id": job_id, "scheduler": "slurm",
                 "directory": directory}
@@ -531,7 +588,7 @@ class FakeTransport:
             raw = files.get(f"{directory}/{name}")
             return raw.decode("utf-8", "replace") if raw else ""
 
-        from vasploom.hpc.vasp import scientific_status
+        from rsci.hpc.vasp import scientific_status
         status = scientific_status(scheduler_state="UNKNOWN", files={
             "INCAR": text("INCAR"), "OSZICAR": text("OSZICAR"),
             "OUTCAR": text("OUTCAR")})
@@ -552,6 +609,74 @@ class FakeTransport:
         if not hasattr(self.state, "exec_log"):
             self.state.exec_log = []
         self.state.exec_log.append((server, command))
+        if "base64 -d" in command:
+            import base64 as _b64
+            import re as _re
+            encoded = _re.search(r"echo (\S+) \| base64 -d", command).group(1)
+            script = _b64.b64decode(encoded).decode("utf-8")
+            if "__VP_VK_CMD__" in script:
+                rc, out = 0, getattr(self.state, "vaspkit_probe", FAKE_PROBE_OK)
+                if "__VP_VK_LIB__" in script:
+                    # a library path containing "missing" does not exist
+                    import shlex as _sh
+                    lib = _sh.split(script.splitlines()[0][len("lib="):])[0]
+                    lib = lib.replace("~", ROOT, 1) if lib.startswith("~") else lib
+                    row = (f"{lib}|missing|0|no" if "missing" in lib
+                           else f"{lib}|dir|320|yes")
+                    out = f"__VP_VK_LIB__\n{row}\n" + out
+            elif "__VP_GEN_OK__" in script:
+                self.state.__dict__.setdefault("vaspkit_scripts", []).append(script)
+                rc, out = fake_vaspkit(self.state, server, script)
+            else:
+                rc, out = 0, ""
+            return {"ok": True, "server": server, "rc": rc, "stdout": out,
+                    "stderr": "", "truncated": False, "command": command}
+        if "__VP_TZ__" in command:
+            # state.timings: {job_id: (vasp_start_epoch, last_write_epoch)}
+            # answered like a cluster in UTC+8 would
+            import re as _re
+            from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+            out = ""
+            for job_id in _re.findall(r"echo __VP_JOB__(\S+);", command):
+                out += f"__VP_JOB__{job_id}\n"
+                start, last = getattr(self.state, "timings", {}).get(job_id, (None, None))
+                if start is None and last is None:
+                    continue  # the directory is gone
+                out += "__VP_TZ__+0800\n"
+                if start is not None:
+                    local = _dt.fromtimestamp(start, _tz(_td(hours=8)))
+                    out += (" executed on             LinuxIFC date "
+                            f"{local:%Y.%m.%d  %H:%M:%S}\n")
+                out += f"__VP_LAST__{'' if last is None else int(last)}\n"
+            self.state.__dict__.setdefault("timing_asks", []).append(command)
+            return {"ok": True, "server": server, "rc": 0, "stdout": out,
+                    "stderr": "", "truncated": False, "command": command}
+        if "scontrol show job -o " in command:
+            # state.workdirs: {job_id: path} -> answered like Slurm would;
+            # several jobs come fenced by __VP_JOB__<id> markers
+            import re as _re
+            out = ""
+            for job_id in _re.findall(r"scontrol show job -o '?(\w+)'?", command):
+                where = getattr(self.state, "workdirs", {}).get(job_id)
+                if "__VP_JOB__" in command:
+                    out += f"__VP_JOB__{job_id}\n"
+                out += (f"JobId={job_id} JobName=x WorkDir={where} Nodes=n1\n"
+                        if where else "") + "__VP_SACCT__\n__VP_PBS__\n"
+            self.state.__dict__.setdefault("workdir_asks", []).append(command)
+            return {"ok": True, "server": server, "rc": 0, "stdout": out,
+                    "stderr": "", "truncated": False, "command": command}
+        if command.startswith("cd -- ") and " && sha256sum -- " in command:
+            import hashlib
+            import shlex as _sh
+            head, tail = command.split(" && sha256sum -- ", 1)
+            where = _sh.split(head)[2]
+            names = tail.split()
+            rows = [f"{hashlib.sha256(self.state.files[server][f'{where}/{n}']).hexdigest()}  {n}"
+                    for n in names if f"{where}/{n}" in self.state.files[server]]
+            return {"ok": True, "server": server,
+                    "rc": 0 if len(rows) == len(names) else 1,
+                    "stdout": "\n".join(rows) + "\n", "stderr": "",
+                    "truncated": False, "command": command}
         if "@@VP_CWD@@" in command:
             # persistent-terminal wrapper: emulate a shell that reports its
             # cwd back; keep any leading "echo x" body for passthrough tests
@@ -690,10 +815,10 @@ from pathlib import PurePosixPath  # noqa: E402  (used above)
 
 @pytest.fixture()
 def config_home(tmp_path, monkeypatch):
-    home = tmp_path / "vasploom-home"
+    home = tmp_path / "rsci-home"
     home.mkdir()
-    monkeypatch.setenv("VASPLOOM_HOME", str(home))
-    monkeypatch.delenv("VASPLOOM_IDENTITY_FILE", raising=False)
+    monkeypatch.setenv("RSCI_HOME", str(home))
+    monkeypatch.delenv("RSCI_IDENTITY_FILE", raising=False)
     (home / "settings.json").write_text(json.dumps(
         {"vlab": {"host": "vlab.invalid", "user": "tester", "port": 22,
                   "identity_file": str(tmp_path / "id_test.pem")}}),
@@ -730,8 +855,8 @@ def fake_state(tmp_path):
 @pytest.fixture()
 def app_with_fake(config_home, fake_state, monkeypatch):
     """An App wired to the FakeTransport (no network, no ssh)."""
-    from vasploom.cli.main import App
-    from vasploom.core.config import Config, ServerEntry
+    from rsci.cli.main import App
+    from rsci.core.config import Config, ServerEntry
 
     config = Config(config_home)
     config.upsert_server(ServerEntry(name="cl9", target="user@cl9", port=22,

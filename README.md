@@ -1,15 +1,24 @@
-# VaspLoom 晶织：VASP 服务端计算控制智能体
+# RSCI 科研助手
 
-> 产品名为 **VaspLoom（晶织）**，Python 包名与主命令为 `vasploom`。
-> 中文全称为「晶织：VASP 服务端计算控制智能体」，也可使用 `huwei` 命令。
 
-CLI-first, multi-model VASP/HPC agent: after the user completes SSH
-authentication by hand, it performs **restricted, auditable** file transfer,
-single-stage VASP job submission and status monitoring across
-`Windows → USTC Vlab → multiple remote HPC servers` is the default route;
-each server can also opt into `Windows → remote HPC` direct SSH when it is
-reachable from the workstation. No model is ever given an arbitrary remote
-shell — every action is a named, validated tool.
+面向远端科研服务器的工作台：连接服务器、管理项目文件、通过聊天调用工具，以及提交和查看 VASP/Slurm 计算。
+文献解析、OCR、文献问答、数据检查和研究报告功能已移除。已有项目文件仍可读取和编辑。
+
+## VASP/HPC 专业模块
+
+选择并进入 VASP 项目后，才向对话加载材料计算规则、VASP/VASPKIT/POTCAR 与 Campaign 工具。
+任务执行、恢复与回收共用任务中心，VASP 输入校验、进度与收敛判断由专业模块负责。
+
+The CLI-first, multi-model VASP/HPC module remains available: after the user completes SSH
+authentication by hand, it performs **auditable** file transfer, job
+submission, status monitoring and VASP workflows across
+`Windows → USTC Vlab → multiple remote HPC servers` by default; each server
+may instead use direct SSH when reachable from the workstation. Named write
+tools are path-confined and validated; read-only file tools use the SSH account's
+filesystem permissions. The two explicit shell tools (`shell_run`,
+`remote_run`) trade that confinement for autonomy and are governed by the
+audit log; they are refused to `analysis_only` providers. See
+[Shell access](#shell-access-explicit-operator-policy).
 
 ```
 本地 CLI / 智能体层       可选路由                     HPC 适配层
@@ -39,9 +48,11 @@ shell — every action is a named, validated tool.
 执行 `python scripts/verify_submission.py` 验证解压后的 exe 与独立环境安装的 wheel。
 
 ```powershell
-py -3.12 -m pip install -e .[dev]
-vasploom --help            # 别名: huwei --help
-py -3.12 -m pytest         # offline test suite
+# CPython >= 3.11
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev,desktop]"
+.venv\Scripts\rsci.exe --help
+.venv\Scripts\python -m pytest
 ```
 
 材料自动化栈按需安装，不强迫轻量网关携带科学计算依赖：
@@ -58,15 +69,22 @@ py -3.12 -m pip install -e .[provenance]  # AiiDA
 也可直接使用仓库启动脚本，确保运行当前源码：
 
 ```powershell
-scripts\vasploom.cmd server list          # wrapper that pins PYTHONPATH=src
+scripts\rsci.cmd server list          # wrapper that pins PYTHONPATH=src
 # or
-set PYTHONPATH=src && py -3.12 -m vasploom --help
+$env:PYTHONPATH = "src"
+.venv\Scripts\python -m rsci --help
 ```
 
-更名后请重新执行开发安装。默认本机配置目录为 `~/.vasploom`，环境变量使用
-`VASPLOOM_` 前缀，新部署的远端网关为 `~/bin/vasploom-gateway`。
-已有本机配置可通过 `python -m vasploom.core.migration --source <原配置目录>
---target <新配置目录> --source-entropy-prefix <原加密应用名>` 迁移。
+默认本机配置目录为 `~/.rsci`，环境变量使用 `RSCI_` 前缀，新部署的远端网关为
+`~/bin/rsci-gateway`。从早期 VaspLoom 配置迁移时，密钥前缀使用
+`VaspLoom`；从 VASPilot 配置迁移时使用 `VASPilot`：
+
+```powershell
+python -m rsci.core.migration --source <原配置目录> --target <新配置目录> `
+    --source-entropy-prefix VaspLoom
+```
+
+该迁移会保留原目录，在内存中解密并重新加密凭据；目标目录已有配置时拒绝覆盖。
 迁移会保留原目录，在内存中解密并重新加密凭据，保留已有服务器地址、路径和其他参数；
 目标目录已有配置时拒绝覆盖。迁移后刷新控制台即可重新读取配置。
 
@@ -74,37 +92,37 @@ set PYTHONPATH=src && py -3.12 -m vasploom --help
 
 ```powershell
 # 1) Vlab identity (PEM from the portal) — path only, never the key body
-setx VASPLOOM_IDENTITY_FILE "C:\path\to\vlab.pem"
+setx RSCI_IDENTITY_FILE "C:\path\to\vlab.pem"
 
 # 2) for Vlab-routed servers, the first operation automatically checks and,
 #    by default, deploys the gateway helper onto Vlab; the one-shot manual
 #    command is still available (see below), then:
-vasploom server add cl9 --target user@cl9.ustc.edu.cn --root /public/home/you/vasploom --scheduler slurm --route vlab
+rsci server add cl9 --target user@cl9.ustc.edu.cn --root /public/home/you/rsci --scheduler slurm --route vlab
 # 目标可从本机直接访问时，可改用：--route direct
-vasploom server connect cl9        # 无加密凭据时在可见终端输入密码 + TOTP
+rsci server connect cl9        # 无加密凭据时在可见终端输入密码 + TOTP
 
 # Web 控制台中可为 Vlab 中转或直连服务器保存密码与 TOTP 种子；
 # 之后点击“连接”会自动认证。每 3 天在服务器卡片点击“确认凭据”即可继续使用。
 # CLI 也可安全交互录入（密码不会进入命令历史）：
-vasploom server credentials-save cl9 --confirm-days 3
+rsci server credentials-save cl9 --confirm-days 3
 
 # 3) model providers (keys stay in environment variables)
-vasploom agent provider add --id ds --name DeepSeek --protocol openai-chat-compatible `
+rsci agent provider add --id ds --name DeepSeek --protocol openai-chat-compatible `
     --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key-env DEEPSEEK_API_KEY
-vasploom agent provider probe ds   # capability probe; failures degrade to analysis_only
+rsci agent provider probe ds   # capability probe; failures degrade to analysis_only
 ```
 
 Gateway deployment onto Vlab (runs `scp` + `ssh`, CRLF→LF + py_compile
 validation, atomic replace). This is normally automatic when a Vlab operation
-finds `~/bin/vasploom-gateway` missing; the command below is useful for a
+finds `~/bin/rsci-gateway` missing; the command below is useful for a
 manual install or repair:
 
 ```powershell
-py -3.12 scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
+.venv\Scripts\python scripts\install_vlab_gateway.py --identity-file C:\path\to\vlab.pem
 ```
 
 The gateway is a small, restricted helper stored in the Vlab user's
-`~/bin/vasploom-gateway`. It is the only component that talks from Vlab to the
+`~/bin/rsci-gateway`. It is the only component that talks from Vlab to the
 registered HPC targets; the model never receives an arbitrary remote shell.
 Automatic deployment first checks for an executable helper, then uploads the
 local helper to a random `/tmp` staging name, byte-compiles it on Vlab, and
@@ -123,7 +141,8 @@ explicit install because it has additional Vlab-side prerequisites.
 | `workflow` | `prepare validate preview approve approve-submit run resume status` |
 | `monitor` | `snapshot watch` |
 | `agent` | `provider list/add/remove/probe/set-default`, `chat --provider`, `run --provider --goal` |
-| `ui` | `vasploom ui` — 统一 Web 控制台 |
+| `ui` | `rsci ui` — 统一 Web 控制台 |
+| `desktop` | `rsci desktop` — 控制台的独立桌面窗口（Windows / macOS） |
 
 Every command prints one stable JSON document and uses documented exit codes:
 `0` ok · `1` error · `2` usage · `3 auth_required` · `4 approval` · `5 validation`.
@@ -131,9 +150,14 @@ Every command prints one stable JSON document and uses documented exit codes:
 only when explicitly saved and within the confirmation window; otherwise you
 re-authenticate visibly via `server connect`.
 
-## 统一 Web 控制台（`vasploom ui`）
+## 统一 Web 控制台（`rsci ui`）
 
 本地零依赖 Web UI（默认 `http://127.0.0.1:8930`，浏览器自动打开）：
+
+左侧「外观主题」可切换深色、浅色、暖砂、松林或跟随系统。主题在首次绘制前
+恢复，覆盖对话、代码、表单、审批及任务状态；只影响外观，不改变模型、审批或
+执行配置。偏好保存在当前浏览器/桌面 WebView 的当前站点，刷新后保留，同源窗口
+自动同步；换浏览器或端口需重新选择。存储不可用时仍可切换，并提示无法保存。
 
 - **对话** — 多 Provider 智能体聊天，流式输出、持久记忆、会话分支、上下文压缩、
   安全 Markdown 渲染和工具调用卡片（可展开参数/结果），与 CLI/MCP 共用同一注册表
@@ -147,18 +171,59 @@ re-authenticate visibly via `server connect`.
   风险、执行尝试和失败恢复；高级用户仍可手动创建计划。
 
 安全模型：仅绑定 127.0.0.1；每次启动生成随机会话令牌，所有 `/api/*` 请求
-必须携带。Vlab 中转和直连服务器都可以在编辑窗口保存登录密码和 Google Authenticator 的
-TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
-`~/.vasploom/settings.json`。直连时仅在本机 SSH 子进程中短暂解密；Vlab
-中转只经已验证的 SSH 通道临时发送密码和当期六位码，TOTP 种子不会离开本机，
-Vlab 不会落盘保存凭据。密码和种子绝不进入审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
-自动连接会暂停；未保存凭据时仍通过「连接」按钮在**独立可见系统终端**中手工输入。
-审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「VaspLoom 控制台」
-或 `%USERPROFILE%\bin\vasploom-ui.cmd` 一键启动。
+必须携带。可选的服务器密码/TOTP 与模型 API Key 会用 Windows DPAPI
+（CurrentUser）加密后保存在 `~/.rsci`；Vlab 中转仅临时发送密码和当期验证码，
+TOTP 种子不离开本机。未保存凭据时，交互式登录通过「连接」按钮在**独立的可见
+系统终端**中完成；审批短语由人在页面输入、服务端按 CLI 相同规则校验。
+命令行启动 `rsci ui`（仓库内包装器 `scripts\rsci.cmd ui` 固定使用本仓库代码）；
+独立窗口的桌面形态见下一节。
+
+## 桌面应用（`rsci desktop`）
+
+同一个控制台，装进独立窗口：双击图标即打开，关闭窗口即停止服务；若控制台已在运行
+（`rsci ui` 或另一个窗口），只开窗、不重复起服务，关窗也不会停掉别人的服务。
+窗口用系统自带的 web view，不额外装浏览器内核：
+
+| 平台 | 渲染器 | 安装脚本 | 入口 |
+| --- | --- | --- | --- |
+| Windows | WebView2（`edgechromium`，经 pythonnet/.NET Framework） | `scripts\install-desktop.ps1` | 桌面与开始菜单的 `RSCI 科研助手` 快捷方式 |
+| macOS | WKWebView（`cocoa`，经 pyobjc） | `scripts/install-desktop.sh` | `~/Applications/RSCI 科研助手.app` |
+
+Windows：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1
+```
+
+macOS：
+
+```bash
+scripts/install-desktop.sh            # 或 scripts/install-desktop.sh /path/to/python3
+```
+
+两个脚本都幂等：选择稳定的 CPython >= 3.11（跳过 alpha 版；Windows 上还跳过 Store 桩），
+必要时重建 `.venv`，安装 `desktop` extra（`pip install -e .[desktop]`；pywebview 会按平台
+自动带上 pythonnet 或 pyobjc），生成图标，最后创建入口。Windows 的快捷方式指向
+`pythonw.exe` 以免弹控制台；macOS 生成一个最小的 `.app`，其 launcher 进入仓库目录后执行
+`python -m rsci desktop`。
+
+未安装 extra 时 `rsci desktop` 会弹提示并退回浏览器；Linux 直接拒绝并让你用
+`rsci ui`。日志：`~/.rsci/desktop.log`。
 
 ## VS Code 安全编辑（单一最新版 VS Code）
 
-仓库附带“晶织：VASP 服务端计算控制智能体 VS Code Bridge”扩展。它经本地控制台按需访问
+Vlab 中转和直连服务器都可以在编辑窗口保存登录密码和 Google Authenticator 的
+TOTP 种子；两者使用 Windows DPAPI（CurrentUser）加密后写入
+`~/.rsci/settings.json`。直连时仅在本机 SSH 子进程中短暂解密；Vlab
+中转只经已验证的 SSH 通道临时发送密码和当期六位码，TOTP 种子不会离开本机，
+Vlab 不会落盘保存凭据。密码和种子绝不进入审计日志或聊天记录。默认每 3 天要求一次「确认仍保留凭据」，确认前
+自动连接会暂停；未保存凭据时仍通过「连接」按钮在**独立可见系统终端**中手工输入。
+审批短语由人在页面输入、服务端按 CLI 相同规则校验。桌面快捷方式「RSCI 科研助手」
+或 `%USERPROFILE%\bin\rsci-ui.cmd` 一键启动。
+
+## VS Code 安全编辑（单一最新版 VS Code）
+
+仓库附带“RSCI 科研助手 VS Code Bridge”扩展。它经本地控制台按需访问
 `Windows → Vlab → HPC`，不通过 Remote-SSH 直接连接计算服务器，因此不会在
 CentOS 7 等老集群安装 VS Code Server。先运行
 `apps\huwei-agent-vscode-bridge\install-windows.ps1` 安装仓库内的 VSIX，随后在
@@ -172,11 +237,11 @@ Vlab，rclone 在 Vlab 映射一个明确选定的计算目录。安装、空间
 ## 单阶段 VASP 作业提交与审批
 
 ```
-vasploom workflow prepare --from-dir CASE --server cl9 --remote-dir /public/home/you/runs/case-1
-vasploom workflow preview <plan_id>        # plan_hash, files+SHA-256, steps, risk
-vasploom workflow approve  <plan_id>       # YOU type "approve <plan_id>" locally
-vasploom workflow run      <plan_id> --approval-ref <ref>
-vasploom workflow resume   <plan_id> --approval-ref <ref>   # new attempt, same plan
+rsci workflow prepare --from-dir CASE --server cl9 --remote-dir /public/home/you/runs/case-1
+rsci workflow preview <plan_id>        # plan_hash, files+SHA-256, steps, risk
+rsci workflow approve  <plan_id>       # YOU type "approve <plan_id>" locally
+rsci workflow run      <plan_id> --approval-ref <ref>
+rsci workflow resume   <plan_id> --approval-ref <ref>   # new attempt, same plan
 ```
 
 当前执行引擎每次只提交一个阶段：输入目录中的 `INCAR`、`KPOINTS`、`POSCAR` 和
@@ -204,6 +269,43 @@ Scheduler `COMPLETED` is **never** reported as scientific convergence — the
 run state records `scheduler_state` and `scientific_converged` separately,
 and a scheduler-finished-but-unconverged run ends as `needs_review`.
 
+## Remote file access
+
+`remote_root` is the default work directory and the boundary for structured
+uploads, writes, moves, removals, workspace mounts and job submissions.
+The Files page and directory picker can navigate above it, up to `/`.
+`remote_list`, `remote_read`, `remote_tail`, `remote_find`, `remote_stat`,
+`remote_du`, downloads and VASP progress reads can access other absolute paths
+that the SSH account can read. No server configuration change or extra server
+entry is needed just to read a sibling directory. Invalid paths, text-file
+restrictions and output size limits still apply; SSH permissions are not changed.
+
+## Shell access (explicit operator policy)
+
+Two tools give the model a real shell. This is intentional (added in v1.1.0
+with the agent-autonomy suite) and it is the one place where the confinement
+described above does **not** apply:
+
+| Tool | Runs on | Confinement |
+| --- | --- | --- |
+| `shell_run` | the local Windows machine | none — `subprocess.run(..., shell=True)` |
+| `remote_run` | the HPC login node, via the gateway | none — no `remote_root` check, no `realpath` guard; keeps a per-session working directory |
+
+Consequences worth stating plainly:
+
+- `remote_run` bypasses the `remote_root` boundary and the symlink-escape
+  check that structured remote mutations enforce;
+- `remote_run` can call `sbatch`/`qsub` directly, so it also bypasses the
+  human confirmation that `job_submit` shows in the web console;
+- the only gate on either tool is provider capability: they are `write`-kind,
+  so a provider degraded to `analysis_only` is refused. A fully probed
+  provider needs no approval token.
+
+The control plane is therefore the **audit log**, not interception: every
+command, working directory, exit code and output is recorded on both sides.
+Set `RSCI_MCP_MODE=analysis_only` to remove both tools from an MCP
+session, and review `~/.rsci/audit/` if you need to know what ran.
+
 ## Model providers
 
 | Protocol | Backends | Notes |
@@ -221,8 +323,8 @@ tools.
 
 ## Codex plugin
 
-`C:\Users\weikx\plugins\vasploom-remote-control` is a thin stdio relay to
-`python -m vasploom.mcp` — the same registry the CLI uses. It adds
+`C:\Users\weikx\plugins\rsci-remote-control` is a thin stdio relay to
+`python -m rsci.mcp` — the same registry the CLI uses. It adds
 `open_remote_login` and `open_approval_terminal` (visible terminals) and never
 carries credentials or approval references through MCP.
 
@@ -230,18 +332,20 @@ carries credentials or approval references through MCP.
 
 | Variable | Purpose |
 | --- | --- |
-| `VASPLOOM_HOME` | config directory (default `~/.vasploom`) |
-| `VASPLOOM_IDENTITY_FILE` | Vlab PEM path override |
+| `RSCI_HOME` | config directory (default `~/.rsci`) |
+| `RSCI_IDENTITY_FILE` | Vlab PEM path override |
 | `<api_key_env>` per provider | e.g. `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` |
-| `VASPLOOM_POTCAR_LIBRARY` | authorized local POTCAR library (metadata-only access) |
-| `VASPLOOM_MCP_MODE` | `analysis_only` forces read-only MCP sessions |
+| `RSCI_POTCAR_LIBRARY` | authorized local POTCAR library (metadata-only access) |
+| `RSCI_MCP_MODE` | `analysis_only` forces read-only MCP sessions |
 
 ## Security invariants
 
+- exactly two shell tools (`shell_run`, `remote_run`), both audit-only by
+  explicit operator policy and both refused to `analysis_only` providers;
+  every other tool maps to a fixed command shape and never accepts a
+  caller-supplied shell string
 本机直连凭据的字段、周期确认和失败语义见
 [spec/local-credential-requirements.md](spec/local-credential-requirements.md)。
-
-- no shell tool; no `bash -c`/`sh -c`/PowerShell string concatenation anywhere
 - strict validation of server names, paths (lexical + `realpath`), job ids,
   trash ids and local project roots
 - SSH host-key changes fail closed; `known_hosts` is never auto-modified
@@ -252,14 +356,14 @@ carries credentials or approval references through MCP.
 - SHA-256 recorded for every upload/download/analysis artifact
 - POTCAR readable only as metadata (TITEL/ENMAX/size/SHA-256) from an
   authorized library
-- append-only, secret-sanitizing audit log under `~/.vasploom/audit/`
-- gateway staging area confined to `/tmp/vasploom-<hex>` with hash checks
+- append-only, secret-sanitizing audit log under `~/.rsci/audit/`
+- gateway staging area confined to `/tmp/rsci-<hex>` with hash checks
 
 ## Repository layout
 
 ```
-src/vasploom/   core/ (config, validation, audit, hashing)
-                gateway/ (SSH transport, client, vasploom_gateway.py for Vlab)
+src/rsci/   core/ (config, validation, audit, hashing)
+                gateway/ (SSH transport, client, rsci_gateway.py for Vlab)
                 hpc/ (Slurm/PBS adapters, VASP science, job scripts)
                 providers/ (3 protocols + codex_bridge.mjs)
                 tools/ (the named tool registry shared by CLI/MCP/agent)
@@ -271,13 +375,28 @@ tests/          unit, provider-contract (mock HTTP), gateway integration
 recipes/ spec/  design drafts plus the single-stage execution specification
 ```
 
+## 科研工作流
+
+在顶部「科研工作流」栏目填写名称和科研方向，点击「用当前模型生成指令」，
+编辑生成的 Markdown 后保存。也可以直接编写指令，并导出为 `SKILL.md`。
+生成和保存只编写研究方法，不会提交计算任务。
+
+对话输入框上方可选择「自动匹配」「不使用工作流」或某个已保存的流程。
+自动匹配使用当前模型，根据本轮问题和最近对话选择适用的流程；无匹配时直接回答。
+选中的指令会加入计算管理 Agent 的当前上下文，沿用现有工具和审批设置。
+选择随发送保存到会话，每轮采用的流程也会保存在回答记录中。
+
+工作流保存在 `RSCI_HOME/research-workflows/`（默认 `~/.rsci/research-workflows/`），
+可用于不同科研领域；具体软件能否执行仍取决于服务器环境和 Agent 已有工具。
+科研工作流用于保存方法，「任务中心」继续管理具体计算计划和执行状态。
+
 ## Known limitations
 
 - Vlab-routed servers require the Vlab-side gateway to be deployed manually
   the first time (`scripts/install_vlab_gateway.py`), unless the Web/CLI
   setting “网关缺失时自动部署” is enabled (the default);
 - direct-route servers need Python 3 and the helper is installed under the
-  target user's `~/.cache/vasploom/` on first use. Native Windows OpenSSH
+  target user's `~/.cache/rsci/` on first use. Native Windows OpenSSH
   does not support `ControlMaster`/`ControlPath`; direct operations use a
   short-lived `SSH_ASKPASS` helper when an encrypted password/TOTP seed is
   present, or an SSH key/agent. Credentials are withheld after the periodic

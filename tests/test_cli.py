@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from vasploom.cli.main import main
+from rsci.cli.main import main
 
 
 def run_cli(argv, monkeypatch, stdin=None):
@@ -45,13 +45,13 @@ def run_cli(argv, monkeypatch, stdin=None):
 
 @pytest.fixture()
 def cli(config_home, fake_state, monkeypatch):
-    from vasploom.cli.main import App
-    from vasploom.core.config import Config, ServerEntry
+    from rsci.cli.main import App
+    from rsci.core.config import Config, ServerEntry
     from tests.conftest import FakeTransport
 
     config = Config(config_home)
     config.upsert_server(ServerEntry(name="cl9", target="user@cl9", port=22,
-                                     remote_root="/hpc/home/tester/vasploom-root",
+                                     remote_root="/hpc/home/tester/rsci-root",
                                      persist="8h", scheduler="slurm"))
     config.set_default_server("cl9")
     transport = FakeTransport(fake_state)
@@ -86,14 +86,30 @@ class TestServerCommands:
 
 
 class TestRemoteCommands:
-    def test_list_confines_paths(self, cli, monkeypatch):
+    def test_agent_reads_external_file(self, cli, fake_state):
+        from rsci.providers.base import ANALYSIS_ONLY
+        from rsci.cli.main import App
+        from rsci.core.config import Config
+        path = "/public/data/NaOH.cif"
+        fake_state.files["cl9"][path] = b"data_NaOH\n"
+        result = App(Config()).registry().dispatch(
+            "remote_read", {"server": "cl9", "path": path}, provider_mode=ANALYSIS_ONLY)
+        assert result["ok"] and result["content"] == "data_NaOH\n"
+
+    def test_list_can_browse_above_work_root(self, cli, monkeypatch):
         code, document, _, _ = run_cli(
-            ["remote", "list", "/etc"], monkeypatch)
+            ["remote", "list", "/hpc/home/tester"], monkeypatch)
+        assert code == 0
+        assert "rsci-root" in {entry["name"] for entry in document["entries"]}
+
+    def test_mkdir_confines_paths(self, cli, monkeypatch):
+        code, document, _, _ = run_cli(
+            ["remote", "mkdir", "/public/new-directory"], monkeypatch)
         assert code == 5
         assert document["error"]["code"] == "validation_error"
 
     def test_read_refuses_potcar(self, cli, monkeypatch):
-        path = "/hpc/home/tester/vasploom-root/run/POTCAR"
+        path = "/hpc/home/tester/rsci-root/run/POTCAR"
         code, document, _, _ = run_cli(["remote", "read", path], monkeypatch)
         assert code == 5
         assert "POTCAR" in document["error"]["message"]
@@ -104,26 +120,26 @@ class TestRemoteCommands:
         local.write_text("SYSTEM = x\n", encoding="utf-8")
         code, document, _, _ = run_cli(
             ["remote", "upload", str(local),
-             "/hpc/home/tester/vasploom-root/run/INCAR"], monkeypatch)
+             "/hpc/home/tester/rsci-root/run/INCAR"], monkeypatch)
         assert code == 0
         assert document["sha256"]
         target = tmp_path / "downloaded"
         code, document, _, _ = run_cli(
             ["remote", "download",
-             "/hpc/home/tester/vasploom-root/run/INCAR", str(target)],
+             "/hpc/home/tester/rsci-root/run/INCAR", str(target)],
             monkeypatch)
         assert code == 0
         assert target.read_text(encoding="utf-8") == "SYSTEM = x\n"
         # downloads never overwrite
         code, document, _, _ = run_cli(
             ["remote", "download",
-             "/hpc/home/tester/vasploom-root/run/INCAR", str(target)],
+             "/hpc/home/tester/rsci-root/run/INCAR", str(target)],
             monkeypatch)
         assert code == 5
 
     def test_purge_requires_double_match(self, cli, fake_state, monkeypatch):
         code, document, _, _ = run_cli(
-            ["remote", "trash", "/hpc/home/tester/vasploom-root/runs/bad"],
+            ["remote", "trash", "/hpc/home/tester/rsci-root/runs/bad"],
             monkeypatch)
         assert code == 0
         trash_id = document["trash_id"]
@@ -141,7 +157,7 @@ class TestRemoteCommands:
 
 class TestWorkspaceCommands:
     def test_open_uses_vlab_workspace_gateway_not_remote_ssh(self, cli, monkeypatch):
-        path = "/hpc/home/tester/vasploom-root/runs/relax"
+        path = "/hpc/home/tester/rsci-root/runs/relax"
         code, document, _, _ = run_cli(
             ["workspace", "open", "--server", "cl9", "--path", path], monkeypatch)
         assert code == 0
@@ -152,7 +168,7 @@ class TestWorkspaceCommands:
 
     def test_status_and_close_are_structured(self, cli, monkeypatch):
         run_cli(["workspace", "open", "--server", "cl9", "--path",
-                 "/hpc/home/tester/vasploom-root/runs/relax"], monkeypatch)
+                 "/hpc/home/tester/rsci-root/runs/relax"], monkeypatch)
         code, document, _, _ = run_cli(
             ["workspace", "status", "--workspace", "ws-1234abcd"], monkeypatch)
         assert code == 0
@@ -166,7 +182,7 @@ class TestWorkspaceCommands:
 class TestJobCommands:
     def test_progress_reports_science_only(self, cli, monkeypatch):
         code, document, _, _ = run_cli(
-            ["job", "progress", "/hpc/home/tester/vasploom-root/runs/good"],
+            ["job", "progress", "/hpc/home/tester/rsci-root/runs/good"],
             monkeypatch)
         assert code == 0
         assert document["scientific_converged"] is True

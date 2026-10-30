@@ -1,0 +1,37 @@
+{
+  "source_commit": "1d115c5454b46ac0b4a6eb800665c7012bce6639",
+  "source_url": "https://github.com/adaptivecomputing/torque/blob/1d115c5454b46ac0b4a6eb800665c7012bce6639/src/cmds/qsub_functions.c#L242",
+  "method": "offline reproduction of the exact-version find_job_script_index argument scanner; no qsub job submission invoked",
+  "cases": [
+    {
+      "argv": [
+        "qsub",
+        "--",
+        "run.job.sh"
+      ],
+      "script_index": -1,
+      "script_file": null,
+      "would_read_stdin": true
+    },
+    {
+      "argv": [
+        "qsub",
+        "./run.job.sh"
+      ],
+      "script_index": 1,
+      "script_file": "./run.job.sh",
+      "would_read_stdin": false
+    },
+    {
+      "argv": [
+        "qsub",
+        "-q",
+        "short",
+        "./run.job.sh"
+      ],
+      "script_index": 3,
+      "script_file": "./run.job.sh",
+      "would_read_stdin": false
+    }
+  ]
+}

@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-GATEWAY = SRC / "vasploom" / "gateway" / "vasploom_gateway.py"
-ROOT = "/hpc/home/tester/vasploom-root"
+GATEWAY = SRC / "rsci" / "gateway" / "rsci_gateway.py"
+ROOT = "/hpc/home/tester/rsci-root"
 
 
 @pytest.fixture()
@@ -38,13 +38,13 @@ def gateway_env(tmp_path, monkeypatch):
                             "scheduler": "slurm"}},
         "stage_dir": str(stage), "next_job_id": 2000, "jobs": {},
     }), encoding="utf-8")
-    monkeypatch.setenv("VASPLOOM_GATEWAY_CONFIG", str(config_dir))
-    monkeypatch.setenv("VASPLOOM_GATEWAY_CACHE", str(cache_dir))
-    monkeypatch.setenv("VASPLOOM_FAKE_HPC", str(Path(__file__).parent / "fake_hpc.py"))
-    monkeypatch.setenv("VASPLOOM_FAKE_HPC_CONFIG", str(fake_config))
+    monkeypatch.setenv("RSCI_GATEWAY_CONFIG", str(config_dir))
+    monkeypatch.setenv("RSCI_GATEWAY_CACHE", str(cache_dir))
+    monkeypatch.setenv("RSCI_FAKE_HPC", str(Path(__file__).parent / "fake_hpc.py"))
+    monkeypatch.setenv("RSCI_FAKE_HPC_CONFIG", str(fake_config))
     # gateway-local stage reads resolve into the fixture stage dir
-    monkeypatch.setenv("VASPLOOM_GATEWAY_STAGE_DIR", str(stage))
-    # the gateway generates per-server keys under ~/.ssh/vasploom —
+    monkeypatch.setenv("RSCI_GATEWAY_STAGE_DIR", str(stage))
+    # the gateway generates per-server keys under ~/.ssh/rsci —
     # redirect HOME/USERPROFILE so tests never touch the real home
     monkeypatch.setenv("HOME", str(vlab_home))
     monkeypatch.setenv("USERPROFILE", str(vlab_home))
@@ -52,8 +52,11 @@ def gateway_env(tmp_path, monkeypatch):
     def run(*args, check=False, input_data=None):
         result = subprocess.run(
             [sys.executable, str(GATEWAY), *args],
-            input=input_data, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=120)
+            input=input_data, capture_output=True, text=True, encoding="utf-8",
+            # a non-UTF-8 byte anywhere (a GBK OS message on a zh-CN
+            # Windows, say) used to kill the reader thread and leave
+            # result.stdout as None, masking the real error
+            errors="replace", timeout=120)
         document = None
         for line in result.stdout.splitlines():
             if line.startswith("{"):
@@ -73,8 +76,35 @@ def gateway_env(tmp_path, monkeypatch):
 
 
 class TestConfinement:
-    def test_outside_root_rejected(self, gateway_env):
-        result = gateway_env["run"]("list", "--server", "cl9", "/etc")
+    def test_read_above_work_root_and_from_external_directory(self, gateway_env):
+        run, fs = gateway_env["run"], gateway_env["fs"]
+        # The account can see the filesystem; the configured work root stays
+        # narrow. This reproduces browsing from a project into its parent.
+        config = json.loads(gateway_env["fake_config"].read_text(encoding="utf-8"))
+        config["servers"]["cl9"]["root"] = "/"
+        gateway_env["fake_config"].write_text(json.dumps(config), encoding="utf-8")
+        (fs / ROOT.lstrip("/")).mkdir(parents=True)
+        external = fs / "public" / "data"
+        external.mkdir(parents=True)
+        content = b"data_NaOH\n_cell_length_a 3.4\n"
+        (external / "NaOH.cif").write_bytes(content)
+        for path, child in [(ROOT.rsplit("/", 1)[0], "rsci-root"), ("/", "public")]:
+            listing = run("list", "--server", "cl9", path, check=True)
+            assert child in {entry["name"] for entry in listing["entries"]}
+        path = "/public/data/NaOH.cif"
+        assert run("read", "--server", "cl9", path, check=True)["content"] == content.decode()
+        assert "3.4" in run("tail", "--server", "cl9", path, "--lines", "1", check=True)["content"]
+        found = run("find", "--server", "cl9", "/public/data", "--pattern", "*.cif", check=True)
+        assert [entry["path"] for entry in found["files"]] == [path]
+        assert run("stat", "--server", "cl9", path, check=True)["size"] == len(content)
+        assert run("du", "--server", "cl9", "/public/data", check=True)["bytes"] == len(content)
+        stage = "/tmp/rsci-1234567890abcdef"
+        run("download", "--server", "cl9", path, stage, check=True)
+        assert (gateway_env["stage"] / stage.rsplit("/", 1)[1]).read_bytes() == content
+        assert run("pwd", "--server", "cl9", check=True)["root"] == ROOT
+
+    def test_outside_root_mutation_rejected(self, gateway_env):
+        result = gateway_env["run"]("mkdir", "--server", "cl9", "/public/new-directory")
         assert result is not None and not result["ok"]
         assert "must remain under" in result["error"]["message"]
 
@@ -133,21 +163,21 @@ class TestFileOperations:
         import hashlib
         sha = hashlib.sha256(b"payload-bytes").hexdigest()
         # tampered hash -> mismatch
-        result = run("upload", "--server", "cl9", "/tmp/vasploom-abcdef0123456789",
+        result = run("upload", "--server", "cl9", "/tmp/rsci-abcdef0123456789",
                      f"{ROOT}/up/INCAR", "0" * 64)
         assert result is None or not result.get("ok")
         # write the stage where the fake expects it, then upload for real
-        expected_stage = stage / "vasploom-abcdef0123456789"
+        expected_stage = stage / "rsci-abcdef0123456789"
         expected_stage.parent.mkdir(parents=True, exist_ok=True)
         expected_stage.write_bytes(b"payload-bytes")
         result = run("upload", "--server", "cl9",
-                     "/tmp/vasploom-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
+                     "/tmp/rsci-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
         assert result["ok"]
         assert (fs / "up" / "INCAR").read_bytes() == b"payload-bytes"
         # a second identical upload is idempotent; the CLI re-stages each time
         expected_stage.write_bytes(b"payload-bytes")
         result = run("upload", "--server", "cl9",
-                     "/tmp/vasploom-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
+                     "/tmp/rsci-abcdef0123456789", f"{ROOT}/up/INCAR", sha)
         assert result["ok"] and result["status"] == "identical"
 
     def test_download_reports_sha(self, gateway_env):
@@ -155,7 +185,7 @@ class TestFileOperations:
         (fs / "dl").mkdir(exist_ok=True)
         (fs / "dl" / "OSZICAR").write_bytes(b"   1 F= -.1E+02\n")
         result = run("download", "--server", "cl9", f"{ROOT}/dl/OSZICAR",
-                     "/tmp/vasploom-0011223344556677")
+                     "/tmp/rsci-0011223344556677")
         assert result["ok"]
         import hashlib
         assert result["sha256"] == hashlib.sha256(b"   1 F= -.1E+02\n").hexdigest()
@@ -289,7 +319,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.3.5"
+        assert result["gateway_version"] == "1.5.5"
 
     def test_transient_credential_connect_is_not_persisted(self, gateway_env):
         password = "transient-password!"
@@ -330,11 +360,11 @@ class TestCatalogAndSessions:
         clean update, denylist refusal — all through the real gateway."""
         import hashlib
         stage = gateway_env["stage"]
-        stage_arg = "/tmp/vasploom-aaaa1111"
+        stage_arg = "/tmp/rsci-aaaa1111"
         target = f"{ROOT}/runs/written.txt"
 
         content = b"hello structured write\n"
-        (stage / "vasploom-aaaa1111").write_bytes(content)
+        (stage / "rsci-aaaa1111").write_bytes(content)
         doc = gateway_env["run"]("write", "--server", "cl9",
                                  "--expected-sha", "",
                                  stage_arg, target, check=True)
@@ -344,7 +374,7 @@ class TestCatalogAndSessions:
         assert real.read_bytes() == content
 
         # stale baseline -> remote_changed, original file untouched
-        (stage / "vasploom-aaaa1111").write_bytes(b"second attempt\n")
+        (stage / "rsci-aaaa1111").write_bytes(b"second attempt\n")
         doc = gateway_env["run"]("write", "--server", "cl9",
                                  "--expected-sha", "0" * 64,
                                  stage_arg, target)
@@ -352,7 +382,7 @@ class TestCatalogAndSessions:
         assert real.read_bytes() == content
 
         # clean update with the correct baseline (current remote sha)
-        (stage / "vasploom-aaaa1111").write_bytes(b"second attempt\n")
+        (stage / "rsci-aaaa1111").write_bytes(b"second attempt\n")
         doc = gateway_env["run"]("write", "--server", "cl9",
                                  "--expected-sha", baseline,
                                  stage_arg, target, check=True)
@@ -401,7 +431,7 @@ class TestCatalogAndSessions:
 def test_pbs_sched_section_columns():
     """qstat -q columns must map to state/run/queued correctly (v1.2.0 fix:
     previously 状态 showed the Run count)."""
-    from vasploom.gateway.client import _parse_metric_sections
+    from rsci.gateway.client import _parse_metric_sections
     parsed = _parse_metric_sections({
         "sched": "pbs\n"
                  "Queue Memory CPU_Time Time_In_Q Run Que Lm State\n"

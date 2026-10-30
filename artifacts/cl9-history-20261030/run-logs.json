@@ -1,0 +1,20 @@
+{
+  "job_info.log": {
+    "content": "=== JOB RECORD (cl9, PBS/Torque) ===\njobid        : 129371.admin\njobname      : NaOH_opt\nqueue        : short\nworkdir      : /public/home/wuhong/NaOH_opt/rerun_20261025\nrequested    : nodes=1:ppn=12, walltime=02:00:00\nallocated    : comput5 \nmpi_ranks    : 12\nstart        : 2026-10-30 00:09:25 CST\nstart_epoch  : 1793290165\n",
+    "lines": 120,
+    "ok": true,
+    "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/job_info.log"
+  },
+  "summary.log": {
+    "content": "\n=== RUNTIME / MEMORY / CONVERGENCE ===\nend            : 2026-10-30 00:12:46 CST\nwall_seconds   : 201\nwall_hours     : 0.056\nvasp_exit_code : 0\n--- /usr/bin/time -v (launcher view) ---\n\tPercent of CPU this job got: 1091%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 3:18.76\n\tMaximum resident set size (kbytes): 397652\n\tAverage resident set size (kbytes): 0\n--- peak memory from 20 s sampling of all MPI ranks ---\npeak single-rank VmRSS           = 4425.2 MB\npeak sum of rank VmRSS (upper bound, shared memory counted per rank) = 0.0 MB\n--- OUTCAR timing ---\n                  Total CPU time used (sec):      178.970\n                         Elapsed time (sec):      198.477\n--- ionic steps (F= records in OSZICAR) ---\n5\n--- convergence flag ---\n reached required accuracy - stopping structural energy minimisation\n--- last OSZICAR lines ---\nDAV:  11    -0.113207073169E+02   -0.16852E-05   -0.11722E-07    28   0.102E-03    0.141E-04\nDAV:  12    -0.113207078449E+02   -0.52794E-06   -0.31598E-08    28   0.685E-04\n   5 F= -.11320708E+02 E0= -.11320708E+02  d E =-.611228E-03\n--- final geometry (CONTCAR) ---\n \n  0.00000000E+00  0.00000000E+00  0.00000000E+00\n  0.00000000E+00  0.00000000E+00  0.00000000E+00\n  0.00000000E+00  0.00000000E+00  0.00000000E+00\n",
+    "lines": 120,
+    "ok": true,
+    "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/summary.log"
+  },
+  "NaOH_opt.pbsout": {
+    "content": "=== JOB RECORD (cl9, PBS/Torque) ===\njobid        : 129371.admin\njobname      : NaOH_opt\nqueue        : short\nworkdir      : /public/home/wuhong/NaOH_opt/rerun_20261025\nrequested    : nodes=1:ppn=12, walltime=02:00:00\nallocated    : comput5 \nmpi_ranks    : 12\nstart        : 2026-10-30 00:09:25 CST\nstart_epoch  : 1793290165\n\n=== RUNTIME / MEMORY / CONVERGENCE ===\nend            : 2026-10-30 00:12:46 CST\nwall_seconds   : 201\nwall_hours     : 0.056\nvasp_exit_code : 0\n--- /usr/bin/time -v (launcher view) ---\n\tPercent of CPU this job got: 1091%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 3:18.76\n\tMaximum resident set size (kbytes): 397652\n\tAverage resident set size (kbytes): 0\n--- peak memory from 20 s sampling of all MPI ranks ---\npeak single-rank VmRSS           = 4425.2 MB\npeak sum of rank VmRSS (upper bound, shared memory counted per rank) = 0.0 MB\n--- OUTCAR timing ---\n                  Total CPU time used (sec):      178.970\n                         Elapsed time (sec):      198.477\n--- ionic steps (F= records in OSZICAR) ---\n5\n--- convergence flag ---\n reached required accuracy - stopping structural energy minimisation\n--- last OSZICAR lines ---\nDAV:  11    -0.113207073169E+02   -0.16852E-05   -0.11722E-07    28   0.102E-03    0.141E-04\nDAV:  12    -0.113207078449E+02   -0.52794E-06   -0.31598E-08    28   0.685E-04\n   5 F= -.11320708E+02 E0= -.11320708E+02  d E =-.611228E-03\n--- final geometry (CONTCAR) ---\n \n  0.00000000E+00  0.00000000E+00  0.00000000E+00\n  0.00000000E+00  0.00000000E+00  0.00000000E+00\n  0.00000000E+00  0.00000000E+00  0.00000000E+00\n",
+    "lines": 120,
+    "ok": true,
+    "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/NaOH_opt.pbsout"
+  }
+}

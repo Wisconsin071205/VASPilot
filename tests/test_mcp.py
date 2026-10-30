@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-ROOT = "/hpc/home/tester/vasploom-root"
+ROOT = "/hpc/home/tester/rsci-root"
 
 
 def rpc(method, params=None, request_id=1):
@@ -24,15 +24,15 @@ def rpc(method, params=None, request_id=1):
 @pytest.fixture()
 def mcp_session(tmp_path, monkeypatch, fake_state):
     """In-process MCP session with the fake gateway transport injected."""
-    from vasploom.mcp import server as mcp_server
-    from vasploom.cli.main import App
-    from vasploom.core.config import Config, ServerEntry
+    from rsci.mcp import server as mcp_server
+    from rsci.cli.main import App
+    from rsci.core.config import Config, ServerEntry
     from tests.conftest import FakeTransport
 
     home = tmp_path / "mcp-home"
     home.mkdir()
-    monkeypatch.setenv("VASPLOOM_HOME", str(home))
-    monkeypatch.delenv("VASPLOOM_MCP_MODE", raising=False)
+    monkeypatch.setenv("RSCI_HOME", str(home))
+    monkeypatch.delenv("RSCI_MCP_MODE", raising=False)
     (home / "settings.json").write_text(json.dumps(
         {"vlab": {"host": "vlab.invalid", "user": "t", "port": 22,
                   "identity_file": ""}}), encoding="utf-8")
@@ -55,7 +55,7 @@ class TestMcpProtocol:
         reply = server._handle(app, registry,
                                rpc("initialize",
                                    {"protocolVersion": "2024-11-05"}))
-        assert reply["result"]["serverInfo"]["name"] == "vasploom"
+        assert reply["result"]["serverInfo"]["name"] == "rsci"
         assert "tools" in reply["result"]["capabilities"]
         assert "resources" in reply["result"]["capabilities"]
 
@@ -63,10 +63,11 @@ class TestMcpProtocol:
         server, app, registry = mcp_session
         reply = server._handle(app, registry, rpc("tools/list"))
         names = {t["name"] for t in reply["result"]["tools"]}
-        assert {"server_list", "remote_list", "remote_read", "vasp_progress",
+        assert {"server_list", "remote_list", "remote_read", "research_prepare",
                 "job_state", "open_remote_login", "open_approval_terminal",
-                "vasploom_self_check", "fleet_snapshot",
+                "rsci_self_check", "fleet_snapshot",
                 "render_fleet_dashboard"} <= names
+        assert "vasp_progress" not in names  # specialist module is opt-in
         # operator policy (since 1.1): audit-only shell tools are exposed,
         # alongside the project/skill/web/metrics surfaces
         assert {"shell_run", "remote_run", "server_metrics",
@@ -101,7 +102,7 @@ class TestMcpProtocol:
         assert reply["result"]["isError"] is True
 
     def test_analysis_only_blocks_write(self, mcp_session, monkeypatch):
-        monkeypatch.setenv("VASPLOOM_MCP_MODE", "analysis_only")
+        monkeypatch.setenv("RSCI_MCP_MODE", "analysis_only")
         server, app, registry = mcp_session
         reply = server._handle(app, registry, rpc("tools/call", {
             "name": "remote_mkdir",
@@ -126,7 +127,7 @@ class TestMcpProtocol:
     def test_self_check_tool(self, mcp_session):
         server, app, registry = mcp_session
         reply = server._handle(app, registry, rpc("tools/call", {
-            "name": "vasploom_self_check", "arguments": {}}))
+            "name": "rsci_self_check", "arguments": {}}))
         payload = json.loads(reply["result"]["content"][0]["text"])
         assert payload["ok"] is True
         assert payload["registry_tools"] > 10
@@ -177,10 +178,10 @@ class TestMcpProtocol:
 
 class TestMcpSelfTest:
     def test_self_test_runs(self, config_home):
-        env = {**os.environ, "VASPLOOM_HOME": str(config_home),
+        env = {**os.environ, "RSCI_HOME": str(config_home),
                "PYTHONPATH": str(SRC)}
         result = subprocess.run(
-            [sys.executable, "-m", "vasploom.mcp", "--self-test"],
+            [sys.executable, "-m", "rsci.mcp", "--self-test"],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
             env=env)
         assert result.returncode == 0, result.stdout + result.stderr
@@ -188,10 +189,10 @@ class TestMcpSelfTest:
 
     def test_stdio_framing(self, config_home):
         """The subprocess speaks newline-delimited JSON-RPC on stdio."""
-        env = {**os.environ, "VASPLOOM_HOME": str(config_home),
+        env = {**os.environ, "RSCI_HOME": str(config_home),
                "PYTHONPATH": str(SRC)}
         process = subprocess.Popen(
-            [sys.executable, "-m", "vasploom.mcp"],
+            [sys.executable, "-m", "rsci.mcp"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
             env=env)
@@ -201,6 +202,6 @@ class TestMcpSelfTest:
         process.stdin.flush()
         line = process.stdout.readline()
         reply = json.loads(line)
-        assert reply["result"]["serverInfo"]["name"] == "vasploom"
+        assert reply["result"]["serverInfo"]["name"] == "rsci"
         process.stdin.close()
         process.wait(timeout=30)

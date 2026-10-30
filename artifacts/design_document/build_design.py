@@ -7,7 +7,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT=Path(__file__).resolve().parent
-OUT=ROOT.parent/'competition_submission'/'修订版'/'晶织_作品设计文档.docx'
+OUT=ROOT.parent/'competition_submission'/'修订版'/'远端控制智能体_作品设计文档.docx'
 doc=Document()
 sec=doc.sections[0]
 sec.page_width=Cm(21); sec.page_height=Cm(29.7)
@@ -23,7 +23,7 @@ doc.styles['Normal'].paragraph_format.widow_control=True
 for style in doc.styles:
  for border in list(style.element.iter(qn('w:pBdr'))): border.getparent().remove(border)
 doc.styles['Subtitle'].font.italic=False
-doc.core_properties.title='晶织 多服务器连接与计算控制智能体作品设计文档'
+doc.core_properties.title='远端控制智能体作品设计文档'
 doc.core_properties.subject='一〇七杯算力与智能体开发大赛'
 doc.core_properties.author=''
 foot=sec.footer.paragraphs[0]; foot.alignment=WD_ALIGN_PARAGRAPH.CENTER
@@ -82,12 +82,12 @@ d.text((90,955),'计算服务器无需访问模型 API；模型调用与结果�
 d.text((70,982),'边界：大模型负责规划与解释；VASP 计算在集群资源上执行。',font=small,fill='#263747')
 im.save(ROOT/'architecture.png')
 
-doc.add_paragraph('晶织 多服务器连接与计算控制智能体',style='Title')
+doc.add_paragraph('远端控制智能体',style='Title')
 doc.add_paragraph('作品设计文档',style='Title')
 doc.add_paragraph('一〇七杯算力与智能体开发大赛',style='Subtitle')
-p('实现标识  VaspLoom    文档版本  1.1    修订日期  2026年9月6日')
+p('实现标识  rsci    文档版本  1.1    修订日期  2026年9月6日')
 h('作品概述')
-p('晶织面向科研服务器无法直接访问外部模型服务、且用户需要管理多台服务器的场景，提供本地智能体驱动的统一连接与计算控制工作台。模型调用在可联网的本机完成，服务器通过 SSH 直连或 Vlab 中转接收已授权操作，无需直接调用模型 API。用户可集中诊断连接、管理文件、查询作业并解释日志。')
+p('远端控制智能体面向科研服务器无法直接访问外部模型服务、且用户需要管理多台服务器的场景，提供本地智能体驱动的统一连接与计算控制工作台。模型调用在可联网的本机完成，服务器通过 SSH 直连或 Vlab 中转接收已授权操作，无需直接调用模型 API。用户可集中诊断连接、管理文件、查询作业并解释日志。')
 p('设计主线是把本机的智能交互与多台远端服务器的真实执行环境连接起来，减少切换终端、搬运命令与日志以及混淆目标目录的操作。VASP 是当前专业适配场景，已有输入校验、计划审批、单阶段提交、监测与结果回收；通用连接层与科学软件专用逻辑分开组织。')
 h('阅读导航')
 table(['章节','内容'],[
@@ -200,7 +200,7 @@ p('文件查看采用大小与类型限制，模型上下文采用摘要与有�
 page('7  部署与验证设计')
 h('7.1  部署条件与启动流程')
 p('本机需要 Python 3.11 或更高版本、OpenSSH 和浏览器。集群需具备 Python 3、Slurm 或 PBS，以及有权使用的 VASP、MPI 和赝势环境。Vlab 路由部署 Gateway；直连路由使用目标端辅助程序。VS Code Bridge 和完整工作区按需安装，不是核心提交流程的前置条件。')
-p('建议依次完成：安装项目 → 启动 vasploom ui → 注册服务器和工作根目录 → 完成认证 → 只读诊断连接与队列 → 配置模型并探测 → 校验小型算例 → 审阅并执行标准计划 → 回收结果。首次验证使用小规模任务，明确分区、核数、时限和 VASP 模块。')
+p('建议依次完成：安装项目 → 启动 rsci ui → 注册服务器和工作根目录 → 完成认证 → 只读诊断连接与队列 → 配置模型并探测 → 校验小型算例 → 审阅并执行标准计划 → 回收结果。首次验证使用小规模任务，明确分区、核数、时限和 VASP 模块。')
 h('7.2  验收矩阵')
 p('以下为验证方案与通过判据，不作为本次已取得的实测结果。仓库已有相关自动化测试和 Slurm 算例；正式交付时应在确定的提交版本上保存测试记录。')
 table(['验证项','方法与预期结果'],[
@@ -238,13 +238,13 @@ page('附录  实现依据与配置记录')
 h('A  设计依据')
 p('本设计文档于2026年9月6日依据当前工作区修订，重点说明受限网络下的多服务器连接与控制。赛事提交要求沿用原稿所列预通知；实际赛道、模型配置和真实运行记录应在提交前核实。')
 table(['实现主题','仓库内依据'],[
- ('入口与界面','src/vasploom/ui/server.py；ui/static/index.html'),
- ('模型与智能体','src/vasploom/providers/；agents/runtime.py；agents/memory.py'),
- ('工具与权限模式','src/vasploom/tools/registry.py'),
- ('计划及审批','src/vasploom/workflow/plan.py；approval.py；engine.py'),
- ('连接及凭据','src/vasploom/gateway/；core/config.py；core/secretbox.py'),
- ('调度与科学解析','src/vasploom/hpc/scheduler.py；jobscript.py；vasp.py'),
- ('可选材料集成','src/vasploom/integrations/materials.py；spec/automation-stack.md'),
+ ('入口与界面','src/rsci/ui/server.py；ui/static/index.html'),
+ ('模型与智能体','src/rsci/providers/；agents/runtime.py；agents/memory.py'),
+ ('工具与权限模式','src/rsci/tools/registry.py'),
+ ('计划及审批','src/rsci/workflow/plan.py；approval.py；engine.py'),
+ ('连接及凭据','src/rsci/gateway/；core/config.py；core/secretbox.py'),
+ ('调度与科学解析','src/rsci/hpc/scheduler.py；jobscript.py；vasp.py'),
+ ('可选材料集成','src/rsci/integrations/materials.py；spec/automation-stack.md'),
  ('测试及证据准备','tests/；examples/slurm-evidence/'),
  ('工作流范围','spec/workflows.md；recipes/README.md')],[4.4,12])
 h('B  参赛演示配置记录')

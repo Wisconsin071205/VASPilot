@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""晶织：VASP 服务端计算控制智能体 Workspace Gateway（部署在 Vlab）。
+"""远端控制智能体 Workspace Gateway（部署在 Vlab）。
 
 此程序是“完整工作区模式”的唯一控制面。它只接受结构化子命令，使用
 Vlab 上已登记的服务器、每服务器专用 SSH 密钥和严格的 known_hosts，
@@ -38,7 +38,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator
 
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SERVER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 TARGET_RE = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}@"
@@ -151,14 +151,14 @@ class WorkspaceGateway:
     """Vlab 上的工作区状态、租约和 rclone 挂载管理器。"""
 
     def __init__(self, root: Path | None = None,
-                 vasploom_config: Path | None = None) -> None:
+                 rsci_config: Path | None = None) -> None:
         self.root = (root or Path(os.environ.get(
             "HUWEI_WORKSPACE_ROOT", "~/.huwei-agent/workspaces"))).expanduser()
         self.state_path = self.root / "state.json"
         self.config_path = self.root / "config.json"
         self.lock_path = self.root / ".lock"
-        self.vasploom_config = (vasploom_config or Path(os.environ.get(
-            "VASPLOOM_GATEWAY_CONFIG", "~/.config/vasploom/servers.json"))).expanduser()
+        self.rsci_config = (rsci_config or Path(os.environ.get(
+            "RSCI_GATEWAY_CONFIG", "~/.config/rsci/servers.json"))).expanduser()
 
     @contextlib.contextmanager
     def _lock(self) -> Iterator[None]:
@@ -198,7 +198,7 @@ class WorkspaceGateway:
         _atomic_json(self.state_path, state)
 
     def _servers(self) -> dict[str, dict[str, Any]]:
-        raw = _load_json(self.vasploom_config, {"servers": {}})
+        raw = _load_json(self.rsci_config, {"servers": {}})
         servers = raw.get("servers", {})
         if not isinstance(servers, dict):
             raise GatewayError("catalog_unreadable", "Vlab server catalog is invalid")
@@ -223,7 +223,7 @@ class WorkspaceGateway:
 
     @staticmethod
     def _key_path(server: str) -> Path:
-        return Path.home() / ".ssh" / "vasploom" / server
+        return Path.home() / ".ssh" / "rsci" / server
 
     @staticmethod
     def _known_hosts_path() -> Path:
@@ -517,7 +517,7 @@ class WorkspaceGateway:
                 server_report = {"server": name, "key_ready": False,
                                  "error": {"code": exc.code, "message": exc.message}}
                 check("target_sftp", False, exc.message)
-        return {"gateway": "晶织：VASP 服务端计算控制智能体 Workspace Gateway", "version": VERSION,
+        return {"gateway": "远端控制智能体 Workspace Gateway", "version": VERSION,
                 "checks": checks, "ok": all(row["ok"] or not row.get("required", True)
                                                  for row in checks
                                                  if row["name"] != "target_write"),
@@ -870,7 +870,7 @@ def main(argv: list[str] | None = None) -> int:
     gateway = WorkspaceGateway()
     try:
         if args.operation == "version":
-            return emit({"gateway": "晶织：VASP 服务端计算控制智能体 Workspace Gateway",
+            return emit({"gateway": "远端控制智能体 Workspace Gateway",
                          "version": VERSION})
         if args.operation == "doctor":
             return emit(gateway.doctor(server=args.server, path=args.path))

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-psp_root="${VASP_PSP_DIR:-${VASPLOOM_POTCAR_LIBRARY:-/public/sourcecode/vasp/potpaw_PBE.64}}"
+psp_root="${VASP_PSP_DIR:-${RSCI_POTCAR_LIBRARY:-/public/sourcecode/vasp/potpaw_PBE.64}}"
 variant="Fe"
 source_file=""
 

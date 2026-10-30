@@ -11,9 +11,9 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from vasploom.core.config import Config
-from vasploom.core.errors import ValidationError
-from vasploom.workflow.projects import ProjectStore, TEMPLATES
+from rsci.core.config import Config
+from rsci.core.errors import ValidationError
+from rsci.workflow.projects import ProjectStore, TEMPLATES
 
 
 @pytest.fixture()
@@ -32,7 +32,8 @@ class TestCreate:
         assert result["name"] == "Fe-relax"
         assert Path(result["path"]).is_dir()
         assert {w["name"] for w in result["files"]} == \
-            {"INCAR", "KPOINTS", "POSCAR"}
+            {"INCAR", "KPOINTS"}
+        assert not (Path(result["path"]) / "POSCAR").exists()
         assert (Path(result["path"]) / "INCAR").read_text(
             encoding="utf-8").startswith("SYSTEM = relax")
 
@@ -88,7 +89,7 @@ class TestListPinDelete:
                               "POSCAR": "p\n"})
         store.create("partial", {"INCAR": "NSW=0\n"})
         listing = {p["name"]: p for p in store.list()}
-        assert listing["full"]["complete"] is True
+        assert listing["full"]["complete"] is False
         assert listing["full"]["missing"] == ["POTCAR"]
         assert listing["partial"]["complete"] is False
         assert "POSCAR" in listing["partial"]["missing"]
@@ -181,10 +182,10 @@ class TestValidate:
         assert result["ok"] is False
         assert any("POSCAR" in e for e in result["errors"])
 
-    def test_validate_relax_template_passes(self, store):
+    def test_validate_relax_template_requires_structure(self, store):
         template = {k: v for k, v in TEMPLATES["relax"].items()
                     if k != "description"}
         store.create("ok", template)
         result = store.validate("ok")
-        assert result["ok"] is True
-        assert result["errors"] == []
+        assert result["ok"] is False
+        assert any("POSCAR" in error for error in result["errors"])

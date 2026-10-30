@@ -3,35 +3,42 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vasploom"
-version = "1.5.0"
-description = "CLI-first, multi-model VASP/HPC agent with restricted, auditable remote operations"
+name = "rsci"
+# The release version is defined once in the Python package.
+dynamic = ["version"]
+description = "RSCI 科研助手：远端服务器、项目文件与 VASP/Slurm 计算管理"
 requires-python = ">=3.11"
 license = { text = "Proprietary (research prototype)" }
 dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+desktop = ["pywebview>=6,<7"]
 materials = ["pymatgen", "custodian", "atomate2"]
 dispatch = ["dpdispatcher"]
 provenance = ["aiida-core"]
 automation = ["pymatgen", "custodian", "atomate2", "dpdispatcher", "aiida-core"]
 
 [project.scripts]
-vasploom = "vasploom.cli.main:main"
-huwei = "vasploom.cli.main:main"
+rsci = "rsci.cli.main:main"
+huwei = "rsci.cli.main:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "rsci.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vasploom.providers" = ["codex_bridge.mjs"]
-"vasploom.ui" = ["static/*.html"]
+"rsci.providers" = ["codex_bridge.mjs"]
+"rsci.agents" = ["builtin_skills/*/SKILL.md"]
+"rsci.ui" = ["static/*.html", "static/*.js"]
+"rsci.desktop" = ["assets/*.ico", "assets/*.icns"]
 
 [tool.pytest.ini_options]
-# Tests must exercise this checkout even when another VaspLoom install exists.
+# Tests must exercise this checkout even when another rsci install exists.
 pythonpath = ["src"]
 testpaths = ["tests"]

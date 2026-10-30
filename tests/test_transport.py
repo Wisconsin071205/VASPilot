@@ -7,15 +7,15 @@ import subprocess
 
 import pytest
 
-from vasploom.core.errors import ValidationError
-from vasploom.gateway.transport import SshTransport
+from rsci.core.errors import ValidationError
+from rsci.gateway.transport import SshTransport
 
 
 @pytest.fixture()
 def transport():
     return SshTransport(host="vlab.ustc.edu.cn", user="ubuntu", port=22,
                         identity_file=r"C:\u\id.pem",
-                        gateway_path="~/bin/vasploom-gateway")
+                        gateway_path="~/bin/rsci-gateway")
 
 
 class TestOpenConnectTerminal:
@@ -50,7 +50,7 @@ class TestOpenConnectTerminal:
         # already-connected check runs BEFORE the master spawn
         assert joined.index("-O check") < joined.index("-fN")
         # no legacy gateway-script indirection left in the path
-        assert "vasploom-gateway" not in joined
+        assert "rsci-gateway" not in joined
 
     def test_invalid_server_or_target_rejected(self, transport, monkeypatch):
         def fake_popen(cmd, creationflags=0, **kw):
@@ -101,7 +101,7 @@ class TestOpenConnectTerminal:
                 assert "-O" in cmd
                 return 0, "", ""
             if "mv -f" in joined:
-                return 0, "VaspLoom gateway version 1.5.0", ""
+                return 0, "rsci gateway version 1.5.0", ""
             return 0, json.dumps({"ok": True, "servers": {}}), ""
 
         t = SshTransport(host="vlab.ustc.edu.cn", user="ubuntu",
@@ -120,15 +120,15 @@ class TestOpenConnectTerminal:
             joined = " ".join(cmd)
             if "test -x" in joined:
                 return 0, "", ""
-            if joined.endswith("vasploom-gateway version"):
+            if joined.endswith("rsci-gateway version"):
                 return 0, json.dumps({
-                    "ok": True, "gateway_version": "1.3.4",
+                    "ok": True, "gateway_version": "1.5.4",
                     "protocol": "2"}), ""
             if cmd[0] == "scp":
                 return 0, "", ""
             if "mv -f" in joined:
                 return 0, json.dumps({
-                    "ok": True, "gateway_version": "1.3.5",
+                    "ok": True, "gateway_version": "1.5.5",
                     "protocol": "2"}), ""
             return 0, json.dumps({"ok": True, "servers": {}}), ""
 
@@ -164,6 +164,15 @@ class TestOpenConnectTerminal:
         assert result["ok"] and result["workspaces"] == []
         assert len(calls) == 5  # probe, prepare, copy, install, operation
         assert any(cmd[0] == "scp" for cmd in calls)
+
+    @pytest.mark.parametrize("version, compatible", [("0.1.0", False), ("0.1.1", True), ("broken", False)])
+    def test_workspace_gateway_requires_current_catalog_version(self, version, compatible):
+        def run(cmd, **kwargs):
+            if "test -x" in cmd[-1]:
+                return 0, "", ""
+            return 0, json.dumps({"ok": True, "version": version}), ""
+        transport = SshTransport(host="vlab.invalid", user="test", runner=run)
+        assert transport._probe_workspace_gateway() is compatible
 
     def test_base_commands_carry_keepalives(self, transport):
         """Every outer ssh op sends heartbeats so idle NAT paths survive."""

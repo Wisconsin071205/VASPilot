@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": " 23 21 2f 62 69 6e 2f 62 61 73 68 0a 23 50 42 53\n 20 2d 4e 20 4e 61 4f 48 5f 6f 70 74 0a 23 50 42\n 53 20 2d 71 20 73 68 6f 72 74 0a 23 50 42 53 20\n 2d 6c 20 6e 6f 64 65 73 3d 31 3a 70 70 6e 3d 31\n 32 0a 23 50 42 53 20 2d 6c 20 77 61 6c 6c 74 69\n 6d 65 3d 30 32 3a 30 30 3a 30 30 0a 23 50 42 53\n 20 2d 6a 20 6f 65 0a 23 50 42 53 20 2d 6f 20 4e\n 61 4f 48 5f 6f 70 74 2e 70 62 73 6f 75 74 0a 23\n 0a 23 20 4e 61 4f 48 20 6d 6f 6c 65 63 75 6c 65\n 20 28 67 61 73 20 70 68 61 73 65 2c 20 47 61 6d\n",
+  "stderr": "",
+  "truncated": false,
+  "command": "od -An -tx1 -N160 /public/home/wuhong/NaOH_opt/rerun_20261025/run.job.sh"
+}

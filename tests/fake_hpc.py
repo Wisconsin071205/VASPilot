@@ -3,10 +3,10 @@
 
 Invoked as:  python fake_hpc.py <server> <shell-command>
 
-It emulates exactly the fixed command shapes the VaspLoom gateway builds
+It emulates exactly the fixed command shapes the rsci gateway builds
 (single-quoted POSIX arguments), operating on a REAL local directory that
 stands in for the server filesystem. The mapping comes from the JSON config
-file named by VASPLOOM_FAKE_HPC_CONFIG:
+file named by RSCI_FAKE_HPC_CONFIG:
 
     {"servers": {"cl9": {"root": "/hpc/.../root", "real": "C:/tmp/cl9fs",
                           "scheduler": "slurm"}},
@@ -77,7 +77,7 @@ def path_tokens(command: str) -> list[str]:
 
 class FakeHpc:
     def __init__(self, server: str) -> None:
-        config_path = os.environ["VASPLOOM_FAKE_HPC_CONFIG"]
+        config_path = os.environ["RSCI_FAKE_HPC_CONFIG"]
         with open(config_path, "r", encoding="utf-8") as handle:
             self.config = json.load(handle)
         self.server = server
@@ -100,7 +100,7 @@ class FakeHpc:
 
     # -- path mapping ---------------------------------------------------------
     def to_real(self, posix_path: str) -> Path:
-        if posix_path.startswith("/tmp/vasploom-"):
+        if posix_path.startswith("/tmp/rsci-"):
             return self.stage_dir / posix_path[len("/tmp/"):]
         rel = posix_path[len(self.root):]
         return self.real / rel.lstrip("/")
@@ -112,7 +112,7 @@ class FakeHpc:
         except ValueError:
             pass
         rel = real_path.resolve().relative_to(self.real.resolve())
-        return self.root + ("/" + rel.as_posix() if str(rel) != "." else "")
+        return self.root.rstrip("/") + ("/" + rel.as_posix() if str(rel) != "." else "") or "/"
 
     def _save(self) -> None:
         self.state_path.write_text(json.dumps(self.state), encoding="utf-8")
@@ -197,7 +197,7 @@ class FakeHpc:
                                   paths[0])
             if "find" in command and "-name" in command:
                 return self._find(command, paths)
-            if command.startswith("stat -c '%F"):
+            if command.startswith(("stat -c '%F", "LC_ALL=C stat -c '%F")):
                 return self._stat(paths[0])
             if command.startswith("du -sb") or command.startswith("du -sk"):
                 return self._du(paths[0])
@@ -442,7 +442,7 @@ class FakeHpc:
         return 0, f"{total}\t{posix_path}\n"
 
     def _trash_list(self, root: str) -> tuple[int, str]:
-        trash_root = self.to_real(root or self.root + "/.vasploom-trash")
+        trash_root = self.to_real(root or self.root + "/.rsci-trash")
         out = []
         if trash_root.is_dir():
             for meta in sorted(trash_root.glob("*/metadata.json")):
@@ -470,8 +470,8 @@ def main() -> int:
             src.read_bytes()))
         return 0
     code, out = FakeHpc(server).execute(command)
-    if os.environ.get("VASPLOOM_FAKE_DEBUG"):
-        with open(os.environ["VASPLOOM_FAKE_DEBUG"], "a", encoding="utf-8") as d:
+    if os.environ.get("RSCI_FAKE_DEBUG"):
+        with open(os.environ["RSCI_FAKE_DEBUG"], "a", encoding="utf-8") as d:
             d.write(f"rc={code} cmd={command[:160]}\n")
     sys.stdout.write(out)
     return code

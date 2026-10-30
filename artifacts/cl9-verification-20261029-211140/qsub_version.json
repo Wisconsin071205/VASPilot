@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": "",
+  "stderr": "Version: 6.1.0\nCommit: 1d115c5454b46ac0b4a6eb800665c7012bce6639\n",
+  "truncated": false,
+  "command": "qsub --version"
+}

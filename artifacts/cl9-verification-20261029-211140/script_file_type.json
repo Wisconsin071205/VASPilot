@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "server": "cl9",
+  "rc": 0,
+  "stdout": "/public/home/wuhong/NaOH_opt/rerun_20261025/run.job.sh: Bourne-Again shell script, ASCII text executable\n",
+  "stderr": "",
+  "truncated": false,
+  "command": "file /public/home/wuhong/NaOH_opt/rerun_20261025/run.job.sh"
+}

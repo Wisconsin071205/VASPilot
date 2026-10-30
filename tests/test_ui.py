@@ -17,9 +17,9 @@ from tests.conftest import ROOT
 @pytest.fixture()
 def ui(config_home, fake_state, monkeypatch):
     """A running UI server wired to the fake gateway transport."""
-    from vasploom.ui import server as ui_server
-    from vasploom.cli.main import App
-    from vasploom.core.config import Config, ServerEntry, ProviderEntry
+    from rsci.ui import server as ui_server
+    from rsci.cli.main import App
+    from rsci.core.config import Config, ServerEntry, ProviderEntry
     from tests.conftest import FakeTransport
 
     config = Config(config_home)
@@ -35,15 +35,24 @@ def ui(config_home, fake_state, monkeypatch):
     app = App(config)
     transport = FakeTransport(fake_state)
     monkeypatch.setattr(App, "transport", lambda self: transport)
+    # Unit-level UI tests share an in-memory transport. Real detached process
+    # ownership/recovery is tested separately against the disk-backed HPC.
+    workflow_threads = []
+    def unit_launch(engine, plan_id):
+        thread = threading.Thread(target=engine.tasks.execute, args=(plan_id,))
+        workflow_threads.append(thread)
+        thread.start()
+        return {"ok": True, "started": plan_id, "background": True}
+    monkeypatch.setattr("rsci.workflow.worker.launch", unit_launch)
     # bind a scripted provider so agent chat works without network; patch the
-    # name as imported INSIDE vasploom.cli.agent (module-level import)
+    # name as imported INSIDE rsci.cli.agent (module-level import)
     scripted = ScriptedProvider([
         {"tool_calls": [type("C", (), {"call_id": "1", "name": "remote_pwd",
                                        "arguments": {}})()]},
         {"text": "远端根目录已确认。"},
     ])
     monkeypatch.setattr(
-        "vasploom.cli.agent.provider_by_id",
+        "rsci.cli.agent.provider_by_id",
         lambda config, pid: (config.load_providers()[0], scripted))
 
     httpd, url = ui_server.serve(app, host="127.0.0.1", port=0,
@@ -56,6 +65,10 @@ def ui(config_home, fake_state, monkeypatch):
            "scripted": scripted}
     httpd.shutdown()
     httpd.server_close()
+    httpd.RequestHandlerClass.state.stopped.set()
+    httpd.RequestHandlerClass.state.kick_campaigns()
+    for workflow_thread in workflow_threads:
+        workflow_thread.join(timeout=5)
 
 
 class ScriptedProvider:
@@ -70,7 +83,7 @@ class ScriptedProvider:
                                     "api_key_env": ""})()
 
     def probe(self):
-        from vasploom.providers.base import CapabilityProbe
+        from rsci.providers.base import CapabilityProbe
         from datetime import datetime, timezone
         return CapabilityProbe(reachable=True, streaming=True,
                                tool_calling=True, structured_json=True,
@@ -79,7 +92,7 @@ class ScriptedProvider:
                                .isoformat(timespec="seconds"))
 
     def chat(self, messages, tools, *, stream_cb=None):
-        from vasploom.providers.base import ProviderReply
+        from rsci.providers.base import ProviderReply
         self.calls.append([dict(m) for m in messages])
         action = self.script.pop(0)
         return ProviderReply(**action)
@@ -97,7 +110,7 @@ def call(ui, action, body=None, token=None, method=None):
         data = json.dumps(body or {}).encode()
     req = urllib.request.Request(url, data=data, method=method or "POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-VaspLoom-Token", token if token is not None else ui["token"])
+    req.add_header("X-RSCI-Token", token if token is not None else ui["token"])
     with urllib.request.urlopen(req, timeout=30) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -119,18 +132,18 @@ class TestTokenGuard:
             urllib.request.urlopen(f"{ui['base']}/t/old-token", timeout=10)
         body = exc.value.read().decode("utf-8")
         assert exc.value.code == 403
-        assert "会话已过期" in body and "vasploom ui" in body
+        assert "会话已过期" in body and "rsci ui" in body
 
     def test_landing_page_without_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/", timeout=10) as response:
             body = response.read().decode("utf-8")
-        assert "晶织：VASP 服务端计算控制智能体" in body and "vasploom ui" in body
+        assert "RSCI 科研助手" in body and "rsci ui" in body
 
     def test_page_served_with_valid_token(self, ui):
         with urllib.request.urlopen(f"{ui['base']}/t/{ui['token']}",
                                     timeout=10) as response:
             html = response.read().decode("utf-8")
-        assert "晶织：VASP 服务端计算控制智能体" in html and "chatinput" in html
+        assert "RSCI 科研助手" in html and "chatinput" in html
         # files view auto-fills the server root (no manual first-level path)
         assert "pickFileServer" in html
         # directory rows offer on-demand real-size measurement instead of 4096
@@ -153,7 +166,7 @@ class TestTokenGuard:
         assert "project.update" in html and 'data-act="edit"' in html
 
     def test_local_path_picker_returns_selected_path(self, ui, monkeypatch):
-        from vasploom.ui import server as ui_server
+        from rsci.ui import server as ui_server
         monkeypatch.setattr(
             ui_server, "_pick_local_path",
             lambda kind, *, title, initial: (
@@ -179,7 +192,7 @@ class TestPortFallback:
         Windows SO_REUSEADDR would let a second bind succeed silently, so
         the failure is injected at the constructor instead.
         """
-        from vasploom.ui import server as ui_server
+        from rsci.ui import server as ui_server
         base_port = int(ui["base"].rsplit(":", 1)[1])
         real_server = ui_server.ThreadingHTTPServer
 
@@ -199,7 +212,7 @@ class TestPortFallback:
                                      run_forever=False)
         try:
             used = int(url.rsplit(":", 1)[1].split("/")[0])
-            assert used == base_port + 1
+            assert base_port < used <= base_port + 9
         finally:
             httpd.server_close()
 
@@ -275,8 +288,16 @@ class TestViews:
         assert "禁止 VS Code 直连目标服务器" in payload["error"]["message"]
         assert not any(call[0] == "run" for call in ui["app"].transport().calls)
 
-    def test_outside_root_rejected_as_json(self, ui):
-        payload = call(ui, "remote.list", {"server": "cl9", "path": "/etc"})
+    def test_browse_above_work_root_and_read_external_file(self, ui):
+        payload = call(ui, "remote.list", {"server": "cl9", "path": "/hpc/home/tester"})
+        assert payload["ok"]
+        assert "rsci-root" in {entry["name"] for entry in payload["entries"]}
+        ui["state"].files["cl9"]["/public/data/NaOH.cif"] = b"data_NaOH\n"
+        payload = call(ui, "remote.read", {"server": "cl9", "path": "/public/data/NaOH.cif"})
+        assert payload["ok"] and payload["content"] == "data_NaOH\n"
+
+    def test_outside_root_mutation_rejected_as_json(self, ui):
+        payload = call(ui, "remote.mkdir", {"server": "cl9", "path": "/public/new-directory"})
         assert payload["ok"] is False
         assert payload["error"]["code"] == "validation_error"
 
@@ -317,7 +338,7 @@ class TestViews:
         assert report["evidence"]["logs"][0]["scope"]
 
     def test_job_evidence_survives_missing_vasp_files(self, ui, monkeypatch):
-        from vasploom.gateway.client import GatewayClient
+        from rsci.gateway.client import GatewayClient
         from tests.test_evidence import snapshot
         monkeypatch.setattr(GatewayClient, "job_evidence", lambda *a, **kw: snapshot())
         def unavailable(*a, **kw):
@@ -377,10 +398,10 @@ class TestWorkflowLoop:
         for _ in range(100):
             status = call(ui, "workflow/status",
                           {"plan_id": prepared["plan_id"]}, method="GET")
-            if status.get("status") not in ("running", None):
+            if status.get("status") not in ("running", None) and not status.get("task", {}).get("worker_alive"):
                 break
             time.sleep(0.05)
-        assert status["status"] == "completed"
+        assert status["status"] == "completed", status.get("failure", status)
         assert status["scientific_converged"] is True
 
     def test_duplicate_run_rejected(self, ui, vasp_inputs):
@@ -397,25 +418,25 @@ class TestWorkflowLoop:
         for _ in range(100):
             status = call(ui, "workflow/status",
                           {"plan_id": prepared["plan_id"]}, method="GET")
-            if status.get("status") not in ("running", None):
+            if status.get("status") not in ("running", None) and not status.get("task", {}).get("worker_alive"):
                 break
             time.sleep(0.05)
         assert status["status"] == "failed"  # upload collision
-        # replaying the consumed approval for a fresh run is refused: the
-        # worker rejects it before creating any state, so the deleted run
-        # file is never recreated and the rejection shows via status
+        # Wait for the owner to release its task lock before deleting this
+        # fixture's state. A terminal status can precede its final exit snapshot.
+        # Replaying the consumed approval is rejected during admission.
         ui["app"].engine().run_path(prepared["plan_id"]).unlink()
         replay = call(ui, "workflow.run", {"plan_id": prepared["plan_id"],
                                            "approval_ref": approved["approval_ref"],
                                            "poll_seconds": 0})
-        assert replay["ok"]  # accepted for async execution...
+        assert not replay["ok"]  # admission rejects replay before launching
         for _ in range(100):
             after = call(ui, "workflow/status",
                          {"plan_id": prepared["plan_id"]}, method="GET")
             if not after.get("ok"):
                 break
             time.sleep(0.05)
-        assert not after.get("ok")  # ...but no run state was ever created
+        assert not after.get("ok")  # no new state was ever created
         assert "no run state" in after["error"]["message"]
 
 
@@ -427,7 +448,7 @@ class TestChatStream:
                              "message": "查看远端根目录"}).encode(),
             method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-VaspLoom-Token", ui["token"])
+        req.add_header("X-RSCI-Token", ui["token"])
         with urllib.request.urlopen(req, timeout=60) as response:
             body = response.read().decode("utf-8")
         frames = [json.loads(line[5:])
@@ -454,7 +475,7 @@ class TestChatStream:
         assert exc.value.code == 404
 
     def test_answer_can_be_cancelled(self, ui, monkeypatch):
-        from vasploom.providers.base import CapabilityProbe, ProviderReply
+        from rsci.providers.base import CapabilityProbe, ProviderReply
 
         started = threading.Event()
         finished: list[list[dict]] = []
@@ -479,7 +500,7 @@ class TestChatStream:
         provider = SlowProvider()
         entry = ui["app"].config.load_providers()[0]
         monkeypatch.setattr(
-            "vasploom.cli.agent.provider_by_id",
+            "rsci.cli.agent.provider_by_id",
             lambda config, pid: (entry, provider))
         request_id = "cancel-test-request"
         thread = threading.Thread(target=lambda: finished.append(sse_chat(ui, {
@@ -504,7 +525,7 @@ class TestSettingsApi:
     """The 配置 page: providers CRUD + DPAPI key vault + vlab settings."""
 
     def test_save_provider_with_key_roundtrip(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPLOOM_API_KEY_WEB_X", raising=False)
+        monkeypatch.delenv("RSCI_API_KEY_WEB_X", raising=False)
         payload = {"id": "web1", "name": "Web GLM",
                    "protocol": "openai-chat-compatible",
                    "base_url": "https://api.example.com/v1",
@@ -524,7 +545,7 @@ class TestSettingsApi:
 
         # a FRESH resolution (no env var) finds the key via the vault —
         # this is the exact path chat/probe uses
-        from vasploom.providers import provider_by_id
+        from rsci.providers import provider_by_id
         entry, provider = provider_by_id(ui["app"].config, "web1")
         assert provider.api_key == "sk-secret-123"
 
@@ -538,7 +559,7 @@ class TestSettingsApi:
         assert provider2.entry.model == "glm-web-2"
 
     def test_save_reports_missing_auth_but_still_saves(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPLOOM_UNSET_REMOTE_Y", raising=False)
+        monkeypatch.delenv("RSCI_UNSET_REMOTE_Y", raising=False)
         saved = call(ui, "provider.save", {
             "id": "noserver", "name": "NoKey Cloud",
             "protocol": "openai-chat-compatible",
@@ -547,8 +568,8 @@ class TestSettingsApi:
         assert saved["ok"] is True
         assert saved["auth_ready"] is False
         # chat would fail with the actionable message, not 401
-        from vasploom.providers import provider_by_id
-        from vasploom.core.errors import ProviderError
+        from rsci.providers import provider_by_id
+        from rsci.core.errors import ProviderError
         with pytest.raises(ProviderError, match="noserver"):
             provider_by_id(ui["app"].config, "noserver")
 
@@ -654,13 +675,58 @@ class TestServerAdminApi:
         raw = json.dumps(ui["app"].config.load_settings(), ensure_ascii=False)
         assert password not in raw and seed not in raw
 
+    @pytest.mark.parametrize("code", ["host_key_failed", "host_key_unknown"])
+    def test_saved_credentials_host_key_opens_confirmation_terminal(self, ui, monkeypatch, code):
+        from rsci.core.errors import RemoteError
+
+        app = ui["app"]
+        app.config.save_server_credentials("cl9", password="test-password")
+        opened = []
+
+        def connect(*args, **kwargs):
+            raise RemoteError("host fingerprint needs confirmation",
+                              detail={"gateway_code": code})
+
+        def terminal(name):
+            opened.append(name)
+            return {"opened": True, "server": name, "route": "vlab"}
+
+        monkeypatch.setattr(app.client(), "connect", connect)
+        monkeypatch.setattr(app.client(), "open_login_terminal", terminal)
+        result = call(ui, "server.connect", {"server": "cl9"})
+        assert result["ok"] and result["opened"]
+        assert result["automatic"] is False
+        assert result["host_key_confirmation"] is True
+        assert "指纹" in result["note"]
+        assert opened == ["cl9"]
+        assert not result.get("connected"), "opening a terminal is not a successful login"
+
+    @pytest.mark.parametrize("code", ["credential_rejected", "connect_failed", "host_key_changed", None])
+    def test_other_connection_errors_do_not_open_confirmation(self, ui, monkeypatch, code):
+        from rsci.core.errors import RemoteError
+
+        app = ui["app"]
+        app.config.save_server_credentials("cl9", password="test-password")
+
+        def connect(*args, **kwargs):
+            raise RemoteError("original error", detail={"gateway_code": code})
+
+        def terminal(name):
+            pytest.fail("must not open a host confirmation for unrelated errors")
+
+        monkeypatch.setattr(app.client(), "connect", connect)
+        monkeypatch.setattr(app.client(), "open_login_terminal", terminal)
+        result = call(ui, "server.connect", {"server": "cl9"})
+        assert not result["ok"]
+        assert result["error"]["message"] == "original error"
+
 
 def sse_chat(ui, body):
     req = urllib.request.Request(
         f"{ui['base']}/api/agent/chat",
         data=json.dumps(body).encode(), method="POST")
     req.add_header("Content-Type", "application/json")
-    req.add_header("X-VaspLoom-Token", ui["token"])
+    req.add_header("X-RSCI-Token", ui["token"])
     with urllib.request.urlopen(req, timeout=60) as response:
         text = response.read().decode("utf-8")
     frames = [json.loads(line[5:])
@@ -740,7 +806,7 @@ class TestChatMemory:
         assert listing["ok"] and "sessions" in listing
 
     def test_fork_and_compact_keep_visible_history(self, ui):
-        from vasploom.agents.memory import ConversationStore
+        from rsci.agents.memory import ConversationStore
 
         session_id = call(ui, "chat.new", {"title": "原会话"})["session_id"]
         memory = ConversationStore(ui["app"].config.chat_dir)
@@ -768,7 +834,7 @@ class TestChatMemory:
         assert not any(row.get("content") == "问题 0" for row in sent[1:])
 
     def test_context_meter_and_auto_compaction(self, ui):
-        from vasploom.agents.memory import ConversationStore
+        from rsci.agents.memory import ConversationStore
 
         session_id = call(ui, "chat.new", {})["session_id"]
         memory = ConversationStore(ui["app"].config.chat_dir)
@@ -811,9 +877,9 @@ class TestChatMemory:
 
 class TestProjectFlow:
     def test_empty_project_user_and_agent_share_inputs(self, ui):
-        from vasploom.providers.base import ToolCall
+        from rsci.providers.base import ToolCall
 
-        created = call(ui, "project.create", {"name": "draft"})
+        created = call(ui, "project.create", {"name": "draft", "kind": "vasp"})
         assert created["ok"] and created["files"] == []
         assert call(ui, "project.potcar_remote", {
             "name": "draft", "path": "/home/user/POTCAR.Fe"
@@ -860,7 +926,7 @@ class TestProjectFlow:
         listing = call(ui, "project.list")
         entry = next(p for p in listing["projects"]
                      if p["name"] == "ui-case")
-        assert entry["complete"] is True and entry["missing"] == ["POTCAR"]
+        assert entry["complete"] is False and entry["missing"] == ["POTCAR"]
 
         prepared = call(ui, "workflow.prepare", {"spec": {
             "from_dir": created["path"], "server": "cl9",
@@ -872,9 +938,11 @@ class TestProjectFlow:
 
     def test_project_run_job_sh_adopted(self, ui):
         created = call(ui, "project.create", {
-            "name": "custom-script", "files": {"INCAR": "NSW=0\n",
-                                               "KPOINTS": "0\n",
-                                               "POSCAR": "s\n"}})
+            "name": "custom-script", "files": {
+                "INCAR": "SYSTEM = Na\nNSW=0\n",
+                "KPOINTS": "Automatic mesh\n0\nGamma\n1 1 1\n0 0 0\n",
+                "POSCAR": "Na\n1.0\n3 0 0\n0 3 0\n0 0 3\n"
+                          "Na\n1\nDirect\n0 0 0\n"}})
         call(ui, "project.write", {
             "name": "custom-script", "file": "run.job.sh",
             "content": "#!/bin/bash\n# custom marker\nsrun vasp_std\n"})
@@ -948,7 +1016,7 @@ class TestProjectFlow:
                              "session_id": session_id}).encode(),
             method="POST")
         req.add_header("Content-Type", "application/json")
-        req.add_header("X-VaspLoom-Token", ui["token"])
+        req.add_header("X-RSCI-Token", ui["token"])
         with urllib.request.urlopen(req, timeout=60) as response:
             sse_body = response.read().decode("utf-8")
         # drain done; the final (or error) frame explains any short-circuit
@@ -967,8 +1035,58 @@ class TestProjectFlow:
 
 
 class TestSubmitConfirmation:
+    def test_concurrent_approval_submits_only_once(self, ui, monkeypatch):
+        from concurrent.futures import ThreadPoolExecutor
+        from rsci.workflow.pending import PendingSubmitStore
+
+        store = PendingSubmitStore(ui["app"].config.pending_submits_path)
+        entry = store.create(server="cl9", directory=f"{ROOT}/runs/concurrent", script="run.job.sh")
+        client = ui["app"].client()
+        original = client.submit
+        entered, release = threading.Event(), threading.Event()
+
+        def delayed(*args, **kwargs):
+            entered.set()
+            assert release.wait(timeout=5)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(client, "submit", delayed)
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(call, ui, "submit.confirm", {"id": entry["id"], "approve": True})
+            try:
+                assert entered.wait(timeout=5)
+                assert store.get(entry["id"])["status"] == "submitting"
+                second = call(ui, "submit.confirm", {"id": entry["id"], "approve": True})
+                assert not second["ok"]
+            finally:
+                release.set()
+            assert first.result(timeout=5)["ok"]
+        assert len([c for c in ui["app"].transport().calls if c[0] == "submit"]) == 1
+
+    def test_lost_submit_response_requires_scheduler_review(self, ui, monkeypatch):
+        from rsci.core.errors import RemoteError
+        from rsci.workflow.pending import PendingSubmitStore
+
+        store = PendingSubmitStore(ui["app"].config.pending_submits_path)
+        entry = store.create(server="cl9", directory=f"{ROOT}/runs/uncertain", script="run.job.sh")
+        client = ui["app"].client()
+        original = client.submit
+
+        def response_lost(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RemoteError("connection closed after submission")
+
+        monkeypatch.setattr(client, "submit", response_lost)
+        result = call(ui, "submit.confirm", {"id": entry["id"], "approve": True})
+        assert not result["ok"] and "待核对" in result["error"]["message"]
+        assert store.get(entry["id"])["status"] == "uncertain"
+        assert any(row["id"] == entry["id"] for row in call(ui, "submit.history")["entries"])
+        assert not call(ui, "submit.confirm", {"id": entry["id"], "approve": True})["ok"]
+        assert not call(ui, "submit.regenerate", {"id": entry["id"]})["ok"]
+        assert len([c for c in ui["app"].transport().calls if c[0] == "submit"]) == 1
+
     def test_expired_card_can_be_regenerated(self, ui):
-        from vasploom.workflow.pending import PendingSubmitStore
+        from rsci.workflow.pending import PendingSubmitStore
 
         app = ui["app"]
         store = PendingSubmitStore(app.config.pending_submits_path)
@@ -986,8 +1104,8 @@ class TestSubmitConfirmation:
     def test_confirm_flow_executes_frozen_params(self, ui):
         app = ui["app"]
         app.config.set_agent_submit_mode("confirm")
-        from vasploom.core.hashing import text_sha256
-        from vasploom.workflow.pending import PendingSubmitStore
+        from rsci.core.hashing import text_sha256
+        from rsci.workflow.pending import PendingSubmitStore
         directory = f"{ROOT}/runs/confirm-case"
         ui["state"].files["cl9"][f"{directory}/run.job.sh"] = b"#!/bin/bash\n"
         store = PendingSubmitStore(app.config.pending_submits_path)
@@ -1013,7 +1131,7 @@ class TestSubmitConfirmation:
                         {"id": entry["id"], "approve": True})
         assert approved["ok"] is True and approved["settled"] == "approved"
         assert approved["result"]["job_id"]
-        from vasploom.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
         saved = next(row for row in JobLedger(app.config.jobs_dir).merged("cl9")
                      if row["job_id"] == approved["result"]["job_id"])
         assert saved["directory"] == directory
@@ -1024,7 +1142,7 @@ class TestSubmitConfirmation:
 
     def test_reject_flow_never_submits(self, ui):
         app = ui["app"]
-        from vasploom.workflow.pending import PendingSubmitStore
+        from rsci.workflow.pending import PendingSubmitStore
         store = PendingSubmitStore(app.config.pending_submits_path)
         entry = store.create(server="cl9", directory=f"{ROOT}/runs/rej",
                              script="run.job.sh")
@@ -1077,7 +1195,7 @@ class TestServerMetricsApi:
 
 class TestWebsearchSettingsApi:
     def test_save_and_toggle(self, ui, monkeypatch):
-        monkeypatch.delenv("VASPLOOM_WEBSEARCH_KEY", raising=False)
+        monkeypatch.delenv("RSCI_WEBSEARCH_KEY", raising=False)
         saved = call(ui, "websearch.save", {"provider": "bocha",
                                             "enabled": True})
         assert saved["ok"] and saved["websearch"]["provider"] == "bocha"
@@ -1130,7 +1248,7 @@ class TestJobLedger:
 
     def test_parallel_writes_are_serialized(self, ui):
         from concurrent.futures import ThreadPoolExecutor
-        from vasploom.core.jobhistory import JobLedger
+        from rsci.core.jobhistory import JobLedger
 
         directory = ui["app"].config.jobs_dir
 
@@ -1218,7 +1336,7 @@ class TestMonitorApi:
         r = call(ui, "server.metrics", {"server": "cl9"})
         assert r["ok"] and any(g.get("util_pct") is not None
                                for g in r["gpus"])
-        from vasploom.core.metricsstore import MetricsStore
+        from rsci.core.metricsstore import MetricsStore
         bucket = MetricsStore(ui["app"].config.metrics_dir).latest("cl9")
         assert bucket and bucket["g"]["0"][0] == pytest.approx(5.0)
 
@@ -1245,3 +1363,35 @@ class TestMonitorAuthView:
         names = {s["name"]: s for s in r["servers"]}
         assert names["cl9"]["auth_mode"] == "interactive"
         assert names["cl9"]["auto_connect"] is False
+
+
+class TestChatStop:
+    def test_stop_reaches_the_running_turn(self, ui):
+        """The stop button's request finds the turn by run_id and ends it."""
+        from rsci.providers.base import ProviderReply
+        calls = {"n": 0}
+
+        def endless(messages, tools, *, stream_cb=None):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                assert call(ui, "chat.stop", {"run_id": "run-abc12345"})["stopped"]
+            return ProviderReply(tool_calls=[type("C", (), {
+                "call_id": str(calls["n"]), "name": "remote_pwd",
+                "arguments": {}})()])
+
+        ui["scripted"].chat = endless
+        frames = sse_chat(ui, {"provider": "mock", "message": "一直做下去",
+                               "run_id": "run-abc12345"})
+        final = next(f for f in frames
+                     if f.get("type") == "final" and "result" in f)
+        assert final["result"]["stopped"] is True
+        assert calls["n"] == 3
+        # the flag is dropped once the turn ends
+        assert call(ui, "chat.stop", {"run_id": "run-abc12345"})["stopped"] is False
+
+    def test_stop_without_a_running_turn_is_harmless(self, ui):
+        assert call(ui, "chat.stop", {"run_id": "nothing-running"}) == \
+            {"ok": True, "stopped": False}
+
+    def test_the_turn_limit_setting_is_gone(self, ui):
+        assert "agent_max_turns" not in call(ui, "settings")

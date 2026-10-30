@@ -5,8 +5,8 @@
 #SBATCH --ntasks=8
 #SBATCH --time=00:20:00
 #SBATCH --mem=4G
-#SBATCH --output=vasploom-%j.out
-#SBATCH --error=vasploom-%j.err
+#SBATCH --output=rsci-%j.out
+#SBATCH --error=rsci-%j.err
 
 set -u
 cd "${SLURM_SUBMIT_DIR:-$PWD}"

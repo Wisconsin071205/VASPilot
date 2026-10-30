@@ -48,7 +48,7 @@ if command -v seff >/dev/null 2>&1; then
   seff "$job_id" > "$evidence_dir/05_seff.txt" 2>&1 || true
 fi
 
-for output_file in "vasploom-$job_id.out" "vasploom-$job_id.err" vasp.out OSZICAR OUTCAR; do
+for output_file in "rsci-$job_id.out" "rsci-$job_id.err" vasp.out OSZICAR OUTCAR; do
   if [ -f "$case_dir/$output_file" ]; then
     tail -n 200 "$case_dir/$output_file" \
       > "$evidence_dir/$(basename "$output_file").tail.txt"
@@ -73,7 +73,7 @@ cat > "$evidence_dir/08_screenshot_checklist.txt" <<'EOF'
 建议另行截图并与本目录一起归档：
 1. sbatch 返回 Job ID 的终端画面。
 2. squeue 中 PENDING/RUNNING 状态及等待原因或节点名。
-3. VaspLoom 作业页面中的服务器、目录、状态、运行时长和自动分析结果。
+3. rsci 作业页面中的服务器、目录、状态、运行时长和自动分析结果。
 4. 作业结束后的 sacct 或 seff 资源统计。
 5. OUTCAR/OSZICAR 与结构结果，注意不要展示密码、TOTP、私钥或 API Key。
 EOF

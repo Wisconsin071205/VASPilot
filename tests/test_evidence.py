@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from vasploom.hpc.evidence import organize_evidence, evidence_markdown
-from vasploom.gateway import vasploom_gateway as gateway
+from rsci.hpc.evidence import organize_evidence, evidence_markdown
+from rsci.gateway import rsci_gateway as gateway
 
 
 def snapshot():

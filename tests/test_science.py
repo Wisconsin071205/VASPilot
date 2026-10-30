@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from vasploom.hpc.scheduler import (build_cancel, build_submit, parse_qstat,
+from rsci.hpc.scheduler import (build_cancel, build_submit, parse_qstat,
                                     parse_sacct, parse_squeue)
-from vasploom.hpc.vasp import (parse_incar, parse_oszicar,
+from rsci.hpc.vasp import (parse_incar, parse_oszicar,
                                parse_outcar_tail, potcar_metadata,
                                scientific_status, validate_inputs)
 
@@ -44,7 +44,7 @@ class TestSchedulerParsing:
         assert rows[0]["state"] == "RUNNING"
 
     def test_builders_validate_inputs(self):
-        from vasploom.core.errors import ValidationError
+        from rsci.core.errors import ValidationError
         assert build_submit("/root/dir", "run.sh", scheduler="slurm") == \
             ["sbatch", "--parsable", "/root/dir/run.sh"]
         with pytest.raises(ValidationError):

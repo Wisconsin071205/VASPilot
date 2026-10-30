@@ -1,4 +1,4 @@
-# 一键安装「晶织：VASP 服务端计算控制智能体 VS Code Bridge」扩展（Windows）
+# 一键安装「远端控制智能体 VS Code Bridge」扩展（Windows）
 # 用法：右键"使用 PowerShell 运行"，或在仓库根目录执行：
 #   powershell -ExecutionPolicy Bypass -File apps\huwei-agent-vscode-bridge\install-windows.ps1
 $ErrorActionPreference = "Stop"
@@ -6,16 +6,37 @@ $ErrorActionPreference = "Stop"
 $extDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent (Split-Path -Parent $extDir)
 $repoPackage = Join-Path $repoRoot "dist\huwei-agent-vscode-bridge.vsix"
-$vsix = if (Test-Path -LiteralPath $repoPackage) {
-    Get-Item -LiteralPath $repoPackage
-} else {
-    Get-ChildItem -Path (Join-Path $extDir "*.vsix") |
-      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$manifest = Get-Content -Raw -LiteralPath (Join-Path $extDir "package.json") | ConvertFrom-Json
+$versionedPackage = Join-Path $extDir "$($manifest.name)-$($manifest.version).vsix"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+function Read-PackageEntry($archive, [string]$name) {
+    $entry = $archive.GetEntry($name)
+    if ($null -eq $entry) { throw "安装包缺少 $name" }
+    $reader = [System.IO.StreamReader]::new($entry.Open())
+    try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+}
+
+$vsix = $null
+foreach ($candidate in @($repoPackage, $versionedPackage)) {
+    if (-not (Test-Path -LiteralPath $candidate)) { continue }
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($candidate)
+    try {
+        $packagedManifest = (Read-PackageEntry $archive "extension/package.json") | ConvertFrom-Json
+        $api = Read-PackageEntry $archive "extension/out/src/api.js"
+        if ($packagedManifest.name -eq $manifest.name -and
+            $packagedManifest.version -eq $manifest.version -and
+            $api.Contains('".rsci"') -and $api.Contains('"X-RSCI-Token"')) {
+            $vsix = Get-Item -LiteralPath $candidate
+            break
+        }
+        Write-Warning "跳过与当前控制台不兼容的扩展包：$candidate"
+    } finally { $archive.Dispose() }
 }
 
 if (-not $vsix) {
-    Write-Host "[错误] 未找到 .vsix 安装包。请先在本目录执行:" -ForegroundColor Red
-    Write-Host "   npm install && npm run compile && npx @vscode/vsce package --allow-missing-repository"
+    Write-Host "[错误] 未找到与当前版本兼容的 .vsix 安装包。请先在本目录执行:" -ForegroundColor Red
+    Write-Host "   npm ci; npm run package:dist"
     exit 1
 }
 
@@ -34,7 +55,7 @@ if ($LASTEXITCODE -ne 0) { Write-Host "[错误] 安装失败" -ForegroundColor R
 
 Write-Host ""
 Write-Host "安装完成。使用前请确认：" -ForegroundColor Green
-Write-Host "  1. 「晶织：VASP 服务端计算控制智能体」控制台已在本机启动；"
+Write-Host "  1. 「远端控制智能体」控制台已在本机启动；"
 Write-Host "  2. 目标服务器在控制台中处于「已连接」状态；"
 Write-Host "  3. 回到控制台的「文件」页，右键文件或文件夹，"
 Write-Host "     选择「在 VS Code 中安全编辑 / 以虚拟目录打开」。"

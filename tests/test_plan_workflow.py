@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-from vasploom.core.errors import ApprovalError, ValidationError
-from vasploom.core.hashing import file_sha256, text_sha256
-from vasploom.workflow.plan import build_plan, plan_files_hash, verify_plan_integrity
+from rsci.core.errors import ApprovalError, ValidationError
+from rsci.core.hashing import file_sha256, text_sha256
+from rsci.workflow.plan import build_plan, plan_files_hash, verify_plan_integrity
 
-REMOTE_DIR = "/hpc/home/tester/vasploom-root/runs/case-1"
+REMOTE_DIR = "/hpc/home/tester/rsci-root/runs/case-1"
 
 
 def spec(from_dir, server="cl9", remote_dir=REMOTE_DIR):
@@ -194,7 +194,8 @@ class TestWorkflowLifecycle:
         # mutate a local input AFTER approval: the engine must refuse
         (vasp_inputs / "INCAR").write_text("SYSTEM = mutated post-approval\n",
                                            encoding="utf-8")
-        result = engine.run(prepared["plan_id"], approved["approval_ref"],
-                            poll_seconds=0)
+        with pytest.raises(ValidationError, match="changed since approval"):
+            engine.run(prepared["plan_id"], approved["approval_ref"], poll_seconds=0)
+        result = engine.status(prepared["plan_id"])
         assert result["status"] == "failed"
         assert "changed since approval" in result["failure"]["detail"]

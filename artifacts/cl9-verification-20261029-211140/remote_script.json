@@ -1,0 +1,13 @@
+{
+  "matches_approval_snapshot": true,
+  "sha256": "2317b1362e8ddeadba15fdc531f6db7678325b1fc4d441a8b0be4375d2a73643",
+  "lines": 94,
+  "directives": [
+    "#PBS -N NaOH_opt",
+    "#PBS -q short",
+    "#PBS -l nodes=1:ppn=12",
+    "#PBS -l walltime=02:00:00",
+    "#PBS -j oe",
+    "#PBS -o NaOH_opt.pbsout"
+  ]
+}

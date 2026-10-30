@@ -27,11 +27,12 @@ dist/
 /build-submission.log
 .zcode/
 .tmp_manual_render/
-artifacts/vasploom_manual/render*/
+artifacts/rsci_manual/render*/
 /.doc-work/
 /artifacts/evidence-*-tmp/
 /artifacts/competition_submission/03-program/
 *.vsix
+!/apps/huwei-agent-vscode-bridge/huwei-agent-vscode-bridge-*.vsix
 *.whl
 *.spec.bak
 
@@ -46,11 +47,13 @@ Desktop.ini
 # Node bridge dependencies and compiled output
 apps/huwei-agent-vscode-bridge/node_modules/
 apps/huwei-agent-vscode-bridge/out/
+artifacts/rsci_manual/render*/
+.venv/  
 
 # Local documents and generated presentation exports
 build_ppt/
 *.pptx
-/VaspLoom_详细使用手册.docx
+/rsci_详细使用手册.docx
 /artifacts/**/*.docx
 /artifacts/**/*.pdf
 /artifacts/**/*.mp4
@@ -65,7 +68,7 @@ build_ppt/
 !.env.*.example
 *.pem
 *.key
-/.vasploom/
+/.rsci/
 
 # Generated/licensed files from the small Slurm VASP examples
 examples/slurm-evidence/**/POTCAR
@@ -84,6 +87,6 @@ examples/slurm-evidence/**/vasprun.xml
 examples/slurm-evidence/**/WAVECAR
 examples/slurm-evidence/**/XDATCAR
 examples/slurm-evidence/**/vasp.out
-examples/slurm-evidence/**/vasploom-*.out
-examples/slurm-evidence/**/vasploom-*.err
+examples/slurm-evidence/**/rsci-*.out
+examples/slurm-evidence/**/rsci-*.err
 examples/slurm-evidence/**/evidence-*/

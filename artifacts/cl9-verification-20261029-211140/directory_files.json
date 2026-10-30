@@ -1,0 +1,38 @@
+{
+  "entries": [
+    {
+      "mtime": "2026-09-22T20:26:18.0485903960",
+      "name": "INCAR",
+      "size": 292,
+      "type": "file"
+    },
+    {
+      "mtime": "2026-09-22T20:26:18.0485903960",
+      "name": "KPOINTS",
+      "size": 29,
+      "type": "file"
+    },
+    {
+      "mtime": "2026-09-22T20:26:18.0485903960",
+      "name": "POSCAR",
+      "size": 431,
+      "type": "file"
+    },
+    {
+      "mtime": "2026-09-22T20:26:18.0495904130",
+      "name": "run.job.sh",
+      "size": 3568,
+      "type": "file"
+    },
+    {
+      "mtime": "2026-09-22T20:26:08.1694183240",
+      "name": "POTCAR",
+      "size": 563426,
+      "type": "file"
+    }
+  ],
+  "limit": 500,
+  "ok": true,
+  "path": "/public/home/wuhong/NaOH_opt/rerun_20261025",
+  "truncated": false
+}

@@ -6,11 +6,11 @@ import json
 
 import pytest
 
-from vasploom.agents.runtime import AgentRuntime
-from vasploom.core.audit import AuditLog, sanitize
-from vasploom.core.config import Config
-from vasploom.core.errors import ToolNotAllowedError
-from vasploom.providers.base import ANALYSIS_ONLY, FULL, ProviderReply, ToolCall
+from rsci.agents.runtime import AgentRuntime
+from rsci.core.audit import AuditLog, sanitize
+from rsci.core.config import Config
+from rsci.core.errors import ToolNotAllowedError
+from rsci.providers.base import ANALYSIS_ONLY, FULL, ProviderReply, ToolCall
 
 
 class ScriptedProvider:
@@ -78,7 +78,7 @@ class TestAgentRuntime:
         provider = ScriptedProvider([
             {"tool_calls": [ToolCall(call_id="1", name="remote_mkdir",
                                     arguments={"path":
-                                               "/hpc/home/tester/vasploom-root/x"})]},
+                                               "/hpc/home/tester/rsci-root/x"})]},
             {"text": "mkdir was refused; nothing was changed"},
         ])
         runtime = AgentRuntime(provider=provider, registry=registry,
@@ -94,7 +94,7 @@ class TestAgentRuntime:
         app, registry = _registry_of(app_with_fake)
         with pytest.raises(ToolNotAllowedError):
             registry.dispatch("remote_mkdir",
-                              {"path": "/hpc/home/tester/vasploom-root/x"},
+                              {"path": "/hpc/home/tester/rsci-root/x"},
                               provider_mode=ANALYSIS_ONLY)
         # read tools stay available
         outcome = registry.dispatch("remote_pwd", {},
@@ -103,40 +103,54 @@ class TestAgentRuntime:
 
     def test_unknown_tool_rejected(self, app_with_fake):
         app, registry = _registry_of(app_with_fake)
-        from vasploom.core.errors import ValidationError
+        from rsci.core.errors import ValidationError
         with pytest.raises(ValidationError):
             registry.dispatch("run_shell", {}, provider_mode=FULL)
 
-    def test_turn_limit(self, app_with_fake):
+    def test_no_turn_limit_by_default(self, app_with_fake):
+        """The loop runs as long as the model keeps calling tools."""
         app, registry = _registry_of(app_with_fake)
-        endless = [{"tool_calls": [ToolCall(call_id=str(i),
-                                            name="remote_pwd",
+        script = [{"tool_calls": [ToolCall(call_id=str(i), name="remote_pwd",
+                                           arguments={})]}
+                  for i in range(100)] + [{"text": "一百步之后完成"}]
+        runtime = AgentRuntime(provider=ScriptedProvider(script),
+                               registry=registry, mode=FULL)
+        result = runtime.run("long task")
+        assert result["ok"] is True and result["turns"] == 101
+        assert len(result["tool_calls"]) == 100
+
+    def test_stop_ends_the_turn_after_the_step_in_flight(self, app_with_fake):
+        import threading
+        app, registry = _registry_of(app_with_fake)
+        stop = threading.Event()
+
+        class Endless:
+            calls = 0
+
+            def chat(self, messages, tools, *, stream_cb=None):
+                Endless.calls += 1
+                if Endless.calls == 3:
+                    stop.set()  # the user presses stop while turn 3 runs
+                return ProviderReply(tool_calls=[ToolCall(
+                    call_id=str(Endless.calls), name="remote_pwd", arguments={})])
+
+        runtime = AgentRuntime(provider=Endless(), registry=registry,
+                               mode=FULL, cancel=stop)
+        result = runtime.run("loop forever")
+        assert result["ok"] is False and result["stopped"] is True
+        assert Endless.calls == 3
+        assert len(result["tool_calls"]) == 2  # turn 3's tool never ran
+
+    def test_an_explicit_budget_still_works_for_scripts(self, app_with_fake):
+        app, registry = _registry_of(app_with_fake)
+        endless = [{"tool_calls": [ToolCall(call_id=str(i), name="remote_pwd",
                                             arguments={})]}
                    for i in range(50)]
-        provider = ScriptedProvider(endless)
-        runtime = AgentRuntime(provider=provider, registry=registry,
-                               mode=FULL, max_turns=3)
+        runtime = AgentRuntime(provider=ScriptedProvider(endless),
+                               registry=registry, mode=FULL, max_turns=3)
         result = runtime.run("loop forever")
-        assert result["ok"] is False
-        assert "exceeded" in result["error"]
-
-    def test_turn_cap_nudge_grants_continuation(self, app_with_fake):
-        """At the soft cap the runtime injects a continuation nudge and runs
-        on, instead of ending mid-sentence like the 13-tool-call Bader run."""
-        app, registry = _registry_of(app_with_fake)
-        scripted = [
-            {"tool_calls": [ToolCall(call_id="1", name="remote_pwd",
-                                     arguments={})]},
-            {"tool_calls": [ToolCall(call_id="2", name="remote_pwd",
-                                     arguments={})]},
-            {"text": "任务完成：一切就绪"},
-        ]
-        runtime = AgentRuntime(provider=ScriptedProvider(scripted),
-                               registry=registry, mode=FULL, max_turns=2)
-        result = runtime.run("do it")
-        # max_turns=2：第 2 回合触顶注入「继续」，第 3 回合给出结论
-        assert result["ok"] is True and result["turns"] == 3
-        assert "完成" in result["answer"]
+        assert result["ok"] is False and result["turns"] == 3
+        assert "allowed" in result["error"]
 
 
 def _registry_of(app_with_fake):
@@ -252,7 +266,7 @@ class TestShellTools:
 
     def test_shell_audited(self, app_with_fake):
         app, _ = _registry_of(app_with_fake)
-        from vasploom.tools.registry import ToolContext, ToolRegistry
+        from rsci.tools.registry import ToolContext, ToolRegistry
         audit_calls = []
         context = ToolContext(config=app.config, client=app.client(),
                               audit=type("A", (), {"record":
@@ -267,7 +281,7 @@ class TestShellTools:
 
 class TestJobSubmitTiers:
     ARGS = {"server": "cl9",
-            "directory": "/hpc/home/tester/vasploom-root/runs/t",
+            "directory": "/hpc/home/tester/rsci-root/runs/t",
             "script": "run.job.sh"}
 
     def test_confirm_mode_queues_pending(self, app_with_fake):
@@ -277,7 +291,7 @@ class TestJobSubmitTiers:
         assert result["ok"] is True
         assert result["status"] == "pending_confirmation"
         assert result["id"].startswith("ps-")
-        from vasploom.workflow.pending import PendingSubmitStore
+        from rsci.workflow.pending import PendingSubmitStore
         pending = PendingSubmitStore(app.config.pending_submits_path).pending()
         assert len(pending) == 1
         assert pending[0]["directory"] == self.ARGS["directory"]
@@ -321,7 +335,7 @@ class TestProjectAndSkillTools:
         app, registry = _registry_of(app_with_fake)
         registry.dispatch("project_create", {"name": "np",
                                              "incar": "NSW=0\n"})
-        from vasploom.core.errors import ValidationError
+        from rsci.core.errors import ValidationError
         with pytest.raises(ValidationError):
             registry.dispatch("project_write", {
                 "project": "np", "file": "POTCAR", "content": "TITEL=x"})
@@ -349,7 +363,7 @@ class TestProjectAndSkillTools:
 
     def test_skill_index_in_prompt(self, app_with_fake):
         app, _ = _registry_of(app_with_fake)
-        from vasploom.agents.skills import SkillStore
+        from rsci.agents.skills import SkillStore
         store = SkillStore(app.config.skills_dir)
         store.write("demo", "a demo skill", "do the thing")
         index = store.index_prompt()
@@ -422,7 +436,7 @@ class TestLegacyMigration:
         providers = config.load_providers()
         assert [p.id for p in providers] == ["deepseek"]
         assert providers[0].protocol == "openai-chat-compatible"
-        assert providers[0].api_key_env == "VASPLOOM_API_KEY_DEEPSEEK"
+        assert providers[0].api_key_env == "RSCI_API_KEY_DEEPSEEK"
         # secrets are never copied
         stored = json.loads((config_home / "settings.json").read_text(
             encoding="utf-8"))

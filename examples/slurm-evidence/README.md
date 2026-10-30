@@ -1,6 +1,6 @@
 # VASP 小型 Slurm 验证算例
 
-这套算例用于快速验证 VASP、MPI、Slurm 和 VaspLoom 的整条链路，也便于采集比赛要求的真实集群运行证据。三个任务都很小，适合功能演示；它们不是已经完成收敛测试的科研生产参数。
+这套算例用于快速验证 VASP、MPI、Slurm 和 rsci 的整条链路，也便于采集比赛要求的真实集群运行证据。三个任务都很小，适合功能演示；它们不是已经完成收敛测试的科研生产参数。
 
 | 目录 | 任务 | 原子数 | 主要验证点 | 建议时限 |
 | --- | --- | ---: | --- | ---: |
@@ -25,7 +25,7 @@ export VASP_PSP_DIR=/你的/potpaw_PBE.64
 ```bash
 cd 01_si_static
 bash prepare_potcar.sh
-vasploom workflow validate . --local
+rsci workflow validate . --local
 sbatch run.slurm
 ```
 
@@ -34,7 +34,7 @@ sbatch run.slurm
 ```bash
 squeue -u "$USER"
 sacct -j JOB_ID --format=JobID,JobName,Partition,State,Elapsed,AllocCPUS,MaxRSS,ExitCode
-tail -f vasploom-JOB_ID.out
+tail -f rsci-JOB_ID.out
 ```
 
 作业结束后采集证据（从任一算例目录执行）：
@@ -54,7 +54,7 @@ bash ../collect_evidence.sh JOB_ID .
   sbatch --export=ALL,VASP_MODULE=你的模块名 run.slurm
   ```
 
-- 脚本与 VaspLoom 当前约定一致，使用 `srun --mpi=pmi2`。如果管理员明确要求 `mpirun`，把运行行改为：
+- 脚本与 rsci 当前约定一致，使用 `srun --mpi=pmi2`。如果管理员明确要求 `mpirun`，把运行行改为：
 
   ```bash
   mpirun -np "$SLURM_NTASKS" "$VASP_EXEC" > vasp.out 2>&1
