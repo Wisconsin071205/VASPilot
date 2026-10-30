@@ -14,7 +14,8 @@ from rsci.core.config import Config
 from rsci.core.errors import ApprovalError, ValidationError
 from rsci.core.hashing import file_sha256
 from rsci.workflow import local_python, worker
-from rsci.workflow.research import prepare_csv_template, project_store
+from rsci.workflow.research import project_store
+from sample_analysis import prepare_csv_template
 
 
 @pytest.fixture()

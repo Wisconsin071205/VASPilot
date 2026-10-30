@@ -86,9 +86,25 @@ class TestServerCommands:
 
 
 class TestRemoteCommands:
-    def test_list_confines_paths(self, cli, monkeypatch):
+    def test_agent_reads_external_file(self, cli, fake_state):
+        from rsci.providers.base import ANALYSIS_ONLY
+        from rsci.cli.main import App
+        from rsci.core.config import Config
+        path = "/public/data/NaOH.cif"
+        fake_state.files["cl9"][path] = b"data_NaOH\n"
+        result = App(Config()).registry().dispatch(
+            "remote_read", {"server": "cl9", "path": path}, provider_mode=ANALYSIS_ONLY)
+        assert result["ok"] and result["content"] == "data_NaOH\n"
+
+    def test_list_can_browse_above_work_root(self, cli, monkeypatch):
         code, document, _, _ = run_cli(
-            ["remote", "list", "/etc"], monkeypatch)
+            ["remote", "list", "/hpc/home/tester"], monkeypatch)
+        assert code == 0
+        assert "rsci-root" in {entry["name"] for entry in document["entries"]}
+
+    def test_mkdir_confines_paths(self, cli, monkeypatch):
+        code, document, _, _ = run_cli(
+            ["remote", "mkdir", "/public/new-directory"], monkeypatch)
         assert code == 5
         assert document["error"]["code"] == "validation_error"
 

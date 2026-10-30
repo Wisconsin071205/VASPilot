@@ -104,7 +104,7 @@ class RemoteCenter:
                                 remote_root=self.identity(server)["remote_root"] or "/")
         submitted = str(result.get("submitted_at") or stamp())
         return {"job_id": job_id, "server": server, "directory": directory,
-                "name": str(result.get("script") or ""), "state": "UNKNOWN",
+                "name": str(result.get("script") or ""), "script": str(result.get("script") or ""), "state": "UNKNOWN",
                 "last_known_state": "SUBMITTED", "source": "submission",
                 "submission_id": result.get("submission_id", ""),
                 "submitted_at": submitted, "first_seen": submitted, "last_seen": submitted,
@@ -297,19 +297,9 @@ class RemoteCenter:
     def diagnose(self, server, job_id):
         from .diagnostics import analyze_job
         details = self.details(server, job_id)
-        logs = []
-        for item in details["files"]:
-            name = PurePosixPath(item["path"]).name
-            if name in {"stdout", "stderr", "OUTCAR", "OSZICAR"} or name.endswith((".out", ".err", ".log", ".pbsout")):
-                if name.startswith("slurm-") and name not in {f"slurm-{job_id}.out", f"slurm-{job_id}.err"}:
-                    continue
-                try:
-                    content = self.client.tail(item["path"], lines=240, server=server).get("content", "")
-                    logs.append({"path": item["path"], "content": str(content)[:65536]})
-                except Exception as exc:
-                    details["warnings"].append(f"日志读取失败：{str(exc)[:160]}")
-                if len(logs) >= 8:
-                    break
+        bundle = self.logs(server, job_id, details=details)
+        logs = bundle["logs"]
+        details["warnings"].extend(bundle["warnings"])
         progress = {}
         if details["domain"] == "vasp":
             try:
@@ -319,3 +309,30 @@ class RemoteCenter:
         report = analyze_job(job_id=job_id, scheduler_state=details["job"]["state"],
                              progress=progress, logs=logs, domain=details["domain"])
         return {**details, "diagnosis": report, "logs": logs}
+
+    def logs(self, server, job_id, *, directory="", details=None):
+        """Shared UI/agent discovery, including finished jobs absent from qstat."""
+        from .joblogs import collect_logs
+        identity = self.identity(server)
+        valid_job_id(job_id)
+        if details is None and not directory:
+            details = self.details(server, job_id)
+        if details is not None:
+            row = details["job"]
+            directory = details["directory"]
+        else:
+            directory = remote_path(directory, remote_root=identity["remote_root"] or "/")
+            current = self.client.job_workdir(job_id, server=server).get("workdir")
+            if current and str(current).rstrip("/") != directory.rstrip("/"):
+                raise ValidationError("指定目录与调度器作业目录不一致")
+            row = next((r for r in self._load(server)["jobs"] if r["job_id"] == job_id), {})
+            if row.get("directory") and row["directory"].rstrip("/") != directory.rstrip("/"):
+                raise ValidationError("指定目录与本机作业记录不一致")
+        bundle = collect_logs(self.client, server=server, job_id=job_id,
+                              directory=directory, script=str(row.get("script") or row.get("name") or ""),
+                              scheduler_state=str(row.get("state") or "UNKNOWN"),
+                              submitted_at=str(row.get("submitted_at") or ""))
+        if identity != self.identity(server):
+            raise ValidationError("查找日志期间服务器身份变化，请重新核对")
+        bundle["checked_at"] = stamp()
+        return bundle

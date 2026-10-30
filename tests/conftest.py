@@ -320,9 +320,6 @@ class FakeTransport:
         limit = int(args[args.index("--limit") + 1]) \
             if "--limit" in args else 500
         limit = max(1, min(limit, 2000))
-        if not self._in_root(server, path):
-            return {"ok": False, "error": {"code": "outside_root",
-                                           "message": "path outside root"}}
         prefix = path.rstrip("/") + "/"
         explicit = set(self.state.files.get(server, {})) | \
             set(self.state.dirs.get(server, set()))
@@ -350,9 +347,6 @@ class FakeTransport:
     def op_read(self, args):
         server = self._server(args)
         path = args[-1]
-        if not self._in_root(server, path):
-            return {"ok": False, "error": {"code": "outside_root",
-                                           "message": "path outside root"}}
         content = self.state.files[server].get(path)
         if content is None:
             return {"ok": False, "error": {"code": "not_found",

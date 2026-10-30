@@ -46,7 +46,7 @@
       renderRows();
       const servers = (result.servers || []).map(server => ({...server, querying:true}));
       const status = () => {el("fleet-status").textContent = servers.map(server =>
-        `${server.server}：${server.querying ? "正在核对…" : server.error ? "查询失败，" + server.error : "核对于 " + fmtLocalDateTime(server.checked_at)}${server.warning ? "；历史记录暂不完整：" + server.warning : ""}`).join("\n") ||
+        `${server.server}：${server.querying ? "正在核对…" : server.error ? "查询失败，" + server.error : "核对于 " + fmtLocalDateTime(server.checked_at)}${server.warning ? "；历史记录暂不完整：" + server.warning : ""}${server.submission_warning ? "；提交记录读取失败：" + server.submission_warning : ""}`).join("\n") ||
         "尚未配置服务器。请在配置页添加并连接服务器。";};
       status();
       let next = 0;
@@ -89,13 +89,20 @@
       <button class="btn ghost" data-close>收起详情</button></div>
       <p class="mono" style="overflow-wrap:anywhere">${esc(result.directory)}</p>
       ${(result.warnings || []).map(warning => `<p class="desc">${esc(warning)}</p>`).join("")}
+      <section class="job-log-panel" aria-label="作业日志">
+        <div class="row"><h4>运行日志</h4><button class="btn ghost" data-refresh-logs>重新查找日志</button>
+          <button class="btn" data-ai-logs disabled>AI 分析日志</button></div>
+        <p class="desc">自动按提交脚本、作业号和常见日志名查找。AI 分析会将日志摘录发送给当前默认模型，建议需审阅后执行。</p>
+        <p data-log-status role="status" aria-live="polite">正在查找并读取日志…</p>
+        <div data-log-list></div><div data-ai-result aria-live="polite"></div>
+      </section>
       <div class="row"><div class="fg"><label for="fleet-project">关联项目</label><select id="fleet-project" ${associated ? "disabled" : ""}>
         <option value="">选择项目…</option>${PROJECTS.map(project => `<option value="${esc(project.name)}" ${associated?.project_id === project.project_id ? "selected" : ""}>${esc(project.name)}</option>`).join("")}</select></div>
         <button class="btn" data-associate ${associated ? "disabled" : ""}>${associated ? "已关联项目" : "确认关联"}</button>
         <button class="btn ghost" data-diagnose>诊断作业</button><button class="btn ghost" data-files>打开远端目录</button></div>
       <p class="desc">关联只登记项目关系，不提交、重跑或取消作业。回收文件将保存到项目的 results/remote 目录。</p>
       <div data-detail-status role="status" aria-live="polite"></div>
-      <details open><summary>脚本、日志与结果文件（${result.files.length}）</summary>
+      <details><summary>全部脚本、日志与结果文件（${result.files.length}）</summary>
         <div style="max-height:340px;overflow:auto"><table><thead><tr><th>选择回收</th><th>文件</th><th>大小</th><th>查看</th></tr></thead><tbody>
         ${result.files.map((file, index) => `<tr><td><input type="checkbox" data-collect-file="${index}" aria-label="回收 ${esc(file.path.split("/").pop())}"></td>
           <td>${esc(file.path.split("/").pop())}</td><td>${esc(fmtBytes(file.size))}</td><td><button class="btn ghost" data-preview="${index}">文本尾部</button></td></tr>`).join("") || '<tr><td colspan="4" class="empty">目录中未找到可展示的普通文件</td></tr>'}
@@ -116,6 +123,63 @@
         return response;
       } finally {button.disabled = false;}
     };
+    let logBusy = false, aiBusy = false, hasLogs = false;
+    const logStatus = box.querySelector("[data-log-status]");
+    const refreshLogs = box.querySelector("[data-refresh-logs]");
+    const aiLogs = box.querySelector("[data-ai-logs]");
+    const syncLogButtons = () => {
+      refreshLogs.disabled = logBusy || aiBusy;
+      aiLogs.disabled = logBusy || aiBusy || !hasLogs;
+      aiLogs.textContent = aiBusy ? "正在分析…" : "AI 分析日志";
+    };
+    const showLogs = response => {
+      const logs = response.logs || [];
+      hasLogs = logs.length > 0;
+      const relation = {job_id_verified:"日志内作业号已核对", filename_job_id:"文件名作业号匹配", directory_only:"归属待核对"};
+      box.querySelector("[data-log-list]").innerHTML =
+        (response.execution_receipts || []).map(receipt => `<p><strong>${esc(receipt.program)} 退出码 ${esc(receipt.exit_code)}</strong> · ${esc(receipt.end_text)}<br><span class="desc">来自同一份带有本次作业号的日志：${esc(receipt.path)}。程序退出与科学有效性分别判断。</span></p>`).join("") +
+        (response.warnings || []).map(text => `<p class="desc">${esc(text)}</p>`).join("") +
+        logs.map((log, index) => `<details class="job-log-entry" ${index === 0 ? "open" : ""}>
+          <summary>${esc(log.path.split("/").pop())} · ${esc(relation[log.relation] || "归属待核对")}</summary>
+          <p class="desc">${esc(log.reason)} · ${esc(log.scope)}${log.truncated ? " · 摘录已截断" : ""}</p>
+          <p class="job-log-path mono">${esc(log.path)}</p><pre>${esc(log.content || "（日志为空，尚无输出）")}</pre></details>`).join("") +
+        (logs.length ? "" : '<p class="empty">尚未找到可读取的日志。作业可能尚未输出，或脚本把日志写到了其他目录；可查看下方全部文件或重新查找。</p>') +
+        ((response.excluded || []).length ? `<details><summary>未用于本次分析的文件（${response.excluded.length}）</summary><ul>${response.excluded.map(item => `<li>${esc(item.path)}：${esc(item.reason)}</li>`).join("")}</ul></details>` : "");
+    };
+    const fetchLogs = async (analyze = false) => {
+      if (logBusy || aiBusy) return;
+      if (analyze) aiBusy = true; else logBusy = true;
+      syncLogButtons();
+      logStatus.textContent = analyze ? "正在核对最新日志并调用默认模型，原始日志仍可查看…" : "正在查找并读取日志…";
+      try {
+        const response = await api(analyze ? "job.ai_analysis" : "job.logs_collect",
+          {server:row.server, job_id:row.job_id}, true, analyze ? 180000 : 90000);
+        if (version !== detailVersion) return;
+        if (!response.ok) {
+          logStatus.textContent = (analyze ? "AI 分析未完成：" : "日志读取未完成：") +
+            (response.error?.message || "连接失败") + "。已有日志保留，可重试。";
+          return;
+        }
+        if (!response.analysis) box.querySelector("[data-ai-result]").textContent = "";
+        showLogs(response);
+        logStatus.textContent = `已读取 ${response.logs.length} 个日志 · ${fmtLocalDateTime(response.checked_at)}`;
+        if (response.analysis) {
+          const analysis = response.analysis;
+          box.querySelector("[data-ai-result]").innerHTML = `<h4>AI 日志分析</h4>
+            <p class="desc">${esc(analysis.model)} · ${esc(fmtLocalDateTime(analysis.created_at))} · 基于上方日志摘录，建议尚未执行</p>
+            ${analysis.truncated ? '<p class="desc">分析内容较长，仅显示前 24000 字符。</p>' : ""}
+            <div class="job-ai-text">${esc(analysis.text)}</div>`;
+        }
+      } catch (error) {
+        if (version === detailVersion) logStatus.textContent = `读取或分析失败：${error.message}。可重试。`;
+      } finally {
+        logBusy = aiBusy = false;
+        if (version === detailVersion) syncLogButtons();
+      }
+    };
+    refreshLogs.addEventListener("click", () => fetchLogs());
+    aiLogs.addEventListener("click", () => fetchLogs(true));
+    fetchLogs();
     box.querySelector("[data-associate]").addEventListener("click", async event => {
       const project = el("fleet-project").value;
       if (!project) return toast("请选择要关联的项目", "err");

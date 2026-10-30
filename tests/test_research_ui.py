@@ -8,6 +8,7 @@ import pytest
 from rsci.agents.runtime import AgentRuntime
 from rsci.core.errors import ValidationError
 from rsci.workflow.research import project_store
+from sample_analysis import prepare_csv_template
 from tests.test_ui import call, ui
 
 
@@ -16,7 +17,7 @@ def test_default_identity_and_explicit_specialist(ui):
     general = call(ui, "project.create", {"name": "general"})
     assert general["kind"] == "general"
     registry = app.build_registry(project_root=general["path"])
-    assert {"project_files", "research_csv_template", "research_prepare"} <= set(registry.names())
+    assert {"project_files", "research_prepare"} <= set(registry.names())
     assert not any(n.startswith(("vasp_", "vaspkit_", "campaign_", "potcar_")) for n in registry.names())
     with pytest.raises(ValidationError):
         registry.dispatch("vasp_validate", {"directory": "/anywhere"})
@@ -41,9 +42,7 @@ def test_ui_import_edit_plan_approval_and_safe_download(ui):
     assert not call(ui, "project.import", body)["ok"]  # no silent overwrite
     assert not call(ui, "project.import", {**body, "file": "../escape.csv"})["ok"]
     assert not call(ui, "project.import", {**body, "content_base64": "!!!"})["ok"]
-    template = call(ui, "project.csv_template", {"name": "csv-project", "file": "data/data.csv"})
-    assert template["ok"]
-    assert not call(ui, "project.csv_template", {"name": "csv-project", "file": "data/data.csv"})["ok"]
+    template = prepare_csv_template(ui["app"].config, "csv-project", "data/data.csv")
     plan = call(ui, "workflow.prepare", {"spec": template["spec"]})
     assert plan["ok"] and plan["plan"]["domain"] == "general"
     assert plan["plan"]["job_script_content"].startswith('"""Descriptive')
@@ -74,7 +73,7 @@ def test_chat_research_prepare_binds_active_project(ui):
     created = store.create("chat-data")
     store.write_file("chat-data", "data/test.csv", "x\n1\n")
     registry = app.build_registry(project_root=created["path"])
-    template = registry.dispatch("research_csv_template", {"file": "data/test.csv"})
+    template = prepare_csv_template(app.config, "chat-data", "data/test.csv")
     result = registry.dispatch("research_prepare", {"spec": template["spec"]})
     assert result["status"] == "pending_approval"
     assert result["chat_plan"]["domain"] == "general"
@@ -83,19 +82,11 @@ def test_chat_research_prepare_binds_active_project(ui):
     assert not app.config.load_approvals()["consumed"]
 
 
-def test_knowledge_api_evidence_and_experiment(ui, monkeypatch):
-    from rsci.workflow import knowledge
-    call(ui, "project.create", {"name": "knowledge"})
-    row = {"DOI": "10.1234/synthetic", "title": ["Synthetic evidence"]}
-    monkeypatch.setattr(knowledge, "_fetch", lambda url: {"items": [row]} if "?" in url else row)
-    search = call(ui, "project.literature_search", {"query": "synthetic"})
-    assert search["verification_status"] == "search_results_only"
-    ref = call(ui, "project.reference_add", {"name": "knowledge", "doi": row["DOI"], "title": row["title"][0]})
-    checked = call(ui, "project.reference_check", {"name": "knowledge", "reference_id": ref["id"]})
-    assert checked["status"] == "metadata_matched"
-    assert checked["metadata_sha256"]
-    note = call(ui, "project.experiment_record", {"name": "knowledge", "title": "Synthetic test",
-        "method": "No physical experiment", "observations": "Metadata matched", "interpretation": "Not a scientific conclusion"})
-    assert note["file"].startswith("notes/")
-    assert note["record"]["observations"] == "Metadata matched"
-    assert not call(ui, "project.reference_check", {"name": "knowledge", "reference_id": "../escape"})["ok"]
+
+def test_removed_research_endpoints_and_tools(ui):
+    names = set(ui["app"].build_registry().names())
+    assert not names.intersection({"research_csv_template", "research_csv_preview", "literature_search", "reference_add", "reference_check", "experiment_record"})
+    for action in ("research_task.list", "document.list", "report.create", "ocr.status"):
+        with pytest.raises(urllib.error.HTTPError) as error:
+            call(ui, action)
+        assert error.value.code == 404

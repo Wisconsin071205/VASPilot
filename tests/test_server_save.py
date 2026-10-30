@@ -75,7 +75,7 @@ def test_catalog_save_shares_budget_across_setup_and_command(monkeypatch):
     def runner(cmd, *, timeout, **kwargs):
         timeouts.append(timeout)
         clock[0] += 6
-        return 0, json.dumps({"ok":True,"gateway_version":"1.5.3","protocol":"2"}), ""
+        return 0, json.dumps({"ok":True,"gateway_version":"1.5.4","protocol":"2"}), ""
     transport = SshTransport(host="vlab.example", user="ubuntu", runner=runner)
     assert transport.run_gateway(["server-add", "test"], timeout=15)["ok"]
     assert timeouts == [15, 9, 3]

@@ -28,6 +28,7 @@ import socket
 import tempfile
 import threading
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer as _ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -291,7 +292,7 @@ class UiHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
-        if path in {f"/t/{self.state.token}/{name}" for name in ("research.js", "remote-center.js")}:
+        if path in {f"/t/{self.state.token}/{name}" for name in ("remote-center.js",)}:
             self._send(200, (STATIC_DIR / path.rsplit("/", 1)[1]).read_bytes(), "text/javascript; charset=utf-8")
             return
         if path == f"/t/{self.state.token}/download":
@@ -307,8 +308,7 @@ class UiHandler(BaseHTTPRequestHandler):
                            "text/html; charset=utf-8")
                 return
             page = (STATIC_DIR / "index.html").read_bytes()
-            page = page.replace(b"</body>", (f'<script src="/t/{self.state.token}/research.js"></script>'
-                                f'<script src="/t/{self.state.token}/remote-center.js"></script></body>').encode())
+            page = page.replace(b"</body>", (f'<script src="/t/{self.state.token}/remote-center.js"></script></body>').encode())
             self._send(200, page, "text/html; charset=utf-8")
             return
         if path == "/" or path == "/index.html":
@@ -334,22 +334,6 @@ class UiHandler(BaseHTTPRequestHandler):
         self._send(404, _json_bytes({"ok": False, "error": {
             "code": "not_found", "message": path}}),
             "application/json; charset=utf-8")
-
-    def _import_document_stream(self, parsed):
-        from ..research.documents import import_stream
-        previous = self.connection.gettimeout()
-        try:
-            self.connection.settimeout(60)
-            query = parse_qs(parsed.query)
-            length = int(self.headers.get("Content-Length", "0"))
-            result = import_stream(self.state.app.config, (query.get("project") or [""])[0],
-                self.rfile, length, (query.get("title") or [""])[0])
-            self._send_json({"ok": True, **result})
-        except Exception as exc:
-            self.close_connection = True
-            self._send_json({"ok": False, "error": {"code": "document_import", "message": str(exc)[:300]}}, status=400)
-        finally:
-            self.connection.settimeout(previous)
 
     def _download_remote(self, server: str, remote_path: str) -> None:
         """Explicit browser download through the existing structured client.
@@ -411,9 +395,6 @@ class UiHandler(BaseHTTPRequestHandler):
                 "code": "unauthorized", "message": "missing or wrong token"}},
                 status=403)
             return
-        if parsed.path == "/api/document/import":
-            self._import_document_stream(parsed)
-            return
         try:
             body = self._read_json()
         except RequestTooLargeError as exc:
@@ -441,19 +422,6 @@ class UiHandler(BaseHTTPRequestHandler):
                     with state.lock:
                         result = vlab.save_connection(app, body)
                 self._send_json(result)
-                return
-            if action.startswith(("document.", "literature.", "research.", "research_task.", "report.", "ocr.")):
-                if action == "document.page":
-                    from ..research.documents import render_page
-                    path = render_page(app.config, str(body.get("project", "")), str(body.get("document_id", "")), body.get("page", 1))
-                    self._send(200, path.read_bytes(), "image/png")
-                elif action == "report.export":
-                    from ..research.reports import export_path
-                    path = export_path(app.config, str(body.get("project", "")), str(body.get("report_id", "")), str(body.get("format", "zip")))
-                    self._send_file(path, path.name)
-                else:
-                    from ..research.api import dispatch
-                    self._send_json({"ok": True, **dispatch(app, action, body)})
                 return
             client = app.client()
             engine = app.engine()
@@ -590,7 +558,7 @@ class UiHandler(BaseHTTPRequestHandler):
                     confirm=str(body.get("confirm") or "")))
             elif action == "vscode.open":
                 self._open_vscode(body)
-            elif action in {"job.center", "job.details", "job.associate", "job.logs", "job.diagnosis"}:
+            elif action in {"job.center", "job.details", "job.associate", "job.logs", "job.diagnosis", "job.logs_collect", "job.ai_analysis"}:
                 from ..hpc.center import RemoteCenter
                 center = RemoteCenter(app.config, client, app.audit)
                 server = str(body.get("server") or "")
@@ -603,6 +571,15 @@ class UiHandler(BaseHTTPRequestHandler):
                     result = center.associate(server, job_id, str(body.get("project") or ""))
                 elif action == "job.logs":
                     result = center.text(server, job_id, str(body.get("path") or ""))
+                elif action == "job.logs_collect":
+                    result = center.logs(server, job_id)
+                elif action == "job.ai_analysis":
+                    from ..providers import default_provider
+                    from ..hpc.loganalysis import analyze_logs
+                    _, provider = default_provider(app.config)
+                    result = center.logs(server, job_id)
+                    result["analysis"] = analyze_logs(app.config, provider, result,
+                                                       question=str(body.get("question") or ""))
                 else:
                     result = center.diagnose(server, job_id)
                 self._send_json(result)
@@ -686,6 +663,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 plan = engine.load_plan(plan_id)
                 self._send_json({"ok": True, "plan_id": plan_id,
                                  "plan": plan,
+                                 "prepared_at": datetime.fromtimestamp(
+                                     engine.plan_path(plan_id).stat().st_mtime, timezone.utc).isoformat(),
                                  "files_hash": plan_files_hash(plan),
                                  "run": engine.status(plan_id) if engine._load_run(plan_id) else None})
             elif action == "workflow.prepare":
@@ -780,6 +759,8 @@ class UiHandler(BaseHTTPRequestHandler):
                 self._chat_action(action, body)
             elif action.startswith("skill."):
                 self._skill_action(action, body)
+            elif action.startswith("research_workflow."):
+                self._research_workflow_action(action, body)
             elif action == "submit.pending":
                 from ..workflow.pending import PendingSubmitStore
                 store = PendingSubmitStore(app.config.pending_submits_path)
@@ -1298,20 +1279,6 @@ class UiHandler(BaseHTTPRequestHandler):
         elif action == "project.files":
             self._send_json({"name": name, "kind": store.kind(name),
                              "path": str(store._project_dir(name).resolve()), "files": store.files(name)})
-        elif action == "project.literature_search":
-            from ..workflow.knowledge import literature_search
-            self._send_json(literature_search(str(body.get("query") or "")))
-        elif action == "project.reference_add":
-            from ..workflow.knowledge import add_reference
-            self._send_json(add_reference(app.config, name, str(body.get("doi") or ""),
-                                          str(body.get("title") or ""), audit=app.audit))
-        elif action == "project.reference_check":
-            from ..workflow.knowledge import check_reference
-            self._send_json(check_reference(app.config, name, str(body.get("reference_id") or ""), audit=app.audit))
-        elif action == "project.experiment_record":
-            from ..workflow.knowledge import record_experiment
-            self._send_json(record_experiment(app.config, name,
-                **{k: str(body.get(k) or "") for k in ("title", "method", "observations", "interpretation", "limitations", "plan_id")}, audit=app.audit))
         elif action == "project.import":
             import base64
             from ..core.project_paths import MAX_IMPORT_BYTES
@@ -1335,13 +1302,6 @@ class UiHandler(BaseHTTPRequestHandler):
             if not path.is_file() or path.stat().st_size > MAX_IMPORT_BYTES:
                 raise ValidationError("file missing or exceeds 16 MiB")
             self._send_file(path, path.name)
-        elif action in {"project.csv_preview", "project.csv_template"}:
-            from ..workflow.research import csv_preview, prepare_csv_template
-            if action == "project.csv_preview":
-                self._send_json(csv_preview(store, name, str(body.get("file") or "")))
-            else:
-                self._send_json(prepare_csv_template(app.config, name, str(body.get("file") or ""),
-                    script=str(body.get("script") or "scripts/analyze.py"), audit=app.audit))
         elif action == "project.read":
             self._send_json(store.read_file(
                 name, str(body.get("file") or "")))
@@ -1408,6 +1368,7 @@ class UiHandler(BaseHTTPRequestHandler):
                             "active": False, "error": answer.get("error", "")}
                 self._send_json({"session_id": session_id, "turn": turn,
                                  "workflow_plans": snapshot.get("workflow_plans", []),
+                                 "workflow_plan_anchors": snapshot.get("workflow_plan_anchors", {}),
                                  "answer": answer.get("content", "")})
             else:
                 self._send_json(snapshot)
@@ -1582,6 +1543,33 @@ class UiHandler(BaseHTTPRequestHandler):
             raise ValidationError(str(exc)) from exc
         self._send_json({"bound": True, "server": server,
                          "job": row, "directory": directory})
+
+    def _research_workflow_action(self, action: str, body: dict) -> None:
+        from ..agents.research_workflows import ResearchWorkflowStore, generate_workflow
+        from ..core.errors import ValidationError
+        from ..providers import default_provider, provider_by_id
+        app = self.state.app
+        store = ResearchWorkflowStore(app.config.home / "research-workflows")
+        workflow_id = str(body.get("id") or "")
+        if action == "research_workflow.list":
+            self._send_json({"workflows": store.list()})
+        elif action == "research_workflow.save":
+            row = store.save(workflow_id=workflow_id,
+                             title=str(body.get("title") or ""),
+                             direction=str(body.get("direction") or ""),
+                             content=str(body.get("content") or ""))
+            self._send_json({"workflow": row})
+        elif action == "research_workflow.delete":
+            store.delete(workflow_id)
+            self._send_json({"deleted": workflow_id})
+        elif action == "research_workflow.generate":
+            pid = str(body.get("provider") or "")
+            _, provider = provider_by_id(app.config, pid) if pid else default_provider(app.config)
+            content = generate_workflow(provider, str(body.get("direction") or ""),
+                                        str(body.get("title") or ""))
+            self._send_json({"content": content})
+        else:
+            raise ValidationError("未知的科研工作流操作")
 
     def _skill_action(self, action: str, body: dict) -> None:
         from ..agents.skills import SkillStore
@@ -1806,8 +1794,10 @@ class UiHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _pending_view(entry: dict) -> dict:
-        # the card view never needs the full script content again
-        return {k: v for k, v in entry.items() if k != "script_content"}
+        # Approval cards must show the frozen script the user is approving.
+        # Use the persisted snapshot, never silently substitute today's remote
+        # file; _confirm_submit separately verifies its digest before execution.
+        return dict(entry)
 
     @staticmethod
     def _note_session(app, entry: dict, note: str) -> None:
@@ -2220,6 +2210,17 @@ class UiHandler(BaseHTTPRequestHandler):
                 app.config.skills_dir, audit=app.audit).index_prompt()
             if skills_index:
                 system_extra_parts.append(skills_index)
+            from ..agents.research_workflows import ResearchWorkflowStore, resolve_workflow
+            saved_session = memory.load(session_id)
+            selection = body.get("research_workflow") or saved_session.get("research_workflow") or {"mode": "auto"}
+            memory.set_research_workflow(session_id, selection)
+            frame({"type": "activity", "stage": "thinking", "message": "正在选择科研工作流"})
+            active_workflow, workflow_prompt = resolve_workflow(
+                ResearchWorkflowStore(app.config.home / "research-workflows"),
+                provider, selection, model_message, history)
+            memory.update_turn(session_id, request_id, research_workflow=active_workflow)
+            frame({"type": "research_workflow", **active_workflow})
+            system_extra_parts.append(workflow_prompt)
             if project_name:
                 from ..workflow.projects import ProjectStore
                 meta = next((p for p in ProjectStore(
@@ -2364,8 +2365,6 @@ def serve(app, *, host: str = "127.0.0.1", port: int = 8930,
     httpd = _bind_with_fallback(BoundHandler, host, port)
     from ..workflow.worker import recover
     state.workflow_recovery = recover(app.engine())
-    from ..research.tasks import recover as recover_research
-    recover_research(app.config)
     from ..hpc.collections import recover as recover_collections
     state.collection_recovery = recover_collections(app.config, app.client())
     state.start_campaign_ticker()

@@ -250,7 +250,7 @@ class ProjectStore:
         if potcar_remote is not None and len(str(potcar_remote).encode("utf-8")) > 512:
             raise ValidationError("potcar_remote path exceeds 512 bytes")
         if target_name != name:
-            self._check_research_tasks(meta["project_id"])
+            self._check_remote_collections(meta["project_id"])
             source.rename(target)
             index = self._load_index()
             index.pop(name, None)
@@ -289,7 +289,7 @@ class ProjectStore:
     def delete(self, name):
         directory = self._project_dir(name)
         meta = self._metadata(name)
-        self._check_research_tasks(meta["project_id"])
+        self._check_remote_collections(meta["project_id"])
         trash = confined_path(self.root, ".trash")
         trash.mkdir(parents=True, exist_ok=True)
         target = trash / f"{name}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(3)}"
@@ -300,16 +300,11 @@ class ProjectStore:
         self._record("project.delete", outcome="ok", project=name, moved_to=str(target))
         return {"name": name, "moved_to": str(target)}
 
-    def _check_research_tasks(self, project_id):
-        from ..research.common import read
+    def _check_remote_collections(self, project_id):
         for path in (self.index_path.parent / "remote-collections").glob("*.json"):
-            state = read(path)
+            state = json.loads(path.read_text(encoding="utf-8"))
             if state.get("project_id") == project_id and state.get("status") not in {"completed", "cancelled"}:
                 raise ValidationError("项目仍有结果回收任务，请完成或停止回收后再重命名、删除。")
-        for path in (self.index_path.parent / "research-tasks").glob("*.json"):
-            state = read(path)
-            if state.get("project_id") == project_id and state.get("status") not in {"completed", "cancelled", "failed"}:
-                raise ValidationError("项目仍有科研任务，请先完成或取消任务后再重命名、删除。")
 
     @_locked
     def read_file(self, name, fname):

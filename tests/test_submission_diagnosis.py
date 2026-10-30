@@ -155,7 +155,7 @@ def test_gateway_failure_preserves_command_version_exit_code_across_protocol(gat
         SshTransport.parse_gateway_document(json.dumps(documents[0]))
     evidence = parsed.value.detail["submission"]
     assert evidence["command"] == "cd -- /case && qsub ./run.job.sh"
-    assert evidence["gateway_version"] == "1.5.3"
+    assert evidence["gateway_version"] == "1.5.4"
     assert evidence["returncode"] == 191 and evidence["stderr"] == ERROR
     assert evidence["started_at"] and evidence["finished_at"]
 

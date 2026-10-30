@@ -151,6 +151,7 @@ class PendingSubmitStore:
     def create(self, *, server: str, directory: str, script: str,
                script_sha256: str = "", script_content: str = "",
                session_id: str = "",
+               chat_anchor: dict[str, Any] | None = None,
                ttl_seconds: int = DEFAULT_TTL_SECONDS) -> dict[str, Any]:
         import secrets
         entry = {
@@ -161,6 +162,7 @@ class PendingSubmitStore:
             "script_sha256": str(script_sha256 or ""),
             "script_content": str(script_content or ""),
             "session_id": str(session_id or ""),
+            "chat_anchor": dict(chat_anchor or {}),
             "created_at": _utcnow().isoformat(timespec="seconds"),
             "expires_at": (_utcnow() + timedelta(seconds=ttl_seconds)
                            ).isoformat(timespec="seconds"),
@@ -204,6 +206,8 @@ class PendingSubmitStore:
             "script_sha256": str(source.get("script_sha256") or ""),
             "script_content": str(source.get("script_content") or ""),
             "session_id": str(source.get("session_id") or ""),
+            "chat_anchor": dict(source.get("chat_anchor") or
+                                {"created_at": source.get("created_at", "")}),
             "created_at": now.isoformat(timespec="seconds"),
             "expires_at": (now + timedelta(seconds=ttl_seconds)
                            ).isoformat(timespec="seconds"),

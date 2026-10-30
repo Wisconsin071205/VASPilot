@@ -53,3 +53,13 @@ def test_uncertain_submission_is_visible_and_never_reclaimed(tmp_path, monkeypat
         store.claim(entry["id"])
     with pytest.raises(ValidationError):
         store.settle(entry["id"], "rejected")
+
+
+def test_regenerated_legacy_card_keeps_its_original_time(tmp_path):
+    store = PendingSubmitStore(tmp_path / "pending.json")
+    entry = store.create(server="cl9", directory="/case", script="run.sh")
+    store.settle(entry["id"], "expired")
+    fresh = store.regenerate(entry["id"])
+    assert fresh["chat_anchor"] == {"created_at": entry["created_at"]}
+    store.settle(fresh["id"], "expired")
+    assert store.regenerate(fresh["id"])["chat_anchor"] == fresh["chat_anchor"]

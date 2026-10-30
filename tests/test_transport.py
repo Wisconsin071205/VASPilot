@@ -122,13 +122,13 @@ class TestOpenConnectTerminal:
                 return 0, "", ""
             if joined.endswith("rsci-gateway version"):
                 return 0, json.dumps({
-                    "ok": True, "gateway_version": "1.3.4",
+                    "ok": True, "gateway_version": "1.5.4",
                     "protocol": "2"}), ""
             if cmd[0] == "scp":
                 return 0, "", ""
             if "mv -f" in joined:
                 return 0, json.dumps({
-                    "ok": True, "gateway_version": "1.3.5",
+                    "ok": True, "gateway_version": "1.5.5",
                     "protocol": "2"}), ""
             return 0, json.dumps({"ok": True, "servers": {}}), ""
 

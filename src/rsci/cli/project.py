@@ -3,7 +3,7 @@ from pathlib import Path
 
 from ..core.errors import ValidationError
 from ..core.project_paths import MAX_IMPORT_BYTES
-from ..workflow.research import project_store, prepare_csv_template
+from ..workflow.research import project_store
 
 
 def register(sub):
@@ -15,27 +15,7 @@ def register(sub):
     p.add_argument("name")
     p.add_argument("--kind", choices=["general", "vasp"], default="general")
     p.set_defaults(handler=lambda app, args: project_store(app.config, app.audit).create(args.name, kind=args.kind))
-    from ..workflow import knowledge
-    p = commands.add_parser("literature-search", help="public Crossref metadata search; does not verify claims")
-    p.add_argument("query")
-    p.set_defaults(handler=lambda app, args: knowledge.literature_search(args.query))
-    p = commands.add_parser("reference-add")
-    p.add_argument("name")
-    p.add_argument("--doi", required=True)
-    p.add_argument("--title", required=True)
-    p.set_defaults(handler=lambda app, args: knowledge.add_reference(app.config, args.name, args.doi, args.title, audit=app.audit))
-    p = commands.add_parser("reference-check", help="compare DOI/title with Crossref and record evidence, not claim verification")
-    p.add_argument("name")
-    p.add_argument("reference_id")
-    p.set_defaults(handler=lambda app, args: knowledge.check_reference(app.config, args.name, args.reference_id, audit=app.audit))
-    p = commands.add_parser("experiment")
-    p.add_argument("name")
-    p.add_argument("--title", required=True)
-    for key in ("method", "observations", "interpretation", "limitations", "plan-id"):
-        p.add_argument("--" + key, default="")
-    p.set_defaults(handler=lambda app, args: knowledge.record_experiment(app.config, args.name,
-        **{k: getattr(args, k) for k in ("title", "method", "observations", "interpretation", "limitations", "plan_id")}, audit=app.audit))
-    for action in ("files", "read", "write", "import", "csv-template"):
+    for action in ("files", "read", "write", "import"):
         p = commands.add_parser(action)
         p.add_argument("name")
         if action != "files":
@@ -43,8 +23,6 @@ def register(sub):
         if action in {"write", "import"}:
             p.add_argument("--source", required=True, help="explicit local source file")
             p.add_argument("--expected-sha256", default=None)
-        if action == "csv-template":
-            p.add_argument("--script", default="scripts/analyze.py")
         p.set_defaults(handler=handle)
 
 
@@ -54,8 +32,6 @@ def handle(app, args):
         return {"project": args.name, "kind": store.kind(args.name), "files": store.files(args.name)}
     if args.command == "read":
         return store.read_file(args.name, args.file)
-    if args.command == "csv-template":
-        return prepare_csv_template(app.config, args.name, args.file, script=args.script, audit=app.audit)
     source = Path(args.source).expanduser()
     if not source.is_file() or source.stat().st_size > MAX_IMPORT_BYTES:
         raise ValidationError("source file missing or exceeds 16 MiB")

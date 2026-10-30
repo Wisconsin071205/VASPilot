@@ -9,7 +9,7 @@ from typing import Any
 _SIGNATURES = (
     (re.compile(r"out of memory|oom-kill|oom_kill", re.I),
      "内存不足（OOM）", "提高内存申请、减少并行进程或检查体系规模。"),
-    (re.compile(r"time limit|due to time limit|walltime", re.I),
+    (re.compile(r"due to time limit|time limit (?:exceeded|reached)|walltime[^\n]*(?:exceeded|limit exceeded)", re.I),
      "超过时限", "核对运行时长和检查点，审阅新的 walltime 申请后再执行。"),
     (re.compile(r"no space left|disk quota exceeded", re.I),
      "磁盘空间或配额不足", "清理计算目录并检查工作区配额。"),

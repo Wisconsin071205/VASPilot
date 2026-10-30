@@ -748,7 +748,7 @@ class GatewayClient:
         name = self._require(server)
         limit = max(1, min(int(limit), 2000))
         return self._call("remote.list",
-                          ["list", "--server", name, self._resolve(name, path),
+                          ["list", "--server", name, self._resolve(name, path, read_only=True),
                            "--limit", str(limit)],
                           path=path)
 
@@ -757,7 +757,7 @@ class GatewayClient:
         name = self._require(server)
         cap = max(1, min(int(max_bytes), _TEXT_CAP_BYTES))
         result = self._call("remote.read",
-                            ["read", "--server", name, self._resolve(name, path)],
+                            ["read", "--server", name, self._resolve(name, path, read_only=True)],
                             path=path)
         content = str(result.get("content", ""))
         if len(content.encode("utf-8", "replace")) > cap:
@@ -769,14 +769,14 @@ class GatewayClient:
         name = self._require(server)
         lines = max(1, min(int(lines), 2000))
         return self._call("remote.tail",
-                          ["tail", "--server", name, self._resolve(name, path),
+                          ["tail", "--server", name, self._resolve(name, path, read_only=True),
                            "--lines", str(lines)], path=path)
 
     def find(self, path: str, *, pattern: str = "*", max_depth: int = 2,
              limit: int = 200, server: str | None = None) -> dict:
         name = self._require(server)
         return self._call("remote.find", [
-            "find", "--server", name, self._resolve(name, path),
+            "find", "--server", name, self._resolve(name, path, read_only=True),
             "--pattern", valid_glob(pattern),
             "--max-depth", str(max(1, min(max_depth, 8))),
             "--limit", str(max(1, min(limit, 2000)))], path=path)
@@ -784,13 +784,13 @@ class GatewayClient:
     def stat(self, path: str, *, server: str | None = None) -> dict:
         name = self._require(server)
         return self._call("remote.stat",
-                          ["stat", "--server", name, self._resolve(name, path)],
+                          ["stat", "--server", name, self._resolve(name, path, read_only=True)],
                           path=path)
 
     def du(self, path: str, *, server: str | None = None) -> dict:
         name = self._require(server)
         return self._call("remote.du",
-                          ["du", "--server", name, self._resolve(name, path)],
+                          ["du", "--server", name, self._resolve(name, path, read_only=True)],
                           path=path)
 
     def mkdir(self, path: str, *, server: str | None = None) -> dict:
@@ -895,7 +895,7 @@ class GatewayClient:
     def download(self, path: str, local_path: str | Path, *,
                  server: str | None = None, timeout: int = 600) -> dict:
         name = self._require(server)
-        source = self._resolve(name, path)
+        source = self._resolve(name, path, read_only=True)
         local = Path(local_path)
         if local.exists() or local.is_symlink():
             raise ValidationError(
@@ -1054,7 +1054,7 @@ class GatewayClient:
                       server: str | None = None) -> dict:
         name = self._require(server)
         return self._call("vasp.progress", [
-            "vasp-progress", "--server", name, self._resolve(name, directory)],
+            "vasp-progress", "--server", name, self._resolve(name, directory, read_only=True)],
             directory=directory)
 
     def vasp_live(self, directory: str, *, server: str | None = None) -> dict:
@@ -1182,9 +1182,13 @@ class GatewayClient:
                 **parsed}
 
     # ------------------------------------------------------------- internal
-    def _resolve(self, server: str, path: str) -> str:
-        """Accept an absolute remote path or a root-relative one."""
+    def _resolve(self, server: str, path: str, *, read_only: bool = False) -> str:
+        """Resolve names relative to the work root; only reads may leave it."""
         entry = self.server_entry(server)
+        if read_only and path.startswith("/"):
+            # The SSH account controls read access. Keep path validation, but
+            # do not mistake the default work directory for a read boundary.
+            return remote_path(path, remote_root="/")
         if not entry.remote_root:
             # no boundary known locally: only absolute paths that the gateway
             # will confine against its own effective root

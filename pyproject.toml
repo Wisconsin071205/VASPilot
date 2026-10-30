@@ -6,15 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "rsci"
 # The release version is defined once in the Python package.
 dynamic = ["version"]
-description = "RSCI 科研助手：数据、脚本、可审批分析与远端任务；VASP 专业模块可选"
+description = "RSCI 科研助手：远端服务器、项目文件与 VASP/Slurm 计算管理"
 requires-python = ">=3.11"
 license = { text = "Proprietary (research prototype)" }
-dependencies = ["pypdf==6.21.2", "pypdfium2==5.14.0"]
+dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
-literature = ["docling[rapidocr]==2.142.1", "rapidocr==3.10.0", "onnxruntime==1.31.0"]
-analysis = ["scipy==1.15.3"]
 desktop = ["pywebview>=6,<7"]
 materials = ["pymatgen", "custodian", "atomate2"]
 dispatch = ["dpdispatcher"]
@@ -36,8 +34,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "rsci.providers" = ["codex_bridge.mjs"]
+"rsci.agents" = ["builtin_skills/*/SKILL.md"]
 "rsci.ui" = ["static/*.html", "static/*.js"]
-"rsci.research" = ["*.lock", "*.py"]
 "rsci.desktop" = ["assets/*.ico", "assets/*.icns"]
 
 [tool.pytest.ini_options]

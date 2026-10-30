@@ -115,6 +115,9 @@ class ConversationStore:
         data.setdefault("compacted_messages", 0)
         data.setdefault("parent_session_id", "")
         data.setdefault("workflow_plans", [])
+        data.setdefault("workflow_plan_anchors", {})
+        if not isinstance(data["workflow_plan_anchors"], dict):
+            data["workflow_plan_anchors"] = {}
         if not isinstance(data["workflow_plans"], list) or any(
                 not isinstance(pid, str) or not re.fullmatch(r"[0-9a-f]{16}", pid)
                 for pid in data["workflow_plans"]):
@@ -170,6 +173,14 @@ class ConversationStore:
         return self.save(payload)
 
     @_session_locked
+    def set_research_workflow(self, session_id: str, selection: dict) -> dict:
+        payload = self.load(session_id)
+        if payload is None:
+            raise ValidationError("会话不存在")
+        payload["research_workflow"] = dict(selection)
+        return self.save(payload)
+
+    @_session_locked
     def set_project(self, session_id: str, project: str) -> dict[str, Any]:
         payload = self.load(session_id)
         if payload is None:
@@ -187,8 +198,27 @@ class ConversationStore:
             raise ValidationError("会话不存在或记录损坏，无法关联计划")
         if plan_id not in payload["workflow_plans"]:
             payload["workflow_plans"].append(plan_id)
+            payload["workflow_plan_anchors"][plan_id] = self._card_anchor(payload)
             return self.save(payload)
         return payload
+
+    @staticmethod
+    def _card_anchor(payload: dict) -> dict[str, Any]:
+        """Locate the reply without storing tool arguments or approval secrets."""
+        rows = payload.get("archived_messages", []) + payload.get("messages", [])
+        anchor: dict[str, Any] = {"created_at": _now()}
+        if rows:
+            turn = payload.get("turn", {})
+            index = len(rows) - 1
+            if turn.get("status") == "running":
+                index = next((i for i in range(len(rows) - 1, -1, -1)
+                              if rows[i].get("role") == "assistant" and
+                              rows[i].get("request_id") == turn.get("request_id")), index)
+            anchor.update(message_index=index, request_id=rows[index].get("request_id", ""))
+        return anchor
+
+    def card_anchor(self, session_id: str) -> dict[str, Any]:
+        return self._card_anchor(self.load(session_id) or {})
 
     def replace_project(self, old_project: str, new_project: str) -> int:
         """Retarget every saved session after a local project rename."""
@@ -226,7 +256,9 @@ class ConversationStore:
         branch["context_summary"] = str(source.get("context_summary") or "")
         branch["compacted_messages"] = int(source.get("compacted_messages") or 0)
         branch["parent_session_id"] = session_id
+        branch["research_workflow"] = dict(source.get("research_workflow", {"mode": "auto"}))
         branch["workflow_plans"] = list(source.get("workflow_plans", []))
+        branch["workflow_plan_anchors"] = dict(source.get("workflow_plan_anchors", {}))
         branch["branched_at"] = _now()
         return self.save(branch)
 
@@ -313,6 +345,8 @@ class ConversationStore:
                 if answer is not None:
                     row["content"] = str(answer)
                 row["status"] = turn["status"]
+                if "research_workflow" in changes:
+                    row["research_workflow"] = changes["research_workflow"]
                 if changes.get("error"):
                     row["error"] = str(changes["error"])
                 break

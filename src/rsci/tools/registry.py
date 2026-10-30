@@ -187,7 +187,7 @@ class ToolRegistry:
 
         # ---- servers / monitoring (read) ------------------------------------
         self._add(
-            "server_list", "List registered HPC servers and their bounded roots.", "read",
+            "server_list", "List registered HPC servers and their default work roots.", "read",
             {}, lambda a: client.servers())
         self._add(
             "server_status", "Check whether a server has a reusable SSH session.", "read",
@@ -209,12 +209,14 @@ class ToolRegistry:
             "remote_pwd", "Return the remote working root for a server.", "read",
             {"server": _server_param()}, lambda a: client.pwd(a.get("server")))
         self._add(
-            "remote_list", "List one remote directory under the server root.", "read",
+            "remote_list", "List one remote directory readable by the SSH account, "
+            "including paths outside remote_root.", "read",
             {"server": _server_param(), "path": _path_param("remote directory")},
             lambda a: client.list_dir(str(a["path"]), server=a.get("server")))
         self._add(
             "remote_read",
-            "Read a small remote text file. POTCAR and large scientific "
+            "Read a small remote text file, including outside remote_root when "
+            "the SSH account permits it. POTCAR and large scientific "
             "binaries are refused.", "read",
             {"server": _server_param(), "path": _path_param("remote file")},
             lambda a: self._read_text(a))
@@ -296,6 +298,18 @@ class ToolRegistry:
             lambda a: client.job_state(str(a["job_id"]), server=a.get("server")))
 
         # ---- vasp science (read) ----------------------------------------------
+        self._add(
+            "job_logs_collect",
+            "Automatically locate and read bounded job logs using submission-script "
+            "output paths, scheduler job IDs and built-in job-log-analysis knowledge. "
+            "Use after submission was accepted even when job_state is UNKNOWN. "
+            "Returns raw excerpts, paths, attribution, program receipts and missing evidence. "
+            "Does not call another model, execute scripts, submit jobs or modify remote files.",
+            "read",
+            {"server": _server_param(),
+             "job_id": {"type": "string", "pattern": r"^[0-9]{1,19}$"},
+             "directory": _path_param("optional known authorized job directory")},
+            self._job_logs)
         self._add(
             "vasp_progress",
             "Scientific progress of a remote calculation: ionic steps, "
@@ -485,28 +499,6 @@ class ToolRegistry:
         self._add("project_files", "List confined project files with size and SHA-256.", "read",
                   {"project": {"type": "string", "maxLength": 64}},
                   lambda a: {"files": self.context.project_store.files(self._project_name(a))})
-        from ..workflow.research import csv_preview, prepare_csv_template
-        self._add("research_csv_preview", "Preview only the first five CSV/TSV rows and column names; no analysis execution.", "read",
-                  {"project": {"type": "string"}, "file": {"type": "string"}},
-                  lambda a: csv_preview(self.context.project_store, self._project_name(a), str(a["file"])))
-        self._add("research_csv_template", "Save an editable, dependency-free descriptive CSV script. Does not execute or approve it. Never overwrites an existing script.", "write",
-                  {"project": {"type": "string"}, "file": {"type": "string"}, "script": {"type": "string"}},
-                  lambda a: prepare_csv_template(self.context.config, self._project_name(a), str(a["file"]),
-                      script=str(a.get("script") or "scripts/analyze.py"), audit=self.context.audit))
-        from ..workflow import knowledge
-        self._add("literature_search", "Search public Crossref bibliographic metadata (top 5). Sends only the query. Results are not verified citations or full text.", "read",
-                  {"query": {"type": "string", "maxLength": 400}}, lambda a: knowledge.literature_search(str(a["query"])))
-        self._add("reference_add", "Save a DOI and expected title in a general project's reference library as UNVERIFIED; never overwrites an existing DOI.", "write",
-                  {"project": {"type": "string"}, "doi": {"type": "string"}, "title": {"type": "string"}},
-                  lambda a: knowledge.add_reference(self.context.config, self._project_name(a), str(a["doi"]), str(a["title"]), audit=self.context.audit))
-        self._add("reference_check", "Retrieve Crossref metadata for an existing reference DOI and append a DOI/title comparison. Never verifies whether the paper supports a claim. Unavailable/mismatch means not verified.", "write",
-                  {"project": {"type": "string"}, "reference_id": {"type": "string"}},
-                  lambda a: knowledge.check_reference(self.context.config, self._project_name(a), str(a["reference_id"]), audit=self.context.audit))
-        self._add("experiment_record", "Save a general-project experiment record with method, observations, interpretation and limitations in SEPARATE fields. All entered prose remains unverified; optional plan_id binds recorded input/output hashes.", "write",
-                  {key: {"type": "string"} for key in ("project", "title", "method", "observations", "interpretation", "limitations", "plan_id")},
-                  lambda a: knowledge.record_experiment(self.context.config, self._project_name(a),
-                    **{k: str(a.get(k) or "") for k in ("title", "method", "observations", "interpretation", "limitations", "plan_id")}, audit=self.context.audit))
-
         # ---- skills (self-evolution) ----------------------------------------------------
         self._add(
             "skill_list", "List saved skills (name + description).", "read",
@@ -647,10 +639,12 @@ class ToolRegistry:
             raise ValidationError(
                 "workflow_prepare needs an active local project or spec.from_dir")
         result = engine.prepare(spec)
+        chat_anchor = {}
         if self.context.session_id:
             from ..agents.memory import ConversationStore
-            ConversationStore(self.context.config.chat_dir).bind_workflow_plan(
+            session = ConversationStore(self.context.config.chat_dir).bind_workflow_plan(
                 self.context.session_id, result["plan_id"])
+            chat_anchor = session["workflow_plan_anchors"].get(result["plan_id"], {})
         result.update({
             "status": "pending_approval",
             "requires_user_action": True,
@@ -661,6 +655,7 @@ class ToolRegistry:
         plan = result["plan"]
         result["chat_plan"] = {
             "plan_id": result["plan_id"],
+            "chat_anchor": chat_anchor,
             "plan_hash": result["plan_hash"],
             "files_hash": result["files_hash"],
             "server": plan.get("server", ""),
@@ -819,6 +814,12 @@ class ToolRegistry:
                        "error": str(exc)[:1000]}
         return analyze_submission(attempt, current)
 
+    def _job_logs(self, args: dict[str, Any]) -> dict:
+        from ..hpc.center import RemoteCenter
+        server = str(args.get("server") or self.context.config.default_server())
+        return RemoteCenter(self.context.config, self.context.client).logs(
+            server, str(args["job_id"]), directory=str(args.get("directory") or ""))
+
     def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
         server = str(args.get("server") or "")
         directory = str(args["directory"])
@@ -849,11 +850,16 @@ class ToolRegistry:
             script_sha = text_sha256(script_content)
         except Exception:
             script_content = ""  # card will show "content unavailable"
+        chat_anchor = {}
+        if self.context.session_id:
+            from ..agents.memory import ConversationStore
+            chat_anchor = ConversationStore(self.context.config.chat_dir).card_anchor(
+                self.context.session_id)
         entry = self.context.pending_store.create(
             server=server or self.context.config.default_server(),
             directory=directory, script=script,
             script_sha256=script_sha, script_content=script_content,
-            session_id=self.context.session_id)
+            session_id=self.context.session_id, chat_anchor=chat_anchor)
         return {
             "ok": True, "status": "pending_confirmation",
             "id": entry["id"], "expires_at": entry["expires_at"],

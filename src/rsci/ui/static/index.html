@@ -10,8 +10,8 @@
   const key = "rsci.ui.theme";
   const choices = new Set(["dark", "light", "sand", "forest", "system"]);
   const names = {dark:"深色", light:"浅色", sand:"暖砂", forest:"松林"};
-  const valid = value => choices.has(value) ? value : "dark";
-  let preference = "dark", saved = true, media = null;
+  const valid = value => choices.has(value) ? value : "light";
+  let preference = "light", saved = true, media = null;
   try { preference = valid(localStorage.getItem(key)); } catch (_) { saved = false; }
   try { media = window.matchMedia("(prefers-color-scheme: dark)"); } catch (_) {}
   function syncControls() {
@@ -413,6 +413,23 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .job-analysis.error{border-color:var(--err)}
 .job-analysis .ja-title{font-weight:600;margin-bottom:3px}
 .job-analysis ul{margin:5px 0 0 18px;padding:0}
+.job-log-panel{margin:18px 0 24px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.job-log-panel .row{flex-wrap:wrap;gap:10px}
+.job-log-panel h4{margin:0 12px 0 0}
+.job-log-panel [data-ai-result] h4{margin:22px 0 8px}
+.job-log-entry{margin:12px 0}
+.job-log-entry summary{cursor:pointer;overflow-wrap:anywhere}
+.job-log-entry pre{max-height:320px;overflow:auto;font-size:13px;line-height:1.6;tab-size:4}
+.job-log-path{overflow-wrap:anywhere;font-size:12px}
+.job-ai-text{white-space:pre-wrap;overflow-wrap:anywhere;max-width:75ch;line-height:1.7}
+@media(max-width:700px){
+  body:has(#v-jobs.on) #side{display:none}
+  #v-jobs .card{padding:12px;min-width:0}
+  #v-jobs .row{flex-wrap:wrap}
+  #v-jobs .btn{white-space:nowrap}
+  #fleet-table{display:block;overflow-x:auto}
+  .job-log-panel pre{max-width:100%}
+}
 .job-evidence{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
 .job-evidence dl{display:grid;grid-template-columns:minmax(100px,auto) minmax(0,1fr);gap:5px 16px;margin:10px 0}
 .job-evidence dt{color:var(--fg2)}
@@ -583,6 +600,12 @@ textarea:focus{outline:none;border-color:var(--acc)}
 .research-files small{display:block;color:var(--fg2);font-size:11px}
 .research-editor{min-width:0}.research-editor textarea{width:100%;min-height:300px;font:12px/1.7 var(--mono);tab-size:4}
 .research-editor pre{white-space:pre-wrap;overflow-wrap:anywhere}
+#v-workflows #rw-direction{min-height:110px;font:inherit;line-height:1.6}
+#v-workflows #rw-content{font:inherit;line-height:1.7}
+#rw-list button[aria-pressed="true"]{background:var(--bg3);color:var(--acc)}
+#workflow-choice{flex-wrap:wrap;margin-bottom:10px;gap:8px}
+#workflow-choice label{font-size:12px;color:var(--fg2)}
+#workflow-choice select{width:auto;min-width:150px}
 .research-form{border-top:1px solid var(--line);margin-top:24px;padding-top:18px}
 .research-form label{display:block;margin-top:10px;color:var(--fg2)}
 .research-form input,.research-form textarea{width:100%}
@@ -630,6 +653,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div class="tab" data-v="files">远端文件</div>
     <div class="tab" data-v="jobs">作业</div>
     <div class="tab" data-v="flow">任务中心</div>
+    <div class="tab" data-v="workflows">科研工作流</div>
     <div class="tab" data-v="monitor">监测</div>
     <div class="tab" data-v="cfg">⚙ 配置</div>
   </nav>
@@ -661,9 +685,16 @@ textarea:focus{outline:none;border-color:var(--acc)}
     <div id="chatlog">
       <div class="msg bot"><div class="av">R</div><div class="bd"><div class="who">RSCI 科研助手</div>
         <div class="bubble">你好，我是 RSCI 科研助手。可以帮你整理研究数据、编写分析脚本、记录方法与结果，也能管理远端计算任务。
-从「新建项目」开始，导入 CSV 后生成可编辑的分析脚本。执行前由你审阅代码和输入文件、明确批准；运行成功不等于科学结论已验证。</div></div></div>
+连接服务器后，可以管理远端文件、提交计算任务，并在聊天中查看运行状态和结果。</div></div></div>
     </div>
     <div id="chatbar">
+      <div class="row" id="workflow-choice">
+        <label for="chatworkflow">科研工作流</label>
+        <select id="chatworkflow" onchange="changeChatWorkflow()" style="max-width:280px">
+          <option value="auto">自动匹配</option><option value="off">不使用工作流</option>
+        </select>
+        <span id="chatworkflowstatus" class="research-note" role="status">发送后按问题自动匹配</span>
+      </div>
       <div id="chatattachments" aria-live="polite"></div>
       <div id="chatbox">
         <input id="chatfileinput" type="file" multiple hidden onchange="addChatFiles(this.files)">
@@ -685,11 +716,46 @@ textarea:focus{outline:none;border-color:var(--acc)}
     </div>
   </section>
 
+  <section class="view" id="v-workflows">
+    <h2>科研工作流</h2>
+    <p class="research-note">把研究方法保存为可复用的指令。对话中的 Agent 会按流程准备输入、管理计算并整理结果。</p>
+    <div class="row" style="margin-bottom:18px">
+      <button class="btn" id="rw-new" onclick="newResearchWorkflow()">新建工作流</button>
+      <button class="btn ghost" onclick="loadResearchWorkflows()">刷新列表</button>
+      <span id="rw-status" class="research-note" role="status" aria-live="polite"></span>
+    </div>
+    <div class="research-layout">
+      <div id="rw-list" class="research-files" aria-label="科研工作流列表"></div>
+      <div class="research-editor">
+        <form id="rw-form" onsubmit="event.preventDefault();saveResearchWorkflow()">
+          <div class="fg"><label for="rw-title">工作流名称</label>
+            <input id="rw-title" required placeholder="例如：二维材料吸附能计算" oninput="RW_DIRTY=true"></div>
+          <div class="fg"><label for="rw-direction">科研方向与要求</label>
+            <textarea id="rw-direction" required rows="4" style="width:100%" oninput="RW_DIRTY=true"
+              placeholder="描述研究目标、使用的软件、已有数据和希望遵循的方法。例如：比较不同吸附位点，先优化结构，再计算吸附能并整理结果。"></textarea></div>
+          <div class="row" style="margin:12px 0">
+            <button type="button" class="btn ghost" id="rw-generate" onclick="generateResearchWorkflow()">用当前模型生成指令</button>
+            <span class="research-note">生成后可编辑，保存后供对话选用</span>
+          </div>
+          <div class="fg"><label for="rw-content">工作流指令 · Markdown</label>
+            <textarea id="rw-content" required rows="18" style="width:100%;min-height:320px;line-height:1.7" oninput="RW_DIRTY=true"
+              placeholder="在这里编写固定的研究步骤，或让模型根据上方方向生成。材料、路径和资源等随任务变化的内容可以使用变量。"></textarea></div>
+          <div class="row" style="margin-top:14px">
+            <button class="btn" type="submit" id="rw-save">保存工作流</button>
+            <button class="btn ghost" type="button" id="rw-use" onclick="useResearchWorkflow()" disabled>在当前对话使用</button>
+            <button class="btn ghost" type="button" id="rw-export" onclick="exportResearchWorkflow()" disabled>导出 SKILL.md</button>
+            <button class="btn ghost" type="button" id="rw-delete" onclick="deleteResearchWorkflow()" disabled>删除</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
   <section class="view" id="v-research">
     <!-- Existing Operate surface extension: inherit the four token palettes and compact controls.
          Files lead to editable code, immutable approval, then separately reported execution and results. -->
     <h2>项目文件</h2>
-    <p class="research-note">数据、脚本、笔记、结果与参考文献保存在本机项目目录。保存文件不会自动上传到服务器或执行代码。</p>
+    <p class="research-note">项目文件保存在本机项目目录。保存文件不会自动上传到服务器或执行代码。</p>
     <div class="row">
       <div class="fg"><label for="researchproject">通用科研项目</label><select id="researchproject" onchange="selectResearchProject()"></select></div>
       <button class="btn ghost" onclick="openProjectModal()">新建项目</button>
@@ -697,7 +763,7 @@ textarea:focus{outline:none;border-color:var(--acc)}
       <button class="btn" onclick="document.getElementById('researchimport').click()">导入数据</button>
       <input id="researchimport" type="file" hidden onchange="importResearchFile(this)">
     </div>
-    <p id="researchstatus" class="research-note" role="status" aria-live="polite">选择项目后导入 CSV，或创建脚本和研究笔记。</p>
+    <p id="researchstatus" class="research-note" role="status" aria-live="polite">选择项目后导入文件，或创建脚本和笔记。</p>
     <p id="researchlocation" class="research-note wrap" aria-live="polite"></p>
     <div class="research-layout">
       <div class="research-files" id="researchfiles" aria-label="项目文件列表"></div>
@@ -710,7 +776,6 @@ textarea:focus{outline:none;border-color:var(--acc)}
         <div class="row" style="margin-top:10px">
           <button class="btn" id="researchsave" onclick="saveResearchFile()">保存文件</button>
           <button class="btn ghost" id="researchdownload" onclick="downloadResearchFile()">下载原文件</button>
-          <button class="btn ghost" id="researchtemplate" onclick="createCsvAnalysis()">从 CSV 生成分析脚本</button>
         </div>
         <div class="research-form">
           <h3>准备 Python 分析</h3>
@@ -726,24 +791,6 @@ results/means.svg</textarea>
           </details>
           <button class="btn" id="researchprepare" onclick="prepareResearchPlan()" style="margin-top:14px">生成待审批计划</button>
         </div>
-        <details class="research-form"><summary>文献与实验记录</summary>
-          <p class="research-note">文献检索使用 Crossref 公开元数据。核对仅比较 DOI 与标题，不代表全文或引用论点已验证。</p>
-          <label for="literaturequery">文献关键词或标题（仅查询词发送至 Crossref）</label><input id="literaturequery" maxlength="400">
-          <button class="btn ghost" onclick="searchLiterature()">检索文献</button><div id="literatureresults" class="research-note" role="status"></div>
-          <label for="referencetitle">预期文献标题</label><input id="referencetitle" maxlength="1000">
-          <label for="referencedoi">DOI</label><input id="referencedoi" maxlength="256" placeholder="10.xxxx/xxxx">
-          <button class="btn ghost" onclick="saveReference()">保存待核对文献</button>
-          <button class="btn ghost" onclick="checkSelectedReference()">核对当前文献文件</button>
-          <p class="research-note">保存后选择 references/ 中的条目，再点核对。每次核对保留时间、来源、比对结果与元数据哈希。</p>
-          <h3>记录实验</h3>
-          <label for="experimenttitle">实验记录标题</label><input id="experimenttitle" maxlength="200">
-          <label for="experimentmethod">方法</label><textarea id="experimentmethod" maxlength="8000"></textarea>
-          <label for="experimentobservations">实际观察（不要填模型推测）</label><textarea id="experimentobservations" maxlength="8000"></textarea>
-          <label for="experimentinterpretation">解释与假设</label><textarea id="experimentinterpretation" maxlength="8000"></textarea>
-          <label for="experimentlimitations">局限与待核实事项</label><textarea id="experimentlimitations" maxlength="8000"></textarea>
-          <label for="experimentplan">关联计划 ID（可空）</label><input id="experimentplan" maxlength="16">
-          <button class="btn ghost" onclick="saveExperiment()">保存实验记录</button>
-        </details>
       </div>
     </div>
   </section>
@@ -898,7 +945,7 @@ results/means.svg</textarea>
     <div class="card">
       <div class="row">
         <div class="fg"><label>服务器</label><select id="fsrv" onchange="pickFileServer(true)"></select></div>
-        <div class="fg path-field" style="flex:1"><label>远端路径（须在服务器根内）</label>
+        <div class="fg path-field" style="flex:1"><label title="按远端账号权限浏览；工作目录之外可读取和下载">远端路径（按账号权限浏览）</label>
           <div class="path-actions"><input id="fpath" class="path-input" style="width:420px" placeholder="请选择远端目录" readonly
             title="通过弹窗选择远端目录" onclick="openRemotePathPicker({targetId:'fpath',server:document.getElementById('fsrv').value,kind:'directory',title:'选择文件页目录'})">
             <button class="btn ghost path-btn" onclick="openRemotePathPicker({targetId:'fpath',server:document.getElementById('fsrv').value,kind:'directory',title:'选择文件页目录'})">选择目录</button></div></div>
@@ -959,7 +1006,7 @@ results/means.svg</textarea>
     <div class="card"><h2>活动作业</h2><table id="jobtable">
       <thead><tr><th>Job ID</th><th>状态</th><th>已运行</th><th>分区</th><th>名称 / 目录</th><th>诊断</th></tr></thead>
       <tbody></tbody></table></div>
-    <div class="card"><h2>历史作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（只显示已结束作业；本机台账会保留集群已清除的记录；自动分析提供调度记录和运行证明）</span></h2>
+    <div class="card"><h2>历史与待核对作业 <span style="font-size:12px;color:var(--fg2);font-weight:normal">（保留已结束和调度器已查不到的本机记录；状态待核对不代表计算失败，运行证明可查看日志）</span></h2>
       <div id="rechidden" style="font-size:11px;color:var(--fg2)"></div>
       <div id="jobhistorynote" style="font-size:12px;color:var(--fg2);margin-bottom:8px"></div>
       <table id="rectable">
@@ -1427,7 +1474,7 @@ results/means.svg</textarea>
       <div class="fg"><label>服务器</label><select id="pathpickserver" onchange="resetRemotePickerServer()"></select></div>
       <div class="fg" style="flex:3"><label>当前目录</label>
         <div class="path-actions"><input id="pathpickpath" class="path-input" readonly>
-          <button class="btn ghost path-btn" onclick="remotePickerUp()">上一级</button>
+          <button class="btn ghost path-btn" id="pathpickup" onclick="remotePickerUp()">上一级</button>
           <button class="btn ghost path-btn" onclick="loadRemotePickerPath()">刷新</button></div>
       </div>
     </div>
@@ -1596,7 +1643,7 @@ async function openRemotePathPicker({targetId, server = "", kind = "directory",
   REMOTE_PICKER = {
     targetId, kind, title, server: requestedServer,
     initialPath: initialPath || target?.value?.trim() || "",
-    root: "", path: "", selectedPath: "", onSelect
+    root: "", path: "", selectedPath: "", requestId: 0, onSelect
   };
   document.getElementById("pathpicktitle").textContent = title;
   document.getElementById("pathpickuse").textContent =
@@ -1613,15 +1660,20 @@ function closePathPicker() {
 
 async function resetRemotePickerServer(firstOpen = false) {
   if (!REMOTE_PICKER) return;
+  const picker = REMOTE_PICKER;
+  const requestId = ++picker.requestId;
   const server = document.getElementById("pathpickserver").value;
-  REMOTE_PICKER.server = server;
-  REMOTE_PICKER.selectedPath = "";
+  picker.server = server;
+  picker.path = picker.selectedPath = "";
+  document.getElementById("pathpickuse").disabled = true;
+  document.getElementById("pathpickup").disabled = true;
   let root = remoteRootOf(server);
   if (!root) {
     const r = await api("remote.pwd", {server}, true);
+    if (REMOTE_PICKER !== picker || picker.requestId !== requestId) return;
     if (r.ok) root = String(r.root || r.pwd || "").trim();
   }
-  REMOTE_PICKER.root = root;
+  picker.root = root;
   if (!root) {
     document.getElementById("pathpickhint").textContent =
       "无法取得服务器根目录，请先连接该服务器。";
@@ -1638,13 +1690,19 @@ async function resetRemotePickerServer(firstOpen = false) {
 
 async function loadRemotePickerPath(path = "") {
   if (!REMOTE_PICKER) return;
-  const requested = String(path || REMOTE_PICKER.path || REMOTE_PICKER.root || "").trim();
+  const picker = REMOTE_PICKER;
+  const requested = String(path || picker.path || picker.root || "").trim();
   if (!requested) return;
+  const requestId = ++picker.requestId;
   const hint = document.getElementById("pathpickhint");
   hint.textContent = "正在读取远端目录…";
-  const r = await api("remote.list", {server: REMOTE_PICKER.server, path: requested}, true);
+  document.getElementById("pathpickuse").disabled = true;
+  document.getElementById("pathpickup").disabled = true;
+  const r = await api("remote.list", {server: picker.server, path: requested}, true);
+  if (REMOTE_PICKER !== picker || picker.requestId !== requestId) return;
   if (!r.ok) {
     hint.textContent = r.error?.message || "无法读取远端目录";
+    document.getElementById("pathpickup").disabled = !parentDir(picker.path);
     document.getElementById("pathpickentries").innerHTML =
       `<div class="pathpick-empty">请选择可访问的目录，或先完成服务器连接</div>`;
     return;
@@ -1652,6 +1710,8 @@ async function loadRemotePickerPath(path = "") {
   REMOTE_PICKER.path = String(r.path || requested);
   REMOTE_PICKER.selectedPath = "";
   document.getElementById("pathpickpath").value = REMOTE_PICKER.path;
+  document.getElementById("pathpickuse").disabled = picker.kind === "file";
+  document.getElementById("pathpickup").disabled = !parentDir(picker.path);
   hint.textContent = REMOTE_PICKER.kind === "file"
     ? "进入目录后，在文件行点击“选择文件”；文件夹可继续下钻。"
     : "进入目录后点击“选择此目录”，或使用底部的“使用当前目录”。";
@@ -1661,17 +1721,18 @@ async function loadRemotePickerPath(path = "") {
 function remotePickerUp() {
   if (!REMOTE_PICKER) return;
   const parent = parentDir(REMOTE_PICKER.path);
-  if (!parent || (REMOTE_PICKER.root && parent.length < REMOTE_PICKER.root.length))
-    return toast("已到服务器根目录边界", "");
-  loadRemotePickerPath(parent);
+  if (!parent) return toast("已到文件系统根目录 /", "");
+  return loadRemotePickerPath(parent);
 }
 
 function remotePickerChoose(path, kind) {
   if (!REMOTE_PICKER) return;
+  document.getElementById("pathpickuse").disabled = false;
   if (kind === "directory") {
     REMOTE_PICKER.selectedPath = path;
     REMOTE_PICKER.path = path;
     document.getElementById("pathpickpath").value = path;
+    document.getElementById("pathpickup").disabled = !parentDir(path);
     document.getElementById("pathpickhint").textContent =
       "已选目录：点击底部“使用当前目录”完成选择。";
   } else {
@@ -1706,7 +1767,7 @@ function renderRemotePickerEntries(entries) {
   }
   for (const entry of entries) {
     const isDir = entry.type === "dir";
-    const full = `${REMOTE_PICKER.path.replace(/\/$/, "")}/${entry.name}`;
+    const full = remoteChildPath(REMOTE_PICKER.path, entry.name);
     const row = document.createElement("div");
     row.className = "pathpick-row";
     const name = document.createElement("button");
@@ -1754,6 +1815,7 @@ document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t.dataset.v));
   if (t.dataset.v === "chat") loadSessions();
+  if (t.dataset.v === "workflows") loadResearchWorkflows();
   if (t.dataset.v === "monitor") ensureMonitor();
   if (t.dataset.v === "cfg") loadSettings();
   if (t.dataset.v === "jobs") { if (activeProjectKind() === "vasp") loadCampaigns(true); loadRemoteJobs(true); }
@@ -2015,22 +2077,30 @@ function parentDir(path) {
   // parent from the server-normalized absolute path; never emits ".."
   const trimmed = String(path || "").replace(/\/+$/, "");
   const idx = trimmed.lastIndexOf("/");
-  if (idx < 1) return "";
-  return trimmed.slice(0, idx) || "";
+  if (idx < 0) return "";
+  return trimmed.slice(0, idx) || "/";
 }
+function remoteChildPath(directory, name) {
+  return `${String(directory || "").replace(/\/+$/, "")}/${name}`;
+}
+function remotePathInWorkRoot(server, path) {
+  const root = remoteRootOf(server).replace(/\/+$/, "");
+  return !root || path === root || path.startsWith(root + "/");
+}
+let FILE_BROWSE_VERSION = 0;
 async function browse() {
+  const version = ++FILE_BROWSE_VERSION;
   const server = document.getElementById("fsrv").value;
   const path = document.getElementById("fpath").value.trim();
   if (DU_RUN) DU_RUN.cancel = true;  // 列表即将刷新，批量测量目标失效
   const r = await api("remote.list", {server, path});
-  if (!r.ok) return;
+  if (version !== FILE_BROWSE_VERSION || server !== document.getElementById("fsrv").value || !r.ok) return;
   document.getElementById("fpath").value = r.path;
-  const root = remoteRootOf(server);
   const parent = parentDir(r.path);
-  const upAllowed = !!parent && (!root || parent.length >= root.length);
+  const upAllowed = !!parent;
   document.getElementById("fup").disabled = !upAllowed;
   document.getElementById("fup").title = upAllowed
-    ? `返回 ${parent}` : "已在服务器根目录";
+    ? `返回 ${parent}` : "已到文件系统根目录 /";
   let rows = "";
   const menuBtn = (p, t) =>
     `<td class="mono" style="width:34px;cursor:pointer" title="更多操作"
@@ -2044,15 +2114,15 @@ async function browse() {
   }
   rows += (r.entries || []).map(e => `
     <tr data-file-entry="1" data-name="${esc(e.name)}"
-      oncontextmenu="rowMenu(event,'${esc(server)}','${esc(r.path)}/${esc(e.name)}','${e.type}')">
+      oncontextmenu="rowMenu(event,'${esc(server)}','${esc(remoteChildPath(r.path, e.name))}','${e.type}')">
       <td class="mono" style="cursor:${e.type === "dir" ? "pointer" : "default"};${e.type === "dir" ? "color:var(--acc)" : ""}"
-      ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(r.path)}/${esc(e.name)}';browse()"` : `onclick="readFile('${esc(server)}','${esc(r.path)}/${esc(e.name)}')"`}>${esc(e.name)}</td>
+      ${e.type === "dir" ? `onclick="document.getElementById('fpath').value='${esc(remoteChildPath(r.path, e.name))}';browse()"` : `onclick="readFile('${esc(server)}','${esc(remoteChildPath(r.path, e.name))}')"`}>${esc(e.name)}</td>
     <td>${e.type === "dir" ? "目录" : "文件"}</td>
     <td class="mono">${e.type === "dir"
-      ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" data-server="${esc(server)}" data-path="${esc(r.path)}/${esc(e.name)}" onclick="measureSize(this)">测量</span>`
+      ? `<span style="cursor:pointer;color:var(--acc)" title="点击测量该目录的实际大小（du，大目录可能较慢）" data-server="${esc(server)}" data-path="${esc(remoteChildPath(r.path, e.name))}" onclick="measureSize(this)">测量</span>`
       : fmtBytes(Number(e.size))}</td>
     <td class="mono">${esc((e.mtime || "").slice(0, 19))}</td>
-    ${menuBtn(`${esc(r.path)}/${esc(e.name)}`, e.type)}</tr>`).join("");
+    ${menuBtn(remoteChildPath(r.path, e.name), e.type)}</tr>`).join("");
   document.querySelector("#filetable tbody").innerHTML = rows
     || `<tr><td colspan="5" class="empty">空目录</td></tr>`;
   document.querySelector("#filetable tbody").dataset.loaded = "1";
@@ -2088,20 +2158,21 @@ function rowMenu(ev, server, path, type) {
   ev.preventDefault();
   ev.stopPropagation();  // 否则冒泡到 document 的 click 会立即关掉菜单
   const menu = document.getElementById("rowmenu");
+  const inWorkRoot = remotePathInWorkRoot(server, path);
   const viaVlab = (STATE.servers || []).some(s => s.name === server &&
     s.route !== "direct");
   const items = type === "dir" ? [
-    ...(viaVlab ? [["☁ 通过 Vlab 打开完整工作区",
+    ...(viaVlab && inWorkRoot ? [["☁ 通过 Vlab 打开完整工作区",
       `openFullWorkspace('${esc(path)}')`]] : []),
-    ["🗂 在 VS Code 中以虚拟目录打开",
-     `openSafeVscode('${esc(path)}','folder')`],
+    ...(inWorkRoot ? [["🗂 在 VS Code 中以虚拟目录打开",
+     `openSafeVscode('${esc(path)}','folder')`]] : []),
     ["📋 复制远端路径", `copyRemotePath('${esc(path)}')`],
     ["📏 查看目录大小", `showDirectorySize('${esc(server)}','${esc(path)}')`],
     ["↘ 进入此目录",
      `document.getElementById('fpath').value='${esc(path)}';browse()`],
   ] : [
-    ["📝 在 VS Code 中安全编辑",
-     `openSafeVscode('${esc(path)}','file')`],
+    ...(inWorkRoot ? [["📝 在 VS Code 中安全编辑",
+     `openSafeVscode('${esc(path)}','file')`]] : []),
     ["👁 在 VS Code 中只读查看", `readFile('${esc(server)}','${esc(path)}')`],
     ["⬇ 下载", `downloadRemoteFile('${esc(server)}','${esc(path)}')`],
     ["📋 复制远端路径", `copyRemotePath('${esc(path)}')`],
@@ -2282,14 +2353,10 @@ async function readFile(server, path) {
   document.getElementById("readerbody").textContent = r.content || "(空文件)";
 }
 function goUp() {
-  const server = document.getElementById("fsrv").value;
   const parent = parentDir(document.getElementById("fpath").value);
   if (!parent) return;
-  const root = remoteRootOf(server);
-  if (root && parent.length < root.length)
-    return toast("已在服务器根目录边界内", "err");
   document.getElementById("fpath").value = parent;
-  browse();
+  return browse();
 }
 
 /* ===================== 作业 ===================== */
@@ -2309,7 +2376,7 @@ function jobAnalysisRows(rows, history = false) {
     const terminal = JOB_TERMINAL.has(String(j.state || "").toUpperCase());
     return `
     <tr><td class="mono">${esc(j.job_id)}</td>
-    <td>${badge(j.state, j.state === "RUNNING" || j.state === "COMPLETED" ? "ok" :
+    <td>${badge(j.state === "UNKNOWN" ? "状态待核对" : j.state, j.state === "RUNNING" || j.state === "COMPLETED" ? "ok" :
       JOB_TERMINAL.has(String(j.state || "").toUpperCase()) ? "err" : "info")}</td>
     ${history ? `<td class="mono" title="${esc(START_SRC[j.start_source] || "")}">${esc(fmtWhen(j.started_at)) || "—"}</td>
       <td class="mono">${jobDuration(j)}</td><td class="mono">${jobEnd(j)}</td>`
@@ -2332,7 +2399,7 @@ async function analyzeJob(button) {
   const box = detailRow.querySelector(".job-analysis");
   detailRow.style.display = "";
   box.className = "job-analysis running";
-  box.textContent = "正在调取 Slurm 运行数据和日志，整理运行证明…";
+  box.textContent = "正在调取调度器记录和运行日志，整理运行证明…";
   button.disabled = true;
   try {
     const r = await api("job.analyze", {server, directory,
@@ -2443,12 +2510,17 @@ async function loadJobs(silent = false) {
       const activeIds = new Set((recent.active_job_ids || []).map(String));
       for (const job of jobs.jobs || []) activeIds.add(String(job.job_id || ""));
       const history = (recent.jobs || []).filter(j =>
-        JOB_TERMINAL.has(String(j.state || "").toUpperCase()) &&
+        (JOB_TERMINAL.has(String(j.state || "").toUpperCase()) ||
+         String(j.state || "").toUpperCase() === "UNKNOWN") &&
         !activeIds.has(String(j.job_id || "")));
       document.querySelector("#rectable tbody").innerHTML =
-        jobAnalysisRows(history, true) || `<tr><td colspan="7" class="empty">无已结束作业（查询时会自动登记）</td></tr>`;
-      if (recent.warning) document.getElementById("jobhistorynote").textContent =
-        "调度器历史接口暂不可用；当前显示本机台账，活动队列不受影响。";
+        jobAnalysisRows(history, true) || `<tr><td colspan="7" class="empty">暂无历史或待核对记录</td></tr>`;
+      const notes = [];
+      if (history.some(j => j.state === "UNKNOWN")) notes.push(
+        "部分作业已不在调度器记录中；保留提交记录，可通过运行证明核对结果。");
+      if (recent.warning) notes.push(
+        "调度器历史接口暂不可用；当前显示本机台账，活动队列不受影响。");
+      document.getElementById("jobhistorynote").textContent = notes.join(" ");
     } else {
       document.querySelector("#rectable tbody").innerHTML = `<tr><td colspan="7" class="empty">历史作业读取失败：${esc(recent.error?.message || "未知错误")}。请再次点击“查询作业”。</td></tr>`;
     }
@@ -2669,8 +2741,8 @@ async function dpBrowse(path) {
   if (!r.ok) return;
   DP.path = r.path;
   document.getElementById("dpath").textContent = `${DP.server}:${r.path}`;
-  const root = remoteRootOf(DP.server), parent = parentDir(r.path);
-  const up = !!parent && (!root || parent.length >= root.length);
+  const parent = parentDir(r.path);
+  const up = !!parent;
   const entries = r.entries || [];
   const dirs = entries.filter(e => e.type === "dir").map(e => e.name).sort();
   const names = new Set(entries.map(e => e.name));
@@ -3228,6 +3300,7 @@ function setChatNotice(text = "", action = null, label = "查看原回答") {
 }
 function setChatBusy(busy) {
   CHAT_ACTIVE = busy;
+  document.getElementById("chatworkflow").disabled = busy;
   const button = document.getElementById("sendbtn");
   button.disabled = false;
   button.textContent = busy ? "停止" : "发送";
@@ -3276,6 +3349,11 @@ async function pollChatView(view) {
     view.pollDelay = Math.min((view.pollDelay || 1500) * 2, 10000);
   } else {
     const turn = r.turn || {};
+    if (turn.research_workflow) {
+      showActiveResearchWorkflow(turn.research_workflow);
+      addResearchWorkflowLabel(view.bubble, turn.research_workflow);
+    }
+    view.log._workflowAnchors = {...view.log._workflowAnchors, ...r.workflow_plan_anchors};
     restoreWorkflowCards(r.workflow_plans, view.session_id, SESSION_OPEN_VERSION);
     if (turn.request_id !== view.request_id && !turn.active) {
       detachChatView();
@@ -3382,9 +3460,12 @@ async function sendChat(override = null) {
   input.value = "";
   CHAT_ATTACHMENTS = []; renderChatAttachments(); saveChatDraft();
   setChatNotice("正在发送…");
-  addMsg("user", shownText);
+  CHAT_REQUEST_ID = globalThis.crypto?.randomUUID?.() ||
+    `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const messageMeta = {request_id:CHAT_REQUEST_ID, at:new Date().toISOString()};
+  addMsg("user", shownText, messageMeta);
   const log = document.getElementById("chatlog");
-  const botBody = addMsg("bot", "");
+  const botBody = addMsg("bot", "", messageMeta);
   const bubble = botBody.querySelector(".bubble");
   bubble.innerHTML = '<span class="cursor"></span>';
   // 整个回合的过程只占一行：脉动点 + 此刻在做什么 + 用时。
@@ -3409,8 +3490,6 @@ async function sendChat(override = null) {
   const runId = "r" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
   CHAT_RUN = runId;
   CHAT_ACTIVE = true;
-  CHAT_REQUEST_ID = globalThis.crypto?.randomUUID?.() ||
-    `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const view = {session_id:sessionId, request_id:CHAT_REQUEST_ID, draft:LAST_CHAT_DRAFT,
     bubble, log, controller:new AbortController(), lastFrame:Date.now(), terminal:false};
   CHAT_VIEW = view;
@@ -3427,6 +3506,7 @@ async function sendChat(override = null) {
       method: "POST",
       headers: {"Content-Type": "application/json", "X-RSCI-Token": TOKEN},
       body: JSON.stringify({provider: currentProvider(), message: text,
+                             research_workflow: chatWorkflowSelection(),
                              session_id: sessionId,
                              attachments: outgoingFiles,
                              request_id: view.request_id, run_id: runId}),
@@ -3509,6 +3589,11 @@ function retryLastChat() {
   restoreLastChatDraft();
 }
 function handleChatEvent(ev, bubble, log, setAcc) {
+  if (ev.type === "research_workflow") {
+    showActiveResearchWorkflow(ev);
+    addResearchWorkflowLabel(bubble, ev);
+    return;
+  }
   if (ev.type === "meta") {
     const mode = ev.mode === "full" ? "完全" : "仅分析";
     bubble.dataset.meta = `${ev.provider} · ${mode}`;
@@ -3539,7 +3624,8 @@ function handleChatEvent(ev, bubble, log, setAcc) {
     }
     if (["workflow_prepare", "research_prepare"].includes(ev.tool) && ev.ok !== false &&
         (ev.outcome?.chat_plan || ev.outcome?.plan))
-      addWorkflowPlanCard(log, ev.outcome);
+      addWorkflowPlanCard(log, ev.outcome, ev.outcome.chat_plan?.chat_anchor || {
+        request_id:bubble.closest(".msg")?.dataset.requestId, created_at:new Date().toISOString()});
   } else if (ev.type === "final") {
     if (bubble.dataset.finalized === "1") return;
     bubble.dataset.finalized = "1";
@@ -3643,6 +3729,51 @@ function addToolCard(log, ev) {
 const WORKFLOW_STEP_LABELS = {snapshot:"固定输入快照", execute:"执行 Python", collect:"回收结果", mkdir:"创建目录", upload:"上传文件", validate:"校验输入",
   submit:"提交作业", monitor:"监测作业", progress:"检查科学进度",
   download:"下载结果", parse:"解析结果"};
+function chatCardMessage(log, anchor, reference, createdAt) {
+  const messages = [...log.querySelectorAll(".msg")];
+  const bots = messages.filter(node => node.classList.contains("bot"));
+  if (anchor.request_id) {
+    const reply = bots.find(node => node.dataset.requestId === anchor.request_id);
+    if (reply) return reply;
+  }
+  if (Number.isInteger(anchor.message_index)) {
+    const message = messages.find(node => node.dataset.messageIndex === String(anchor.message_index));
+    if (message) return message;
+  }
+  // Older sessions saved only card IDs. Prefer an explicit mention to a time estimate.
+  if (reference) {
+    const reply = bots.find(node => (node.querySelector(".bubble")?.dataset.acc || "").includes(reference));
+    if (reply) return reply;
+  }
+  const when = Date.parse(anchor.created_at || createdAt || "");
+  if (Number.isFinite(when)) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const node = messages[i];
+      if (!node.classList.contains("user") || !(Date.parse(node.dataset.at) <= when)) continue;
+      // Legacy assistant timestamps may be later than the card's creation.
+      for (let j = i + 1; j < messages.length; j++) {
+        if (messages[j].classList.contains("user")) break;
+        if (messages[j].classList.contains("bot")) return messages[j];
+      }
+      return node;
+    }
+  }
+  return null;
+}
+function placeChatCard(log, card, anchor = {}, reference = "", createdAt = "") {
+  const message = chatCardMessage(log, anchor, reference, createdAt);
+  card.dataset.cardTime = String(Date.parse(anchor.created_at || createdAt || "") || 0);
+  // Records with no usable anchor stay before the transcript, never below newer replies.
+  let next = message ? message.nextElementSibling : log.firstElementChild;
+  while (next && !next.classList.contains("msg")) {
+    if (next.dataset.cardTime !== undefined &&
+        (Number(next.dataset.cardTime) > Number(card.dataset.cardTime) ||
+         (next.dataset.cardTime === card.dataset.cardTime && next.id > card.id))) break;
+    next = next.nextElementSibling;
+  }
+  log.insertBefore(card, next);
+  followChatScroll(log);
+}
 async function restoreWorkflowCards(planIds, sessionId, version) {
   for (const planId of planIds || []) {
     if (sessionId !== CURRENT_SESSION || version !== SESSION_OPEN_VERSION) return;
@@ -3660,14 +3791,16 @@ async function restoreWorkflowCards(planIds, sessionId, version) {
         <p>${esc(result.error?.message || "无法核对计划，请在任务中心检查；不会自动执行。")}</p>
         <button class="btn ghost" onclick="this.parentElement.remove(); restoreWorkflowCards(['${planId}'], CURRENT_SESSION, SESSION_OPEN_VERSION)">重新核对计划</button>
         <button class="btn ghost" onclick="openWorkflowPlan('${planId}')">查看任务中心</button>`;
-      log.appendChild(card);
+      placeChatCard(log, card, log._workflowAnchors?.[planId] || {}, planId);
     }
   }
 }
-function addWorkflowPlanCard(log, result) {
+function addWorkflowPlanCard(log, result, anchor = null) {
   const plan = result && (result.chat_plan || result.plan);
   const planId = String(result?.plan_id || plan?.plan_id || "");
   if (!plan || !/^[0-9a-f]{16}$/.test(planId) || document.getElementById("wf-chat-" + planId)) return;
+  anchor = anchor || log._workflowAnchors?.[planId] || plan.chat_anchor || {};
+  (log._workflowAnchors ||= {})[planId] = anchor;
   const card = document.createElement("div");
   card.className = "workflow-card";
   card.id = "wf-chat-" + planId;
@@ -3703,10 +3836,9 @@ function addWorkflowPlanCard(log, result) {
       <button class="btn ghost" onclick="openWorkflowPlan('${esc(planId)}')">查看任务中心</button>
     </div>
     <div class="workflow-status" role="status" id="wf-status-${esc(planId)}">正在核对执行状态，尚未执行任何操作…</div>`;
-  log.appendChild(card);
+  placeChatCard(log, card, anchor, planId, result.prepared_at);
   if (Object.hasOwn(result, "run")) renderWorkflowChatState(card, result.run);
   pollWorkflowChat(planId);
-  log.scrollTop = log.scrollHeight;
 }
 function renderWorkflowChatState(card, run) {
   const pending = !run;
@@ -3809,10 +3941,14 @@ function pollWorkflowChat(planId) {
   tick();
 }
 function addConfirmCard(log, entry) {
+  if (entry.session_id && entry.session_id !== CURRENT_SESSION) return;
   const existing = document.getElementById("cf-" + entry.id);
-  if (existing && existing.dataset.status === entry.status) return;
+  const scriptContent = String(entry.script_content || "");
+  if (existing && existing.dataset.status === entry.status &&
+      existing._scriptContent === scriptContent) return;
   const card = existing || document.createElement("div");
   card.dataset.status = entry.status;
+  card._scriptContent = scriptContent;
   const expired = entry.status === "expired";
   const unresolved = ["submitting", "uncertain"].includes(entry.status);
   card.className = "confirmcard" + (expired ? " expired" : "");
@@ -3823,7 +3959,8 @@ function addConfirmCard(log, entry) {
       目录 <span class="mono">${esc(entry.directory)}</span> ·
       脚本 <span class="mono">${esc(entry.script)}</span><br>
       ${entry.expires_at ? `有效期至 ${esc(entry.expires_at)}` : ""}</div>
-    <pre>${esc(entry.script_content || "（脚本内容不可用——提交前服务端会再次校验）")}</pre>
+    ${scriptContent ? '<div class="cmeta">审批时保存的脚本快照；提交前会核对是否被改动。</div>' : ""}
+    <pre>${esc(scriptContent || "（这条记录未保存脚本快照，可在远端目录查看脚本。）")}</pre>
     <div class="cbtns">
       ${unresolved
         ? `<span style="color:var(--warn)">请求已发送或结果不确定，已阻止重复提交。请先核对服务器队列和计算目录。</span>`
@@ -3834,8 +3971,7 @@ function addConfirmCard(log, entry) {
            <button class="btn danger" onclick="confirmSubmit('${esc(entry.id)}', false)">拒绝</button>
            <span style="font-size:11px;color:var(--fg2);align-self:center">批准后按卡片参数执行，脚本若被改动将自动中止</span>`}
     </div>`;
-  if (!existing) log.appendChild(card);
-  log.scrollTop = log.scrollHeight;
+  if (!existing) placeChatCard(log, card, entry.chat_anchor || {}, entry.regenerated_from || entry.id, entry.created_at);
 }
 async function confirmSubmit(id, approve) {
   const current = document.getElementById("cf-" + id);
@@ -3866,6 +4002,7 @@ async function confirmSubmit(id, approve) {
   await loadSessions();
 }
 async function regenerateSubmit(id) {
+  const sessionId = CURRENT_SESSION, version = SESSION_OPEN_VERSION;
   const oldCard = document.getElementById("cf-" + id);
   if (oldCard) {
     oldCard.classList.add("expired");
@@ -3873,6 +4010,7 @@ async function regenerateSubmit(id) {
     if (buttons) buttons.innerHTML = "<span style='color:var(--warn)'>审批卡片已过期，正在校验脚本并重新生成…</span>";
   }
   const r = await api("submit.regenerate", {id}, true);
+  if (sessionId !== CURRENT_SESSION || version !== SESSION_OPEN_VERSION) return;
   if (!r.ok) {
     if (oldCard) {
       const buttons = oldCard.querySelector(".cbtns");
@@ -3886,8 +4024,10 @@ async function regenerateSubmit(id) {
   toast("原审批卡片已过期，已重新生成，请再次批准", "ok");
 }
 async function pollPendingCards() {
-  if (!CURRENT_SESSION) return;
-  const r = await api("submit.history", {session_id: CURRENT_SESSION});
+  if (!CURRENT_SESSION || SESSION_LOADING) return;
+  const sessionId = CURRENT_SESSION, version = SESSION_OPEN_VERSION;
+  const r = await api("submit.history", {session_id: sessionId});
+  if (sessionId !== CURRENT_SESSION || version !== SESSION_OPEN_VERSION || SESSION_LOADING) return;
   if (r.ok && r.entries) {
     const log = document.getElementById("chatlog");
     for (const entry of r.entries) addConfirmCard(log, entry);
@@ -3963,10 +4103,13 @@ function safeMD(src) {
   return html;
 }
 
-function addMsg(role, text) {
+function addMsg(role, text, meta = {}) {
   const log = document.getElementById("chatlog");
   const div = document.createElement("div");
   div.className = "msg " + role;
+  div.dataset.requestId = meta.request_id || "";
+  div.dataset.at = meta.at || "";
+  if (Number.isInteger(meta.message_index)) div.dataset.messageIndex = String(meta.message_index);
   div.innerHTML = `<div class="av">${role === "user" ? "你" : "R"}</div>
     <div class="bd"><div class="who">${role === "user" ? "你" : "RSCI 科研助手"}<button type="button" class="msg-action">复制</button></div>
     <div class="bubble"></div></div>`;
@@ -4450,14 +4593,18 @@ async function openSession(id) {
   SESSION_LOADING = false;
   if (!r.ok) { setChatNotice(r.error?.message || "无法读取会话"); return; }
   ACTIVE_PROJECT = r.project || ""; applyProjectContext();
+  restoreResearchWorkflowSelection(r.research_workflow || {mode:"auto"});
+  showActiveResearchWorkflow(r.turn?.research_workflow);
   try { localStorage.setItem("rsci.chat.last-session", id); } catch (_) {}
   const log = document.getElementById("chatlog");
   log.innerHTML = "";
+  log._workflowAnchors = r.workflow_plan_anchors || {};
   log.dataset.follow = "true";
   const visibleMessages = [...(r.archived_messages || []), ...(r.messages || [])];
   let activeBubble = null;
-  for (const m of visibleMessages) {
-    const node = addMsg(m.role === "user" ? "user" : "bot", m.content);
+  for (const [index, m] of visibleMessages.entries()) {
+    const node = addMsg(m.role === "user" ? "user" : "bot", m.content, {...m, message_index:index});
+    if (m.research_workflow) addResearchWorkflowLabel(node.querySelector(".bubble"), m.research_workflow);
     if (m.error && m.status !== "stopped") {
       const note = document.createElement("div"); note.className = "message-error";
       note.textContent = m.error; node.querySelector(".bd").appendChild(note);
@@ -4898,7 +5045,6 @@ function resetResearchEditor() {
   document.getElementById("researchfilepath").textContent = "";
   document.getElementById("researchsave").disabled = !RESEARCH_PROJECT;
   document.getElementById("researchdownload").disabled = true;
-  document.getElementById("researchtemplate").disabled = true;
   document.getElementById("researchprepare").disabled = !RESEARCH_PROJECT;
 }
 async function loadResearchFiles(openFile = "") {
@@ -4940,7 +5086,6 @@ async function openResearchFile(file) {
   document.getElementById("researchfilepath").textContent = r.path ? `本机文件：${r.path}` : "";
   document.getElementById("researchsave").disabled = !Object.hasOwn(r, "content");
   document.getElementById("researchdownload").disabled = false;
-  document.getElementById("researchtemplate").disabled = !/\.(csv|tsv)$/i.test(file);
   document.querySelectorAll("#researchfiles button").forEach(b => b.setAttribute("aria-current", String(b.firstChild?.textContent === file)));
 }
 function newResearchFile() {
@@ -4964,7 +5109,6 @@ async function saveResearchFile() {
     document.getElementById("researchfilemeta").textContent = `${r.size} B · SHA-256 ${r.sha256}`;
     document.getElementById("researchfilepath").textContent = r.path ? `本机文件：${r.path}` : "";
     document.getElementById("researchdownload").disabled = false;
-    document.getElementById("researchtemplate").disabled = !/\.(csv|tsv)$/i.test(file);
     toast("文件已保存，尚未执行", "ok"); await loadResearchFiles();
   } finally { button.disabled = false; }
 }
@@ -4993,15 +5137,6 @@ async function downloadResearchFile() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (_) { toast("下载中断，请重试；原文件保留", "err"); }
 }
-async function createCsvAnalysis() {
-  if (!RESEARCH_FILE || RESEARCH_DIRTY) return toast("请先保存并选择一个 CSV/TSV 文件", "err");
-  const name = RESEARCH_PROJECT;
-  const r = await api("project.csv_template", {name, file:RESEARCH_FILE.name, script:document.getElementById("researchscript").value.trim()});
-  if (!r.ok || name !== RESEARCH_PROJECT) return;
-  document.getElementById("researchinputs").value = r.spec.inputs.join("\n");
-  document.getElementById("researchoutputs").value = r.spec.outputs.join("\n");
-  await loadResearchFiles(r.script.name); researchNotice(r.message);
-}
 async function prepareResearchPlan() {
   if (!RESEARCH_PROJECT || RESEARCH_DIRTY) return toast("请先选择项目并保存文件修改", "err");
   const lines = id => document.getElementById(id).value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
@@ -5014,44 +5149,6 @@ async function prepareResearchPlan() {
     await openWorkflowPlan(r.plan_id);
   } finally { button.disabled = false; }
 }
-async function searchLiterature() {
-  const box = document.getElementById("literatureresults"); box.textContent = "正在查询 Crossref…";
-  const r = await api("project.literature_search", {query:document.getElementById("literaturequery").value.trim()});
-  if (!r.ok) { box.textContent = "查询未完成，请检查网络或稍后重试；未验证任何文献。"; return; }
-  box.innerHTML = "";
-  for (const item of r.results || []) {
-    const button = document.createElement("button"); button.className = "btn ghost";
-    button.textContent = `${item.title} · ${item.doi}`; button.style.whiteSpace = "normal";
-    button.onclick = () => { document.getElementById("referencetitle").value = item.title; document.getElementById("referencedoi").value = item.doi; };
-    box.appendChild(button);
-  }
-  if (!r.results?.length) box.textContent = "未找到候选条目；不代表文献不存在。";
-}
-async function saveReference() {
-  if (!RESEARCH_PROJECT) return toast("请先选择通用项目", "err");
-  const name = RESEARCH_PROJECT;
-  const r = await api("project.reference_add", {name, doi:document.getElementById("referencedoi").value.trim(), title:document.getElementById("referencetitle").value.trim()});
-  if (r.ok && name === RESEARCH_PROJECT) { await loadResearchFiles(r.file); toast("已保存为未核对文献", "ok"); }
-}
-async function checkSelectedReference() {
-  const match = RESEARCH_FILE?.name?.match(/^references\/([0-9a-f]{16})\.json$/);
-  if (!match || RESEARCH_DIRTY) return toast("请先保存并打开 references/ 下的文献记录", "err");
-  const name = RESEARCH_PROJECT;
-  const r = await api("project.reference_check", {name, reference_id:match[1]});
-  if (r.ok && name === RESEARCH_PROJECT) {
-    await loadResearchFiles(r.file);
-    researchNotice(({metadata_matched:"DOI 与标题元数据匹配", metadata_mismatch:"元数据不匹配，请核对", unavailable:"来源暂不可用，未核验"}[r.status] || r.status) + "。" + r.limitation);
-  }
-}
-async function saveExperiment() {
-  if (!RESEARCH_PROJECT) return toast("请先选择通用项目", "err");
-  const name = RESEARCH_PROJECT;
-  const r = await api("project.experiment_record", {name,
-    ...Object.fromEntries(["title","method","observations","interpretation","limitations"].map(k => [k,document.getElementById("experiment" + k).value])),
-    plan_id:document.getElementById("experimentplan").value.trim()});
-  if (r.ok && name === RESEARCH_PROJECT) { await loadResearchFiles(r.file); toast("实验记录已保存；录入内容不代表已独立核实", "ok"); }
-}
-
 /* ===================== 编辑项目文件模态 ===================== */
 function openEditFileModal() {
   if (!PROJECTS.length) return toast("请先创建或刷新项目", "err");
@@ -5697,10 +5794,10 @@ async function loadSkills() {
   const box = document.getElementById("skilllist");
   box.innerHTML = (r.skills || []).map(s => `
     <div class="pcard"><div class="pc-h">
-      <b>${esc(s.name)}</b>
+      <b>${esc(s.name)}${s.builtin ? " · 内置" : ""}</b>
       <span style="font-size:12px;color:var(--fg2)">${esc(s.description)}</span>
-      <span class="x" title="编辑" data-edit="${esc(s.name)}" style="cursor:pointer">✎</span>
-      <span class="x" title="删除" data-del="${esc(s.name)}" style="cursor:pointer">×</span>
+      <button class="btn ghost" data-edit="${esc(s.name)}">${s.builtin ? "查看 / 自定义" : "编辑"}</button>
+      ${s.builtin ? "" : `<button class="btn ghost" data-del="${esc(s.name)}">${s.overrides_builtin ? "恢复内置" : "删除"}</button>`}
     </div></div>`).join("") || `<div class="empty">还没有技能——智能体可用 skill_write 自建，或点下方新建</div>`;
   box.querySelectorAll("[data-edit]").forEach(el => el.onclick = () => editSkill(el.dataset.edit));
   box.querySelectorAll("[data-del]").forEach(el => el.onclick = async () => {
@@ -5740,11 +5837,154 @@ async function saveSkillModal() {
   }
 }
 
+/* ===================== 科研工作流 ===================== */
+let RESEARCH_WORKFLOWS = [], RW_ID = "", RW_DIRTY = false, RW_BUSY = false;
+function chatWorkflowSelection() {
+  const value = document.getElementById("chatworkflow").value;
+  return ["auto", "off"].includes(value) ? {mode:value} : {mode:"manual", id:value};
+}
+function restoreResearchWorkflowSelection(selection) {
+  const select = document.getElementById("chatworkflow");
+  const value = selection.mode === "manual" ? selection.id : selection.mode;
+  if (value && !Array.from(select.options).some(o => o.value === value)) {
+    select.add(new Option("已删除的工作流 · 请重新选择", value));
+  }
+  select.value = value || "auto";
+}
+function changeChatWorkflow() {
+  showActiveResearchWorkflow(null);
+}
+function showActiveResearchWorkflow(active) {
+  const selection = chatWorkflowSelection();
+  document.getElementById("chatworkflowstatus").textContent = active
+    ? (active.title ? `本轮使用：${active.title}` : active.mode === "auto" ? "本轮未匹配工作流" : "本轮未使用工作流")
+    : selection.mode === "auto" ? "发送后按问题自动匹配"
+    : selection.mode === "off" ? "下次发送不使用工作流" : "下次发送使用指定工作流";
+}
+function addResearchWorkflowLabel(bubble, active) {
+  if (!active.title) return;
+  let label = bubble.parentElement.querySelector(".research-workflow-label");
+  if (!label) {
+    label = document.createElement("div");
+    label.className = "research-note research-workflow-label";
+    bubble.before(label);
+  }
+  label.textContent = `工作流：${active.title}${active.mode === "auto" ? " · 自动匹配" : " · 手动指定"}`;
+}
+async function loadResearchWorkflows() {
+  const result = await api("research_workflow.list");
+  if (!result.ok) return;
+  RESEARCH_WORKFLOWS = result.workflows;
+  const selection = chatWorkflowSelection();
+  const select = document.getElementById("chatworkflow");
+  select.replaceChildren(new Option("自动匹配", "auto"), new Option("不使用工作流", "off"));
+  for (const workflow of RESEARCH_WORKFLOWS) select.add(new Option(workflow.title, workflow.id));
+  restoreResearchWorkflowSelection(selection);
+  const list = document.getElementById("rw-list");
+  list.innerHTML = "";
+  if (!RESEARCH_WORKFLOWS.length) {
+    list.innerHTML = '<p class="empty">还没有科研工作流。<br>填写研究方向，生成并保存第一份流程。</p>';
+  }
+  for (const workflow of RESEARCH_WORKFLOWS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn ghost";
+    button.style.cssText = "display:block;width:100%;text-align:left;white-space:normal;margin-bottom:8px";
+    button.setAttribute("aria-pressed", String(workflow.id === RW_ID));
+    button.innerHTML = `<strong>${esc(workflow.title)}</strong><br><span class="research-note">${esc(workflow.direction.slice(0,100))}</span>`;
+    button.onclick = () => editResearchWorkflow(workflow);
+    list.appendChild(button);
+  }
+}
+function setResearchWorkflowBusy(busy) {
+  RW_BUSY = busy;
+  document.getElementById("rw-form").querySelectorAll("input,textarea,button").forEach(el => el.disabled = busy);
+  document.getElementById("rw-new").disabled = busy;
+  for (const id of ["rw-use", "rw-export", "rw-delete"]) document.getElementById(id).disabled = busy || !RW_ID;
+}
+function editResearchWorkflow(workflow = {}) {
+  if (RW_BUSY) return;
+  if (RW_DIRTY && !confirm("放弃尚未保存的工作流修改？")) return;
+  RW_ID = workflow.id || "";
+  document.getElementById("rw-title").value = workflow.title || "";
+  document.getElementById("rw-direction").value = workflow.direction || "";
+  document.getElementById("rw-content").value = workflow.content || "";
+  RW_DIRTY = false;
+  setResearchWorkflowBusy(false);
+  document.getElementById("rw-status").textContent = RW_ID ? "正在编辑已保存的工作流" : "新工作流";
+  Array.from(document.getElementById("rw-list").children).forEach((button, index) => {
+    if (RESEARCH_WORKFLOWS[index]) button.setAttribute("aria-pressed", String(RESEARCH_WORKFLOWS[index].id === RW_ID));
+  });
+}
+function newResearchWorkflow() {
+  editResearchWorkflow();
+}
+async function generateResearchWorkflow() {
+  const direction = document.getElementById("rw-direction").value.trim();
+  if (!direction) return toast("请先描述科研方向与要求", "err");
+  const content = document.getElementById("rw-content");
+  if (content.value.trim() && !confirm("用新生成的指令替换编辑区内容？")) return;
+  setResearchWorkflowBusy(true);
+  const status = document.getElementById("rw-status");
+  status.textContent = "模型正在编写工作流，请稍候…";
+  try {
+    const result = await api("research_workflow.generate", {
+      provider:currentProvider(), direction, title:document.getElementById("rw-title").value.trim(),
+    }, false, 300000);
+    if (!result.ok) { status.textContent = "生成失败，现有内容已保留，可重试"; return; }
+    content.value = result.content;
+    if (!document.getElementById("rw-title").value.trim()) document.getElementById("rw-title").value = direction.split("\n")[0].slice(0,60);
+    RW_DIRTY = true;
+    status.textContent = "指令已生成，可修改后保存";
+  } finally { setResearchWorkflowBusy(false); }
+}
+async function saveResearchWorkflow() {
+  if (RW_BUSY) return false;
+  const body = {id:RW_ID, title:document.getElementById("rw-title").value.trim(),
+    direction:document.getElementById("rw-direction").value.trim(), content:document.getElementById("rw-content").value.trim()};
+  if (!body.title || !body.direction || !body.content) { toast("请填写名称、科研方向和工作流指令", "err"); return false; }
+  setResearchWorkflowBusy(true);
+  try {
+    const result = await api("research_workflow.save", body);
+    if (!result.ok) return false;
+    RW_ID = result.workflow.id; RW_DIRTY = false;
+    document.getElementById("rw-status").textContent = "已保存，下一次对话即可选用";
+    await loadResearchWorkflows();
+    return true;
+  } finally { setResearchWorkflowBusy(false); }
+}
+async function useResearchWorkflow() {
+  if (CHAT_ACTIVE) return toast("请等待当前回答结束后再切换工作流", "warn");
+  if (RW_DIRTY && !await saveResearchWorkflow()) return;
+  restoreResearchWorkflowSelection({mode:"manual", id:RW_ID});
+  changeChatWorkflow();
+  document.querySelector('.tab[data-v="chat"]').click();
+  document.getElementById("chatinput").focus();
+}
+function exportResearchWorkflow() {
+  const title = document.getElementById("rw-title").value.trim();
+  const direction = document.getElementById("rw-direction").value.trim();
+  const content = `---\nname: research-${RW_ID}\ndescription: ${JSON.stringify(direction)}\n---\n\n# ${title}\n\n${document.getElementById("rw-content").value}\n`;
+  const url = URL.createObjectURL(new Blob([content], {type:"text/markdown;charset=utf-8"}));
+  const link = document.createElement("a"); link.href = url; link.download = "SKILL.md"; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function deleteResearchWorkflow() {
+  if (!confirm("删除这个科研工作流？已有对话记录会保留。")) return;
+  const result = await api("research_workflow.delete", {id:RW_ID});
+  if (!result.ok) return;
+  if (chatWorkflowSelection().id === RW_ID) { restoreResearchWorkflowSelection({mode:"auto"}); changeChatWorkflow(); }
+  RW_DIRTY = false; editResearchWorkflow();
+  await loadResearchWorkflows();
+  document.getElementById("rw-status").textContent = "工作流已删除";
+}
+
 /* ===================== 启动 ===================== */
 restoreIdleInputs();
 refreshServers().then(() => { pickFileServer(); });
 Promise.all([
   loadSettings(), loadSessions(true), refreshProjects(),
+  loadResearchWorkflows(),
   refreshWorkflowCenter(),
 ]).then(() => {
   // 恢复最近会话的历史气泡

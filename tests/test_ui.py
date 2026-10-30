@@ -288,8 +288,16 @@ class TestViews:
         assert "禁止 VS Code 直连目标服务器" in payload["error"]["message"]
         assert not any(call[0] == "run" for call in ui["app"].transport().calls)
 
-    def test_outside_root_rejected_as_json(self, ui):
-        payload = call(ui, "remote.list", {"server": "cl9", "path": "/etc"})
+    def test_browse_above_work_root_and_read_external_file(self, ui):
+        payload = call(ui, "remote.list", {"server": "cl9", "path": "/hpc/home/tester"})
+        assert payload["ok"]
+        assert "rsci-root" in {entry["name"] for entry in payload["entries"]}
+        ui["state"].files["cl9"]["/public/data/NaOH.cif"] = b"data_NaOH\n"
+        payload = call(ui, "remote.read", {"server": "cl9", "path": "/public/data/NaOH.cif"})
+        assert payload["ok"] and payload["content"] == "data_NaOH\n"
+
+    def test_outside_root_mutation_rejected_as_json(self, ui):
+        payload = call(ui, "remote.mkdir", {"server": "cl9", "path": "/public/new-directory"})
         assert payload["ok"] is False
         assert payload["error"]["code"] == "validation_error"
 

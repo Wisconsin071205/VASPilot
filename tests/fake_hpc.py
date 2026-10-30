@@ -112,7 +112,7 @@ class FakeHpc:
         except ValueError:
             pass
         rel = real_path.resolve().relative_to(self.real.resolve())
-        return self.root + ("/" + rel.as_posix() if str(rel) != "." else "")
+        return self.root.rstrip("/") + ("/" + rel.as_posix() if str(rel) != "." else "") or "/"
 
     def _save(self) -> None:
         self.state_path.write_text(json.dumps(self.state), encoding="utf-8")
@@ -197,7 +197,7 @@ class FakeHpc:
                                   paths[0])
             if "find" in command and "-name" in command:
                 return self._find(command, paths)
-            if command.startswith("stat -c '%F"):
+            if command.startswith(("stat -c '%F", "LC_ALL=C stat -c '%F")):
                 return self._stat(paths[0])
             if command.startswith("du -sb") or command.startswith("du -sk"):
                 return self._du(paths[0])

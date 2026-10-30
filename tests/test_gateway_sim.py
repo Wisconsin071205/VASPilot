@@ -76,8 +76,35 @@ def gateway_env(tmp_path, monkeypatch):
 
 
 class TestConfinement:
-    def test_outside_root_rejected(self, gateway_env):
-        result = gateway_env["run"]("list", "--server", "cl9", "/etc")
+    def test_read_above_work_root_and_from_external_directory(self, gateway_env):
+        run, fs = gateway_env["run"], gateway_env["fs"]
+        # The account can see the filesystem; the configured work root stays
+        # narrow. This reproduces browsing from a project into its parent.
+        config = json.loads(gateway_env["fake_config"].read_text(encoding="utf-8"))
+        config["servers"]["cl9"]["root"] = "/"
+        gateway_env["fake_config"].write_text(json.dumps(config), encoding="utf-8")
+        (fs / ROOT.lstrip("/")).mkdir(parents=True)
+        external = fs / "public" / "data"
+        external.mkdir(parents=True)
+        content = b"data_NaOH\n_cell_length_a 3.4\n"
+        (external / "NaOH.cif").write_bytes(content)
+        for path, child in [(ROOT.rsplit("/", 1)[0], "rsci-root"), ("/", "public")]:
+            listing = run("list", "--server", "cl9", path, check=True)
+            assert child in {entry["name"] for entry in listing["entries"]}
+        path = "/public/data/NaOH.cif"
+        assert run("read", "--server", "cl9", path, check=True)["content"] == content.decode()
+        assert "3.4" in run("tail", "--server", "cl9", path, "--lines", "1", check=True)["content"]
+        found = run("find", "--server", "cl9", "/public/data", "--pattern", "*.cif", check=True)
+        assert [entry["path"] for entry in found["files"]] == [path]
+        assert run("stat", "--server", "cl9", path, check=True)["size"] == len(content)
+        assert run("du", "--server", "cl9", "/public/data", check=True)["bytes"] == len(content)
+        stage = "/tmp/rsci-1234567890abcdef"
+        run("download", "--server", "cl9", path, stage, check=True)
+        assert (gateway_env["stage"] / stage.rsplit("/", 1)[1]).read_bytes() == content
+        assert run("pwd", "--server", "cl9", check=True)["root"] == ROOT
+
+    def test_outside_root_mutation_rejected(self, gateway_env):
+        result = gateway_env["run"]("mkdir", "--server", "cl9", "/public/new-directory")
         assert result is not None and not result["ok"]
         assert "must remain under" in result["error"]["message"]
 
@@ -292,7 +319,7 @@ class TestCatalogAndSessions:
     def test_version_protocol(self, gateway_env):
         result = gateway_env["run"]("version")
         assert result["protocol"] == "2"
-        assert result["gateway_version"] == "1.5.3"
+        assert result["gateway_version"] == "1.5.5"
 
     def test_transient_credential_connect_is_not_persisted(self, gateway_env):
         password = "transient-password!"

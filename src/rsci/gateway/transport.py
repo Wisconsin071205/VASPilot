@@ -50,7 +50,7 @@ _AUTH_HINTS = (
 # The value is used in a remote shell command; rejecting metacharacters keeps
 # the convenience path from becoming an arbitrary shell command sink.
 _SAFE_GATEWAY_PATH = re.compile(r"^(?:~/|/)[A-Za-z0-9._/-]+$")
-_MIN_GATEWAY_VERSION = (1, 5, 3)
+_MIN_GATEWAY_VERSION = (1, 5, 5)
 _MIN_WORKSPACE_GATEWAY_VERSION = (0, 1, 1)
 
 

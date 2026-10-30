@@ -43,8 +43,8 @@ function boot(initial, dark = true, blocked = false, legacy = false, noMedia = f
   return {stored,root,controls,events,media,theme:ctx.window.RsciTheme};
 }
 const fresh = boot();
-assert.equal(fresh.root.dataset.theme,'dark');
-assert.equal(fresh.controls.themeselect.value,'dark');
+assert.equal(fresh.root.dataset.theme,'light');
+assert.equal(fresh.controls.themeselect.value,'light');
 assert.equal(fresh.stored.size,0); // merely opening a tab must not rewrite preferences
 for (const name of ['dark','light','sand','forest']) {
   fresh.theme.setPreference(name);
@@ -70,12 +70,12 @@ for (const legacy of [true,false]) {
   assert.equal(follow.root.dataset.theme,'forest');
   assert.equal(follow.controls.themeselect.value,'forest');
   follow.events.storage({key:'rsci.ui.theme',newValue:null});
-  assert.equal(follow.root.dataset.theme,'dark');
+  assert.equal(follow.root.dataset.theme,'light');
   follow.theme.setPreference('light'); follow.events.storage({key:null,newValue:null});
-  assert.equal(follow.root.dataset.theme,'dark');
+  assert.equal(follow.root.dataset.theme,'light');
 }
-assert.equal(boot('<invalid>').root.dataset.theme,'dark');
-fresh.theme.setPreference('__proto__'); assert.equal(fresh.root.dataset.theme,'dark');
+assert.equal(boot('<invalid>').root.dataset.theme,'light');
+fresh.theme.setPreference('__proto__'); assert.equal(fresh.root.dataset.theme,'light');
 assert.equal(boot('system',true,false,false,true).root.dataset.theme,'dark');
 const denied = boot('light',true,true);
 denied.theme.setPreference('forest');

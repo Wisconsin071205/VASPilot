@@ -26,6 +26,7 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 MAX_SKILLS = 50
 MAX_BODY_BYTES = 16 * 1024
 MAX_DESCRIPTION = 200
+BUILTIN_DIRECTORY = Path(__file__).with_name("builtin_skills")
 
 
 def _now() -> str:
@@ -72,9 +73,12 @@ class SkillStore:
 
     def list(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        if not self.directory.is_dir():
-            return out
-        for entry in sorted(self.directory.iterdir()):
+        entries = {entry.name: entry for entry in BUILTIN_DIRECTORY.iterdir()
+                   if entry.is_dir()} if BUILTIN_DIRECTORY.is_dir() else {}
+        if self.directory.is_dir():
+            entries.update({entry.name: entry for entry in self.directory.iterdir()
+                            if (entry / "SKILL.md").is_file()})
+        for name, entry in sorted(entries.items()):
             skill_md = entry / "SKILL.md"
             if not entry.is_dir() or not skill_md.is_file():
                 continue
@@ -82,6 +86,8 @@ class SkillStore:
                 skill_md.read_text(encoding="utf-8", errors="replace"))
             out.append({
                 "name": entry.name,
+                "builtin": entry.parent == BUILTIN_DIRECTORY,
+                "overrides_builtin": entry.parent != BUILTIN_DIRECTORY and (BUILTIN_DIRECTORY / name / "SKILL.md").is_file(),
                 "description": meta.get("description", "")[:MAX_DESCRIPTION],
                 "size": skill_md.stat().st_size,
                 "updated_at": datetime.fromtimestamp(
@@ -93,17 +99,20 @@ class SkillStore:
     def read(self, name: str) -> dict[str, Any]:
         skill_md = self._dir(name) / "SKILL.md"
         if not skill_md.is_file():
+            skill_md = BUILTIN_DIRECTORY / name / "SKILL.md"
+        if not skill_md.is_file():
             raise ValidationError(f"skill {name!r} not found")
         text = skill_md.read_text(encoding="utf-8", errors="replace")
         meta, body = parse_skill_md(text)
         scripts = sorted(p.name for p in self._dir(name).glob("scripts/*")
                          if p.is_file()) if self._dir(name).is_dir() else []
         return {"name": name, "description": meta.get("description", ""),
+                "builtin": skill_md.parent.parent == BUILTIN_DIRECTORY,
                 "content": body, "scripts": scripts}
 
     def write(self, name: str, description: str, body: str) -> dict[str, Any]:
         existing = self._dir(name).is_dir() and (self._dir(name) / "SKILL.md").is_file()
-        if not existing and len(self.list()) >= MAX_SKILLS:
+        if not existing and sum(not row.get("builtin") for row in self.list()) >= MAX_SKILLS:
             raise ValidationError(f"skill cap of {MAX_SKILLS} reached")
         description = str(description or "").strip()[:MAX_DESCRIPTION]
         if not description:

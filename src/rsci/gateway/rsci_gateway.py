@@ -14,8 +14,9 @@ Every operation prints exactly one JSON document on stdout:
 Design invariants:
   - no operation accepts an arbitrary shell string from the caller; each maps
     to a fixed command shape whose identifiers are regex-validated first
-  - every remote path stays inside the server's configured remote_root,
-    checked lexically AND via ``realpath`` (symlink escapes fail closed)
+  - remote mutations stay inside the server's configured remote_root,
+    checked lexically AND via ``realpath`` (symlink escapes fail closed);
+    read-only file operations follow the SSH account's filesystem permissions
   - removals go to a structured trash area; purge requires a double-match
   - host-key changes never auto-heal: StrictHostKeyChecking stays strict
   - reusable secrets are never stored here; an explicitly authorised local
@@ -50,10 +51,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-# Keep in step with rsci.__version__ (this file is standalone by design
-# and may not import the package). PROTOCOL_VERSION is the real compatibility
-# contract; this string lets `server doctor` spot a stale deployed gateway.
-GATEWAY_VERSION = "1.5.3"
+# This standalone deployment version is checked by the local transport so
+# new gateway behavior is installed even when PROTOCOL_VERSION is unchanged.
+GATEWAY_VERSION = "1.5.5"
 PROTOCOL_VERSION = "2"
 
 HOME = Path.home()
@@ -633,21 +633,24 @@ def effective_root(name: str, entry: dict) -> PurePosixPath:
     return PurePosixPath(home)
 
 
-def validated_remote_path(raw: str, entry: dict, name: str) -> str:
-    if not isinstance(raw, str) or not SAFE_REMOTE_PATH.fullmatch(raw or ""):
+def validated_remote_path(raw: str, entry: dict, name: str, *,
+                          read_only: bool = False) -> str:
+    if not isinstance(raw, str) or not (
+            SAFE_REMOTE_PATH.fullmatch(raw or "") or (read_only and raw == "/")):
         raise ValueError("remote path contains unsupported characters")
     path = PurePosixPath(raw)
-    if ".." in path.parts or "." in path.parts:
+    if any(part in (".", "..") for part in raw.split("/")):
         raise ValueError("remote path cannot contain traversal segments")
-    root = effective_root(name, entry)
+    root = PurePosixPath("/") if read_only else effective_root(name, entry)
     if path != root and root not in path.parents:
         raise ValueError(f"remote path must remain under {root}")
     return str(path)
 
 
-def require_resolved_within_root(name: str, path: str, entry: dict) -> str:
-    """Reject symlink escapes: resolve with realpath before acting."""
-    root = str(effective_root(name, entry))
+def require_resolved_within_root(name: str, path: str, entry: dict, *,
+                                 read_only: bool = False) -> str:
+    """Resolve paths; mutations must also stay under the configured work root."""
+    root = "/" if read_only else str(effective_root(name, entry))
     command = (f"realpath -m -- {shlex.quote(path)} && "
                f"realpath -m -- {shlex.quote(root)}")
     lines = [line.strip() for line in remote(name, command).splitlines()
@@ -1049,20 +1052,24 @@ def op_pwd(args) -> int:
 def op_list(args) -> int:
     name, entry = resolve_server(args.server)
     path = validated_remote_path(args.path or str(effective_root(name, entry)),
-                                 entry, name)
-    require_resolved_within_root(name, path, entry)
+                                 entry, name, read_only=True)
+    require_resolved_within_root(name, path, entry, read_only=True)
     # A directory view must remain non-recursive and bounded. Sorting before
     # applying a limit would enumerate a huge directory, so let `head` stop
     # the producer and request one extra entry to report truncation.
     limit = max(1, min(int(getattr(args, "limit", 500)), 2000))
     listing = remote(
         name,
-        f"if [ -d {q(path)} ]; then find {q(path)} -maxdepth 1 -mindepth 1 "
+        f"if [ ! -d {q(path)} ]; then echo NOTDIR; "
+        f"elif [ ! -r {q(path)} ] || [ ! -x {q(path)} ]; then echo DENIED; "
+        f"else find {q(path)} -maxdepth 1 -mindepth 1 "
         f"-printf '%y|%f|%s|%TY-%Tm-%TdT%TH:%TM:%TS\\n' | head -n {limit + 1}; "
-        f"else echo NOTDIR; fi")
+        f"fi")
     entries = []
     if listing.strip() == "NOTDIR":
         return fail("not_a_directory", f"{path} is not a directory")
+    if listing.strip() == "DENIED":
+        return fail("permission_denied", f"SSH account cannot list {path}")
     for line in listing.splitlines():
         parts = line.split("|", 3)
         if len(parts) != 4:
@@ -1083,12 +1090,12 @@ def op_list(args) -> int:
 
 def op_read(args) -> int:
     name, entry = resolve_server(args.server)
-    path = validated_remote_path(args.path, entry, name)
-    require_resolved_within_root(name, path, entry)
-    if PurePosixPath(path).name.upper() in TEXT_DENYLIST:
+    path = validated_remote_path(args.path, entry, name, read_only=True)
+    resolved = require_resolved_within_root(name, path, entry, read_only=True)
+    if any(PurePosixPath(p).name.upper() in TEXT_DENYLIST for p in (path, resolved)):
         return fail("denied_file",
                     f"{PurePosixPath(path).name} may not be read as text")
-    content = read_remote_bounded(name, path, MAX_READ_BYTES)
+    content = read_remote_bounded(name, resolved, MAX_READ_BYTES)
     out({"path": path, "size": len(content.encode('utf-8', 'replace')),
          "content": content})
     audit("read", "ok", path, name)
@@ -1097,10 +1104,12 @@ def op_read(args) -> int:
 
 def op_tail(args) -> int:
     name, entry = resolve_server(args.server)
-    path = validated_remote_path(args.path, entry, name)
-    require_resolved_within_root(name, path, entry)
+    path = validated_remote_path(args.path, entry, name, read_only=True)
+    resolved = require_resolved_within_root(name, path, entry, read_only=True)
+    if any(PurePosixPath(p).name.upper() in TEXT_DENYLIST for p in (path, resolved)):
+        return fail("denied_file", f"{PurePosixPath(path).name} may not be read as text")
     lines = max(1, min(int(args.lines), 2000))
-    content = remote(name, f"tail -n {lines} -- {q(path)}")
+    content = remote(name, f"tail -n {lines} -- {q(resolved)}")
     out({"path": path, "lines": lines, "content": content})
     audit("tail", "ok", f"{path} n={lines}", name)
     return 0
@@ -1108,8 +1117,8 @@ def op_tail(args) -> int:
 
 def op_find(args) -> int:
     name, entry = resolve_server(args.server)
-    path = validated_remote_path(args.path, entry, name)
-    require_resolved_within_root(name, path, entry)
+    path = validated_remote_path(args.path, entry, name, read_only=True)
+    require_resolved_within_root(name, path, entry, read_only=True)
     if not SAFE_GLOB.fullmatch(args.pattern or "*"):
         return fail("invalid_pattern", "find pattern is invalid")
     depth = max(1, min(int(args.max_depth), 8))
@@ -1131,9 +1140,9 @@ def op_find(args) -> int:
 
 def op_stat(args) -> int:
     name, entry = resolve_server(args.server)
-    path = validated_remote_path(args.path, entry, name)
-    require_resolved_within_root(name, path, entry)
-    raw = remote(name, f"stat -c '%F|%s|%Y|%y' -- {q(path)} 2>/dev/null || echo MISSING")
+    path = validated_remote_path(args.path, entry, name, read_only=True)
+    require_resolved_within_root(name, path, entry, read_only=True)
+    raw = remote(name, f"LC_ALL=C stat -c '%F|%s|%Y|%y' -- {q(path)} 2>/dev/null || echo MISSING")
     if raw.strip() == "MISSING":
         return fail("not_found", f"{path} does not exist")
     kind, size, mtime, mtime_iso = [p.strip() for p in raw.split("|", 3)]
@@ -1146,8 +1155,8 @@ def op_stat(args) -> int:
 
 def op_du(args) -> int:
     name, entry = resolve_server(args.server)
-    path = validated_remote_path(args.path, entry, name)
-    require_resolved_within_root(name, path, entry)
+    path = validated_remote_path(args.path, entry, name, read_only=True)
+    require_resolved_within_root(name, path, entry, read_only=True)
     raw = remote(name, f"du -sb -- {q(path)} 2>/dev/null || du -sk -- {q(path)}")
     parts = raw.split()
     if not parts or not parts[0].isdigit():
@@ -1701,8 +1710,8 @@ def op_vasp_validate(args) -> int:
 
 def op_vasp_progress(args) -> int:
     name, entry = resolve_server(args.server)
-    directory = validated_remote_path(args.directory, entry, name)
-    resolved = require_resolved_within_root(name, directory, entry)
+    directory = validated_remote_path(args.directory, entry, name, read_only=True)
+    resolved = require_resolved_within_root(name, directory, entry, read_only=True)
     texts = {}
     listing = remote(
         name,
@@ -1893,8 +1902,8 @@ def op_upload(args) -> int:
 def op_download(args) -> int:
     """Copy a remote file to a gateway-local staged /tmp file + report sha."""
     name, entry = resolve_server(args.server)
-    path = validated_remote_path(args.path, entry, name)
-    resolved = require_resolved_within_root(name, path, entry)
+    path = validated_remote_path(args.path, entry, name, read_only=True)
+    resolved = require_resolved_within_root(name, path, entry, read_only=True)
     stage = validated_stage_path(args.stage)
     exists = remote(name, f"test -f {q(resolved)} && echo YES || echo NO").strip()
     if exists != "YES":

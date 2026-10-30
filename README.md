@@ -1,46 +1,8 @@
 # RSCI 科研助手
 
-通用科研底座＋按项目启用的专业模块。默认支持数据、脚本、笔记、文献与结果管理，
-通过可审阅计划、人工审批、独立后台进程和哈希校验执行 Python 分析。
-VASP/HPC 能力保留在专用模块中，不再定义默认助手身份。
-英文名、Python 包名和主命令为 `rsci`；`huwei` 保留为兼容命令。
 
-## 通用科研入门
-
-运行 `rsci ui`，在「项目」中新建“通用科研”项目，再打开「项目文件」：
-
-1. 导入 CSV；生成描述性统计脚本，或自行编辑 `scripts/` 中的 Python。
-2. 审阅输入文件、完整脚本、解释器、参数、超时及输出声明，生成分析计划。
-3. 在任务中心输入审批短语，再启动执行。保存脚本或生成计划都不会自动执行。
-4. 关闭窗口不停止后台任务；重新打开后查看状态、读取或下载结果。
-
-标准项目目录为 `data/`、`scripts/`、`notes/`、`results/`、`references/`。
-CSV 示例仅做描述性统计，输出 JSON、Markdown 报告及 SVG 图表；不声称统计显著性或因果关系。
-执行状态、回收状态与科学结论独立保存。文件冲突不覆盖，执行结果不确定时不自动重跑。
-
-**安全边界：Python 使用当前用户的系统权限，不是操作系统沙箱。** 执行前必须审查代码；
-托管文件接口的路径限制和哈希检查不能阻止已批准脚本自行访问文件或网络。
-Windows EXE 需要在分析表单中指定本机 Python 解释器；源码运行默认使用当前 Python。
-分析依赖安装在所选解释器环境中，程序不会静默安装依赖。
-
-CLI 同样支持这些功能：
-
-```powershell
-rsci project create experiment
-rsci project import experiment data/measurements.csv --source C:\data\measurements.csv
-rsci project csv-template experiment data/measurements.csv
-rsci workflow analyze experiment --script scripts/analyze.py --input data/measurements.csv --output results/summary.json --output results/report.md --output results/means.svg
-# 查看生成的计划后，按 workflow approve/run 的提示人工审批与执行；run 默认同步，--background 为后台模式。
-```
-
-「项目文件 → 文献与实验记录」支持 Crossref 公开元数据检索、保存文献、核对 DOI/标题，
-以及分栏保存方法、观察、解释和局限。核对保留每次证据与时间；元数据匹配**不代表**
-已核验全文、引用是否支持论点或研究质量。查询词与 DOI 会发送到 Crossref；
-不要用未公开的敏感研究内容作查询。实验记录可关联本项目计划及输入/结果哈希。
-
-侧栏外观选择提供深色、浅色、暖砂、松林与跟随系统，自动记住选择；状态同时使用文字标识。
-旧项目按 VASP 项目迁移，原文件不改写。VaspLoom/VASPilot 凭据迁移前缀、`huwei` 命令及
-扩展标识保留用于兼容，不能简单全局替换。
+面向远端科研服务器的工作台：连接服务器、管理项目文件、通过聊天调用工具，以及提交和查看 VASP/Slurm 计算。
+文献解析、OCR、文献问答、数据检查和研究报告功能已移除。已有项目文件仍可读取和编辑。
 
 ## VASP/HPC 专业模块
 
@@ -51,8 +13,9 @@ The CLI-first, multi-model VASP/HPC module remains available: after the user com
 authentication by hand, it performs **auditable** file transfer, job
 submission, status monitoring and VASP workflows across
 `Windows → USTC Vlab → multiple remote HPC servers` by default; each server
-may instead use direct SSH when reachable from the workstation. Named tools
-are path-confined and validated. The two explicit shell tools (`shell_run`,
+may instead use direct SSH when reachable from the workstation. Named write
+tools are path-confined and validated; read-only file tools use the SSH account's
+filesystem permissions. The two explicit shell tools (`shell_run`,
 `remote_run`) trade that confinement for autonomy and are governed by the
 audit log; they are refused to `analysis_only` providers. See
 [Shell access](#shell-access-explicit-operator-policy).
@@ -306,6 +269,17 @@ Scheduler `COMPLETED` is **never** reported as scientific convergence — the
 run state records `scheduler_state` and `scientific_converged` separately,
 and a scheduler-finished-but-unconverged run ends as `needs_review`.
 
+## Remote file access
+
+`remote_root` is the default work directory and the boundary for structured
+uploads, writes, moves, removals, workspace mounts and job submissions.
+The Files page and directory picker can navigate above it, up to `/`.
+`remote_list`, `remote_read`, `remote_tail`, `remote_find`, `remote_stat`,
+`remote_du`, downloads and VASP progress reads can access other absolute paths
+that the SSH account can read. No server configuration change or extra server
+entry is needed just to read a sibling directory. Invalid paths, text-file
+restrictions and output size limits still apply; SSH permissions are not changed.
+
 ## Shell access (explicit operator policy)
 
 Two tools give the model a real shell. This is intentional (added in v1.1.0
@@ -320,7 +294,7 @@ described above does **not** apply:
 Consequences worth stating plainly:
 
 - `remote_run` bypasses the `remote_root` boundary and the symlink-escape
-  check that every other remote operation enforces;
+  check that structured remote mutations enforce;
 - `remote_run` can call `sbatch`/`qsub` directly, so it also bypasses the
   human confirmation that `job_submit` shows in the web console;
 - the only gate on either tool is provider capability: they are `write`-kind,
@@ -400,6 +374,21 @@ tests/          unit, provider-contract (mock HTTP), gateway integration
                 (real gateway script over a fake HPC), CLI, MCP
 recipes/ spec/  design drafts plus the single-stage execution specification
 ```
+
+## 科研工作流
+
+在顶部「科研工作流」栏目填写名称和科研方向，点击「用当前模型生成指令」，
+编辑生成的 Markdown 后保存。也可以直接编写指令，并导出为 `SKILL.md`。
+生成和保存只编写研究方法，不会提交计算任务。
+
+对话输入框上方可选择「自动匹配」「不使用工作流」或某个已保存的流程。
+自动匹配使用当前模型，根据本轮问题和最近对话选择适用的流程；无匹配时直接回答。
+选中的指令会加入计算管理 Agent 的当前上下文，沿用现有工具和审批设置。
+选择随发送保存到会话，每轮采用的流程也会保存在回答记录中。
+
+工作流保存在 `RSCI_HOME/research-workflows/`（默认 `~/.rsci/research-workflows/`），
+可用于不同科研领域；具体软件能否执行仍取决于服务器环境和 Agent 已有工具。
+科研工作流用于保存方法，「任务中心」继续管理具体计算计划和执行状态。
 
 ## Known limitations
 

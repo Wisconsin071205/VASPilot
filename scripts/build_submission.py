@@ -51,13 +51,11 @@ def main():
                      source / 'src/rsci/gateway/huwei_workspace_gateway.py')
         wheels = bundle / 'python-package'
         run(sys.executable, '-c', 'import sys; from setuptools.build_meta import build_wheel; build_wheel(sys.argv[1])', str(wheels), cwd=source)
-        run(sys.executable, '-m', 'pip', 'download', '--only-binary=:all:', '--no-deps',
-            '--dest', str(wheels), 'pypdf==6.21.2', 'pypdfium2==5.14.0')
         entry = work / 'launcher.py'
         entry.write_text('from rsci.cli.main import main\nif __name__ == "__main__":\n    raise SystemExit(main())\n', encoding='utf-8')
         run(sys.executable, '-m', 'PyInstaller', '--noconfirm', '--clean', '--onedir',
             '--name', 'rsci', '--paths', str(source / 'src'),
-            '--collect-all', 'rsci', '--collect-all', 'pypdfium2', '--hidden-import', 'pypdf',
+            '--collect-all', 'rsci',
             '--exclude-module', 'scipy', '--exclude-module', 'numpy', '--exclude-module', 'docling',
             '--exclude-module', 'torch', '--exclude-module', 'rapidocr', '--exclude-module', 'onnxruntime', '--add-data',
             str(source / 'src/rsci/gateway/rsci_gateway.py') + os.pathsep + 'rsci/gateway',

@@ -1,3 +1,20 @@
 {"event": "history.verify", "outcome": "ok", "row_sha256": "2bc5a1ffa2e0ecd655e2b3dedb6a7a81394ad6c3a2155640df5040f1f2a85f22", "ts": "2026-10-29T16:50:29+00:00"}
 {"event": "history.verify", "outcome": "ok", "row_sha256": "9f2c2028d621b957384807f3892ce0c9f0847b7e1412702c6b5e36e360515af8", "ts": "2026-10-29T16:50:30+00:00"}
 {"event": "history.verify", "outcome": "ok", "row_sha256": "0bfb4ec2c14ca3e95dcc0da8e120f5bfffdd84c15fd2b5ec1cc7f9a5fad6b3b1", "ts": "2026-10-29T16:50:31+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "09dc5d517f17ba821efbb712a8f25edacadf2d49d8455a04a0461a060a9d3423", "ts": "2026-10-29T17:16:42+00:00"}
+{"event": "remote.stat", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025", "row_sha256": "fc71ff422121b5153bc4e71427edd42eea79de2a1c89535670a375f428c93e40", "ts": "2026-10-29T17:16:42+00:00"}
+{"event": "remote.stat", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025", "row_sha256": "1fdf1d643a07a099054cc4aca6e3ed1c8efb1ed59fc6db1b960f03a12147e0e1", "ts": "2026-10-29T17:17:09+00:00"}
+{"event": "remote.run", "outcome": "ok", "row_sha256": "e9952cf926d4869babe263bb9f9fc98f378ab1a8f176cd5bc8f84cf1fd5580b8", "ts": "2026-10-29T17:19:24+00:00"}
+{"event": "remote.stat", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025", "row_sha256": "770bd910a216b88f1f272f6d62e2cee38f65352b44bdc1a69291f55eda735147", "ts": "2026-10-29T17:19:25+00:00"}
+{"event": "job.state", "job_id": "129371", "outcome": "ok", "row_sha256": "4f3d9ec374c9a5e1b5cb6b85b3a199050256c87f17e3e362810db2733c76bb09", "ts": "2026-10-29T17:19:25+00:00"}
+{"event": "remote.find", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025", "row_sha256": "0c4202af0854c4ff7bdcc338ac1f2ef0e4dd886876e7ed6bf034ee7b04e8e9dd", "ts": "2026-10-29T17:19:26+00:00"}
+{"event": "remote.find", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025", "row_sha256": "cb4add9f2d3896404f88dddb5af979a532fec4efeee520fcfa4d776a7be54cb4", "ts": "2026-10-29T17:19:27+00:00"}
+{"event": "remote.read", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/run.job.sh", "row_sha256": "6b0e6c10acdf0311f9141b060bae3286f8cf90d1cb5cd24c606ef23e02eab16e", "ts": "2026-10-29T17:19:28+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/NaOH_opt.pbsout", "row_sha256": "f41d9cf452c369304ca8221a8c4fe4cd3abfe3b0600f16629c0810ee70c910bf", "ts": "2026-10-29T17:19:29+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/job_info.log", "row_sha256": "849a7bd5095c670e66847b40810675768a7dd6ce2963a743edeae99eb5df16a8", "ts": "2026-10-29T17:19:30+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/summary.log", "row_sha256": "f8071c4bcce6bbb263e27088f5d379ba3a56a146fe31914da285994303ec20dd", "ts": "2026-10-29T17:19:31+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/OSZICAR", "row_sha256": "613d0051f1b1655b1ff6df03f294a2ca859fa43da09e51d6240c2a1ad48c2f1d", "ts": "2026-10-29T17:19:32+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/OUTCAR", "row_sha256": "196e568cc7315f74194eed9356edf9b11cebc4c1a7a6e3fea82db5562683fd3f", "ts": "2026-10-29T17:19:33+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/vasp.out", "row_sha256": "db3e165db498b3f801c51df18c9bc3c6f9b4101eccb8f17523fa096ca92049dc", "ts": "2026-10-29T17:19:33+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/vasp.time.log", "row_sha256": "19027e2bedd2c9c57b0244be9196883dbb02fe26477aed39dffa359c95030dd2", "ts": "2026-10-29T17:19:34+00:00"}
+{"event": "remote.tail", "outcome": "ok", "path": "/public/home/wuhong/NaOH_opt/rerun_20261025/mem_usage.log", "row_sha256": "2d48d01e3f8150d0ed1163b456ed1a1497bc2fad685be96d54595de9e3e6d428", "ts": "2026-10-29T17:19:35+00:00"}

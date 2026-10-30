@@ -1,0 +1,23 @@
+{
+  "attempted_at": "2026-10-29T16:42:33+00:00",
+  "checked_at": "2026-10-29T16:42:33+00:00",
+  "error": "",
+  "identity": {
+    "gateway": {
+      "host": "vlab.ustc.edu.cn",
+      "port": 22,
+      "user": "ubuntu"
+    },
+    "name": "cl9",
+    "port": 22,
+    "remote_root": "/public/home/wuhong/NaOH_opt",
+    "route": "vlab",
+    "scheduler": "auto",
+    "target": "wuhong@114.214.201.44"
+  },
+  "jobs": [],
+  "schema": "rsci.remote-center/1",
+  "server": "cl9",
+  "stale": false,
+  "warning": ""
+}

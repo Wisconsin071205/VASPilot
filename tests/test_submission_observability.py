@@ -210,7 +210,7 @@ def test_pbs_command_passes_a_script_filename_without_torque_double_dash_bug(mon
     assert emitted[0]["job_id"] == "123"
 
 
-@pytest.mark.parametrize("version, compatible", [("1.5.1", False), ("1.5.2", False), ("1.5.3", True)])
+@pytest.mark.parametrize("version, compatible", [("1.5.1", False), ("1.5.2", False), ("1.5.3", False), ("1.5.4", True)])
 def test_gateway_probe_requires_the_pbs_submission_fix(version, compatible):
     from rsci.gateway.transport import SshTransport
 

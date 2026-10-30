@@ -41,12 +41,10 @@ def local_analysis_smoke(base_url, token, home, ui_pid, stop_ui):
     call('project.create', {'name': name})
     call('project.import', {'name': name, 'file': 'data/sample.csv',
          'content_base64': base64.b64encode(b'x,y\n1,2\n3,4\n').decode()})
-    template = call('project.csv_template', {'name': name, 'file': 'data/sample.csv'})
-    script = call('project.read', {'name': name, 'file': 'scripts/analyze.py'})
     call('project.write', {'name': name, 'file': 'scripts/analyze.py',
-         'expected_sha256': script['sha256'],
-         'content': 'import time\ntime.sleep(4)\n' + script['content']})
-    spec = dict(template['spec'], python=sys.executable)
+         'content': 'import time, json\nfrom pathlib import Path\ntime.sleep(4)\nPath("results/summary.json").write_text(json.dumps({"rows": 2}))\n'})
+    spec = {'domain': 'general', 'project': name, 'script': 'scripts/analyze.py',
+            'inputs': ['data/sample.csv'], 'outputs': ['results/summary.json'], 'python': sys.executable}
     plan = call('workflow.prepare', {'spec': spec})
     plan_id = plan['plan_id']
     approved = call('workflow.approve', {'plan_id': plan_id, 'phrase': 'approve ' + plan_id})
@@ -72,8 +70,8 @@ def local_analysis_smoke(base_url, token, home, ui_pid, stop_ui):
             assert state['scientific_converged'] is None
             assert len([e for e in state['events'] if e['event'] == 'python.execution_intent']) == 1
             result = json.loads((Path(state['task']['download_root']) / 'summary.json').read_text())
-            assert result['rows'] == 2 and result['columns']['x']['mean'] == 2
-            assert len(state['task']['artifacts']) == 3
+            assert result['rows'] == 2
+            assert len(state['task']['artifacts']) == 1
             return plan_id
         if (state or {}).get('task', {}).get('phase') == 'blocked':
             raise AssertionError(state)
